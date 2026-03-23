@@ -1,0 +1,241 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes"/>
+    <meta name="application-name" content="U.S. Graphics Company"/>
+    <meta name="description" content="Engineering graphics for professionals. Monospaced typefaces for programming and technical visual systems."/>
+    <meta name="author" content="U.S. Graphics Company">
+    <meta name="format-detection" content="telephone=no">
+    
+        <link rel="canonical" href="https://usgraphics.com/static/fonts/BerkeleyMono-Bold.woff2"/>
+    
+    <meta name="referrer" content="no-referrer-when-downgrade"/>
+    <link rel="icon" type="image/x-icon" href="/static/core/favicon/favicon.94b3eee5335b.ico">
+    <link rel="icon" type="image/svg+xml" href="/static/core/favicon/favicon.6f61ac02f2fa.svg">
+    <link rel="apple-touch-icon" href="/static/core/apple-touch-icon.1cfd86b098a4.png"/>
+    <link rel="icon" type="image/png" href="/static/core/favicon/favicon-196x196.533db169b920.png" sizes="196x196"/>
+    <link rel="icon" type="image/png" href="/static/core/favicon/favicon-96x96.a8c44eb342d8.png" sizes="96x96"/>
+    <link rel="icon" type="image/png" href="/static/core/favicon/favicon-32x32.b65dd5f735bc.png" sizes="32x32"/>
+    <link rel="icon" type="image/png" href="/static/core/favicon/favicon-16x16.f5c2712f9980.png" sizes="16x16"/>
+    <link rel="icon" type="image/png" href="/static/core/favicon/favicon-128.75f1689107ec.png" sizes="128x128"/>
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="msapplication-TileColor" content="#000000"/>
+    <meta name="msapplication-TileImage" content="/static/core/favicon/mstile-144x144.d989e6178c50.png"/>
+    <meta name="msapplication-square70x70logo" content="/static/core/favicon/mstile-70x70.75f1689107ec.png"/>
+    <meta name="msapplication-square150x150logo" content="/static/core/favicon/mstile-150x150.2e058abf3f4a.png"/>
+    <meta name="msapplication-wide310x150logo" content="/static/core/favicon/mstile-310x150.48c58445e7f1.png"/>
+    <meta name="msapplication-square310x310logo" content="/static/core/favicon/mstile-310x310.8bb9fc13ef4f.png"/>
+    
+        <meta property="og:site_name" content="U.S. Graphics Company"/>
+        <meta property="og:type" content="website"/>
+        <meta property="og:title" content="U.S. Graphics Company"/>
+        <meta property="og:description" content="Engineering graphics for professionals. Monospaced typefaces for programming and technical visual systems."/>
+        <meta property="og:url" content="https://usgraphics.com"/>
+        <meta property="og:image" content="https://cdn.usgraphics.com/xcom/usgraphics-xcom-card.png"/>
+        <meta property="og:image:width" content="2400"/>
+        <meta property="og:image:height" content="1256"/>
+        <meta name="twitter:card" content="summary_large_image"/>
+        <meta name="twitter:title" content="U.S. Graphics Company"/>
+        <meta name="twitter:description" content="Engineering graphics for professionals. Monospaced typefaces for programming and technical visual systems."/>
+        <meta name="twitter:url" content="https://usgraphics.com"/>
+        <meta name="twitter:image" content="https://cdn.usgraphics.com/xcom/usgraphics-xcom-card.png"/>
+        <meta name="twitter:site" content="@usgraphics"/>
+        <meta name="twitter:creator" content="@usgraphics"/>
+    
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preload" href="/static/core/css/fonts/univers/univers_lt_pro_55_roman.4020960013f9.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/core/css/fonts/univers/univers_lt_pro_65_bold.3e0bae4c4341.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/core/css/usgraphics-wds.min.6c203636c583.css"/>
+    <link rel="stylesheet" href="/static/core/css/usgraphics-wds-icons.min.ca709e16acb3.css"/>
+    <title>U.S. Graphics Company - 404 Not Found</title>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.14.1/jquery-ui.min.js" integrity="sha512-MSOo1aY+3pXCOCdGAYoBZ6YGI0aragoQsg1mKKBHXCYPIWxamwOE7Drh+N5CPgGI5SA9IEKJiPjdfqWFWmZtRA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.4/htmx.min.js" integrity="sha512-2kIcAizYXhIn8TzUvqzEDZNuDZ+aW7yE/+f1HJHXFjQcGNfv1kqzJSTBRBSlOgp6B/KZsz1K0a3ZTqP9dnxioQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/2.11.8/umd/popper.min.js" integrity="sha512-TPh2Oxlg1zp+kz3nFA0C5vVC6leG/6mm1z9+mA81MI5eaUVqasPLO8Cuk4gMF4gUfP5etR73rgU/8PNMsSesoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/tippy.js/6.3.7/tippy.umd.min.js" integrity="sha512-2TtfktSlvvPzopzBA49C+MX6sdc7ykHGbBQUTH8Vk78YpkXVD5r6vrNU+nOmhhl1MyTWdVfxXdZfyFsvBvOllw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-0C4RZNQJX3"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() {
+            dataLayer.push(arguments);
+        }
+        gtag('js', new Date());
+        gtag('config', 'G-0C4RZNQJX3');
+    </script>
+    <script>document.addEventListener('DOMContentLoaded', function() { tippy.setDefaultProps({theme: 'usgc-tippy-theme', followCursor: true, allowHTML: true, maxWidth: 350, boundary: 'viewport'}); });</script>
+    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "c0d2f7717dd447c6959c82c5d9caa08c"}'></script>
+    
+    
+    
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "Organization",
+                "@id": "https://usgraphics.com/#organization",
+                "name": "U.S. Graphics Company",
+                "legalName": "U.S. Graphics, LLC",
+                "alternateName": ["USGraphics", "usgraphics", "US Graphics", "US Graphics Company", "Berkeley Graphics", "U.S. Graphics", "berkeleygraphics", "USGraphicsCo", "USGC"],
+                "url": "https://usgraphics.com",
+                "logo": {
+                    "@type": "ImageObject",
+                    "url": "https://usgraphics.com/static/core/logo/colorscale/usgraphics-colorscale.955194642d2e.svg",
+                    "width": 512,
+                    "height": 512
+                },
+                "image": "https://cdn.usgraphics.com/xcom/usgraphics-xcom-card.png",
+                "description": "Engineering graphics for professionals. Monospaced typefaces for programming and technical visual systems.",
+                "foundingDate": "2022",
+                "foundingLocation": {
+                    "@type": "Place",
+                    "address": {
+                        "@type": "PostalAddress",
+                        "addressCountry": "US"
+                    }
+                },
+                "areaServed": "Worldwide",
+                "slogan": "Engineering graphics for professionals",
+                "knowsAbout": [
+                    "Typography",
+                    "Monospaced Fonts",
+                    "Programming Fonts",
+                    "Coding Fonts",
+                    "Engineering Graphics",
+                    "User Interface Design",
+                    "Font Design",
+                    "Typeface Design",
+                    "Font Engineering",
+                    "Corporate Branding",
+                    "Brand Identity",
+                    "Logo Design"
+                ],
+                "sameAs": [
+                    "https://x.com/usgraphics",
+                    "https://github.com/usgraphics"
+                ],
+                "contactPoint": [
+                    {
+                        "@type": "ContactPoint",
+                        "email": "support@usgraphics.com",
+                        "contactType": "customer service"
+                    },
+                    {
+                        "@type": "ContactPoint",
+                        "email": "inquiry@usgraphics.com",
+                        "contactType": "sales"
+                    }
+                ]
+            },
+            {
+                "@type": "WebSite",
+                "@id": "https://usgraphics.com/#website",
+                "name": "U.S. Graphics Company",
+                "url": "https://usgraphics.com",
+                "publisher": {"@id": "https://usgraphics.com/#organization"},
+                "inLanguage": "en-US"
+            }
+        ]
+    }
+    </script>
+    
+</head>
+
+    <body class="measure-60 responsive-30-phone p-centered" hx-headers='{"X-CSRFToken": "zN0OLE10Z8SVL4UMFyg3ZUHqNOciMewrG2uIickn880aEy5aXY7c319PumuDXDKz"}'>
+
+<header class="container mb4">
+    <div class="columns mb2 mt1">
+        <div class="column col-12 col-md-12 col-sm-12 mt1 logo">
+            <div class="logo-logotype">
+                <a class="black" href="/">
+                    <h1 class="text-condensed mb1">U.S. Graphics Company</h1>
+                </a>
+            </div>
+            <div class="logo-colorscale">
+                <img src="/static/core/logo/colorscale/usgraphics-colorscale.955194642d2e.svg" alt="U.S. Graphics Company Logo"/>
+            </div>
+        </div>
+    </div>
+    
+        <nav>
+            <ul class="columns mt0 mb0 pt0 pb0">
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    <a class="btn-nav black bg-white w100" href="/">
+                        Office</a>
+                </li>
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    <a class="btn-nav black bg-white w100" href="/products">
+                        Products</a>
+                </li>
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    <a class="btn-nav black bg-white w100" href="/catalog">
+                        Catalog</a>
+                </li>
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    <a class="btn-nav black bg-white w100" href="/extras">
+                        Extras!</a>
+                </li>
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    <a class="btn-nav black bg-white w100" href="/sitemap">
+                        Sitemap</a>
+                </li>
+                <li class="column col-2 col-sm-4 col-md-4 p-centered mb1">
+                    
+                        <a class="btn-nav black bg-white w100" href="/auth/login">
+                            Login</a>
+                    
+                </li>
+            </ul>
+        </nav>
+    
+</header>
+<main>
+    
+    <div class="container">
+        <h2 class="mb2">HTTP Error</h2>
+        <hr class="solid-header bdp-gray mh1 mb4">
+        
+        <div class="columns">
+            <div class="column col-8 col-mx-auto col-sm-12 col-md-12 mb3">
+                <div class="container flex-centered mb4">
+                    <div class="ba b--black pl1 pr1 pb1 pt0">
+                        <p class="data text-center mt1 mb1 ph1 pb0 white bg-dark-red">~~~ 404 Not Found ~~~</p>
+                        <img class="img-responsive w100 mt1 ba b--black" src="/static/core/error/error.2809039cb6c6.jpg" alt="404 Not Found"/>
+                        <p class="data text-center mt1 pt0 pb0 ph1 mb0">ERROR MESSAGE: PAGE WAS NOT FOUND.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+    <div class="container">
+        <footer class="columns b--moon-gray">
+            <div class="column col-12 col-sm-12 col-md-12 mb0">
+                <hr class="solid mb1">
+            </div>
+            <div class="column col-9 col-sm-12 col-md-12">
+                <small class="silver text-condensed text-uppercase">© Copyright 2026, U.S. Graphics, LLC. All
+                    Rights Reserved. MADE IN U.S.A. Follow us on X
+                    <a class="silver" href="https://x.com/usgraphics" target="_blank">@usgraphics</a>.</small>
+            </div>
+            <div class="column col-3 col-sm-12 col-md-12 align-right ">
+                <a class="no-decoration" href="/engineering">
+                    
+                        <span title="Deployment environment" class="sku white bg-dark-green">PROD</span>
+                    
+                    <span title="Website version" class="sku black">v2.16.14</span>
+                </a>
+            </div>
+        </footer>
+    </div>
+
+
+
+</body>
+</html>

@@ -1,5 +1,21 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Berkeley Mono';
+  src: url('/fonts/BerkeleyMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Berkeley Mono';
+  src: url('/fonts/BerkeleyMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Protocol colors */
   --acp: #3b82f6;
@@ -25,7 +41,7 @@
 
   /* Fonts */
   --sans: 'Space Grotesk', 'Inter', system-ui, sans-serif;
-  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --mono: 'Berkeley Mono', 'JetBrains Mono', 'SF Mono', monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
