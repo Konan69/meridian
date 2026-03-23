@@ -26,16 +26,16 @@ pub struct AcpAdapter {
 
 struct SptRecord {
     max_amount: Cents,
-    currency: String,
-    scope_hash: String,
+    _currency: String,
+    _scope_hash: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     consumed: bool,
 }
 
 struct PaymentIntentRecord {
-    amount: Cents,
+    _amount: Cents,
     status: String,
-    spt_id: String,
+    _spt_id: String,
 }
 
 impl AcpAdapter {

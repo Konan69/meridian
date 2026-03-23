@@ -27,7 +27,7 @@ struct SessionRecord {
     remaining_budget: Cents,
     total_spent: Cents,
     payment_count: u32,
-    challenge_hash: String,
+    _challenge_hash: String,
 }
 
 impl MppAdapter {

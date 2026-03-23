@@ -207,58 +207,9 @@ impl Order {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Payment Types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VaultToken {
-    pub id: String,
-    pub payment_method: serde_json::Value,
-    pub allowance: Allowance,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub billing_address: Option<Address>,
-    pub status: VaultTokenStatus,
-    pub created_at: DateTime<Utc>,
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VaultTokenStatus {
-    Active,
-    Consumed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Allowance {
-    pub reason: String,
-    pub max_amount: Cents,
-    pub currency: String,
-    pub checkout_session_id: String,
-    pub merchant_id: String,
-    pub expires_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaymentIntent {
-    pub id: String,
-    pub status: PaymentIntentStatus,
-    pub vault_token_id: String,
-    pub amount: Cents,
-    pub currency: String,
-    pub merchant_id: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentIntentStatus {
-    Pending,
-    Completed,
-    Failed,
-}
+// Payment types (VaultToken, PaymentIntent) are managed internally
+// by the protocol adapters — ACP keeps its own vault in acp.rs,
+// x402 signs per-request, etc. No shared payment types needed here.
 
 // ---------------------------------------------------------------------------
 // Agent Wallet (protocol-agnostic)

@@ -26,15 +26,15 @@ pub struct AtxpAdapter {
 }
 
 struct MandateRecord {
-    max_amount: Cents,
+    _max_amount: Cents,
     remaining: Cents,
-    currency: String,
+    _currency: String,
     allowed_merchants: Option<Vec<String>>,
-    allowed_categories: Option<Vec<String>>,
+    _allowed_categories: Option<Vec<String>>,
     expires_at: chrono::DateTime<chrono::Utc>,
     payment_count: u32,
-    max_nesting_depth: u32,
-    constraint_hash: String,
+    _max_nesting_depth: u32,
+    _constraint_hash: String,
     revoked: bool,
 }
 

@@ -29,7 +29,7 @@ pub struct Ap2Adapter {
 }
 
 struct MandateRecord {
-    mandate_type: String, // "intent" or "cart"
+    _mandate_type: String, // "intent" or "cart"
     max_amount: Cents,
     constraint_hash: String,
     issuer_sig: Vec<u8>,
