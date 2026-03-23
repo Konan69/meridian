@@ -276,8 +276,7 @@
 							</p>
 
 							<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:20px;">
-								{@const types = [...new Set(simState.graphNodes.map(n => n.type))]}
-								{#each types as type}
+								{#each [...new Set(simState.graphNodes.map(n => n.type))] as type}
 									<div style="background:var(--bg-2); border-radius:4px; padding:12px; text-align:center;">
 										<div style="font-family:var(--mono); font-size:20px; font-weight:700;">
 											{simState.graphNodes.filter(n => n.type === type).length}
