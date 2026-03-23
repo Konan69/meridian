@@ -1,0 +1,57 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Meridian color palette: cool blues + warm ambers */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1e40af;
+  --color-blue-900: #1e3a5f;
+
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-amber-600: #d97706;
+  --color-amber-700: #b45309;
+
+  /* Protocol-specific colors */
+  --color-protocol-acp: #3b82f6;
+  --color-protocol-ap2: #ef4444;
+  --color-protocol-x402: #10b981;
+  --color-protocol-mpp: #8b5cf6;
+  --color-protocol-atxp: #f59e0b;
+
+  /* Surface colors (dark mode default) */
+  --color-surface-0: #0a0a0f;
+  --color-surface-1: #12121a;
+  --color-surface-2: #1a1a24;
+  --color-surface-3: #22222e;
+  --color-surface-4: #2a2a38;
+
+  --color-text-primary: #f0f0f5;
+  --color-text-secondary: #8888a0;
+  --color-text-muted: #55556a;
+
+  --color-border: #2a2a38;
+  --color-border-active: #3b82f6;
+
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

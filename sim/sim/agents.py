@@ -1,0 +1,64 @@
+"""Agent profile generation for Meridian simulations."""
+
+import random
+from .types import AgentProfile, AgentRole, Protocol
+
+
+FIRST_NAMES = [
+    "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank",
+    "Iris", "Jake", "Kate", "Leo", "Maya", "Nick", "Olga", "Paul",
+    "Quinn", "Rosa", "Sam", "Tina", "Uma", "Vic", "Wendy", "Xander",
+    "Yara", "Zane", "Aria", "Blake", "Cleo", "Dax", "Elsa", "Finn",
+    "Gaia", "Hugo", "Ivy", "Jace", "Kira", "Liam", "Mila", "Noah",
+    "Opal", "Pax", "Remy", "Sage", "Theo", "Uri", "Vale", "Wren",
+]
+
+CATEGORIES = ["footwear", "electronics", "food", "digital", "hardware"]
+
+PERSONAS = [
+    {"price_sensitivity": 0.9, "brand_loyalty": 0.1, "risk_tolerance": 0.2, "desc": "bargain hunter"},
+    {"price_sensitivity": 0.3, "brand_loyalty": 0.8, "risk_tolerance": 0.5, "desc": "brand loyalist"},
+    {"price_sensitivity": 0.5, "brand_loyalty": 0.3, "risk_tolerance": 0.9, "desc": "early adopter"},
+    {"price_sensitivity": 0.7, "brand_loyalty": 0.5, "risk_tolerance": 0.5, "desc": "practical shopper"},
+    {"price_sensitivity": 0.2, "brand_loyalty": 0.2, "risk_tolerance": 0.7, "desc": "impulse buyer"},
+    {"price_sensitivity": 0.6, "brand_loyalty": 0.6, "risk_tolerance": 0.3, "desc": "cautious consumer"},
+    {"price_sensitivity": 0.4, "brand_loyalty": 0.4, "risk_tolerance": 0.6, "desc": "balanced buyer"},
+]
+
+
+def generate_agents(
+    num_agents: int,
+    budget_range: tuple[int, int] = (5000, 50000),
+    seed: int = 42,
+) -> list[AgentProfile]:
+    """Generate a diverse set of buyer agents with varied personas."""
+    rng = random.Random(seed)
+    agents = []
+
+    for i in range(num_agents):
+        persona = rng.choice(PERSONAS)
+        name = rng.choice(FIRST_NAMES)
+        budget = rng.randint(budget_range[0], budget_range[1])
+
+        # Pick 1-3 preferred categories
+        num_cats = rng.randint(1, 3)
+        preferred = rng.sample(CATEGORIES, num_cats)
+
+        # Some agents have protocol preferences
+        protocol_pref = None
+        if rng.random() < 0.3:  # 30% have a preference
+            protocol_pref = rng.choice(list(Protocol))
+
+        agents.append(AgentProfile(
+            agent_id=f"agent_{i:04d}",
+            name=f"{name}_{i}",
+            role=AgentRole.BUYER,
+            budget=budget,
+            price_sensitivity=persona["price_sensitivity"] + rng.gauss(0, 0.05),
+            brand_loyalty=persona["brand_loyalty"] + rng.gauss(0, 0.05),
+            preferred_categories=preferred,
+            risk_tolerance=persona["risk_tolerance"] + rng.gauss(0, 0.05),
+            protocol_preference=protocol_pref,
+        ))
+
+    return agents

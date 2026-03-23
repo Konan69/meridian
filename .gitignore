@@ -1,0 +1,22 @@
+# Rust
+engine/target/
+
+# Python
+sim/.venv/
+sim/__pycache__/
+sim/sim/__pycache__/
+*.pyc
+*.pyo
+
+# Node
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# OS
+.DS_Store
+*.swp
+
+# Data
+*.db
+*.sqlite
