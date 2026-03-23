@@ -6,13 +6,13 @@
 		onStepClick: (step: SimStep) => void;
 	} = $props();
 
-	const STEPS: { key: SimStep; num: string; label: string; icon: string }[] = [
-		{ key: 'seed', num: '01', label: 'Seed Data', icon: '◇' },
-		{ key: 'graph', num: '02', label: 'Knowledge Graph', icon: '◈' },
-		{ key: 'agents', num: '03', label: 'Agent Setup', icon: '◉' },
-		{ key: 'simulate', num: '04', label: 'Simulation', icon: '▶' },
-		{ key: 'report', num: '05', label: 'Report', icon: '◫' },
-		{ key: 'chat', num: '06', label: 'Interact', icon: '◬' },
+	const STEPS: { key: SimStep; num: string; label: string }[] = [
+		{ key: 'seed', num: '01', label: 'Seed Data' },
+		{ key: 'graph', num: '02', label: 'Knowledge Graph' },
+		{ key: 'agents', num: '03', label: 'Agent Setup' },
+		{ key: 'simulate', num: '04', label: 'Simulation' },
+		{ key: 'report', num: '05', label: 'Report' },
+		{ key: 'chat', num: '06', label: 'Interact' },
 	];
 
 	const stepOrder = STEPS.map(s => s.key);
@@ -24,20 +24,30 @@
 		if (si < ci) return 'completed';
 		return 'pending';
 	}
+
+	function canNavigateTo(key: SimStep): boolean {
+		const ci = stepOrder.indexOf(currentStep);
+		const si = stepOrder.indexOf(key);
+		// Can only go to current step or completed (previous) steps
+		return si <= ci;
+	}
 </script>
 
 <div style="display:flex; gap:2px; align-items:center;">
 	{#each STEPS as step, i}
 		{@const s = status(step.key)}
+		{@const clickable = canNavigateTo(step.key)}
 		<button
-			onclick={() => onStepClick(step.key)}
+			onclick={() => clickable && onStepClick(step.key)}
+			disabled={!clickable}
 			style="
 				display:flex; align-items:center; gap:8px;
 				padding:8px 14px;
 				background:{s === 'active' ? 'var(--bg-3)' : 'transparent'};
 				border:none;
 				border-radius:4px;
-				cursor:pointer;
+				cursor:{clickable ? 'pointer' : 'default'};
+				opacity:{clickable ? '1' : '0.4'};
 				transition:all 0.2s;
 			"
 		>

@@ -5,8 +5,7 @@
 
 	const NAV = [
 		{ href: '/', label: 'Dashboard' },
-		{ href: '/sim/new', label: 'New Simulation' },
-		{ href: '/sim', label: 'Quick Run' },
+		{ href: '/sim/new', label: 'Simulation' },
 		{ href: '/protocols', label: 'Protocols' },
 	];
 
