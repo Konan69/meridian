@@ -160,6 +160,8 @@ async fn main() {
         )
         // Metrics
         .route("/metrics", get(routes::metrics::get_metrics))
+        // SSE event stream
+        .route("/events", get(routes::events::event_stream))
         // Health
         .route("/health", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())

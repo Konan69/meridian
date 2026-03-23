@@ -5,9 +5,80 @@
 	import Timeline from '$lib/components/Timeline.svelte';
 	import AgentCard from '$lib/components/AgentCard.svelte';
 	import SystemLogs from '$lib/components/SystemLogs.svelte';
+	import ChatPanel from '$lib/components/ChatPanel.svelte';
+	import MarketCharts from '$lib/components/MarketCharts.svelte';
 	import { generateDemoGraph } from '$lib/components/graphDemo';
 
 	const ENGINE = 'http://localhost:4080';
+
+	let chatLoading = $state(false);
+
+	function buildChatContext(): string {
+		const m = simState.metrics;
+		const lines = [
+			`Simulation: ${simState.totalTxns} transactions, volume ${fmt(simState.totalVolume)}, duration ${simState.elapsed}, ${simState.config.num_agents} agents, ${simState.config.num_rounds} rounds.`,
+			'Protocol metrics:',
+			...m.map(p =>
+				`  ${p.protocol.toUpperCase()}: ${p.successful_transactions}/${p.total_transactions} txns, volume ${fmt(p.total_volume_cents)}, fees ${fmt(p.total_fees_cents)} (${p.total_volume_cents > 0 ? ((p.total_fees_cents / p.total_volume_cents) * 100).toFixed(2) : 0}%), avg settlement ${ms(p.avg_settlement_ms)}, micropayments ${p.micropayment_count}`
+			),
+		];
+		return lines.join('\n');
+	}
+
+	async function handleChatSend(message: string) {
+		simState.chatMessages = [...simState.chatMessages, { role: 'user', content: message }];
+		chatLoading = true;
+
+		try {
+			const apiMessages = simState.chatMessages.map(m => ({ role: m.role, content: m.content }));
+			const res = await fetch('/api/chat', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ messages: apiMessages, context: buildChatContext() }),
+			});
+
+			if (!res.ok) {
+				const err = await res.json();
+				simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: `Error: ${err.error || 'Request failed'}` }];
+				chatLoading = false;
+				return;
+			}
+
+			// Parse SSE stream
+			const reader = res.body?.getReader();
+			const dec = new TextDecoder();
+			let buf = '';
+			let assistantContent = '';
+			simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: '' }];
+
+			while (reader) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				buf += dec.decode(value, { stream: true });
+				const lines = buf.split('\n');
+				buf = lines.pop() || '';
+
+				for (const line of lines) {
+					if (!line.startsWith('data: ')) continue;
+					const data = line.slice(6).trim();
+					if (data === '[DONE]') break;
+					try {
+						const parsed = JSON.parse(data);
+						const delta = parsed.choices?.[0]?.delta?.content;
+						if (delta) {
+							assistantContent += delta;
+							const msgs = [...simState.chatMessages];
+							msgs[msgs.length - 1] = { role: 'assistant', content: assistantContent };
+							simState.chatMessages = msgs;
+						}
+					} catch { /* skip malformed chunks */ }
+				}
+			}
+		} catch (e) {
+			simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: `Connection error: ${e}` }];
+		}
+		chatLoading = false;
+	}
 
 	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
@@ -418,57 +489,23 @@
 					{:else if simState.step === 'chat'}
 						<!-- Step 6: Chat -->
 						<div style="display:flex; flex-direction:column; height:100%;">
-							<h2 style="font-size:16px; font-weight:600; margin-bottom:16px;">
+							<h2 style="font-size:16px; font-weight:600; margin-bottom:12px;">
 								<span style="font-family:var(--mono); color:var(--acp); margin-right:8px;">06</span>
 								Deep Interaction
 							</h2>
 
-							<div style="flex:1; overflow-y:auto; padding-bottom:16px;">
-								{#each simState.chatMessages as msg}
-									<div style="
-										display:flex; gap:10px; padding:10px;
-										justify-content:{msg.role === 'user' ? 'flex-end' : 'flex-start'};
-									">
-										<div style="
-											max-width:70%; padding:12px 16px; border-radius:8px;
-											background:{msg.role === 'user' ? 'var(--acp)' : 'var(--bg-2)'};
-											color:{msg.role === 'user' ? '#fff' : 'var(--tx-1)'};
-											font-size:13px; line-height:1.5;
-										">
-											{msg.content}
-										</div>
-									</div>
-								{/each}
-								{#if simState.chatMessages.length === 0}
-									<div style="text-align:center; padding:40px; color:var(--tx-3); font-size:13px;">
-										Ask questions about the simulation results, interview agents, or explore protocol differences.
-									</div>
-								{/if}
-							</div>
+							{#if simState.metrics.length > 0}
+								<div style="margin-bottom:12px;">
+									<MarketCharts metrics={simState.metrics} />
+								</div>
+							{/if}
 
-							<div style="display:flex; gap:8px; padding-top:12px; border-top:1px solid var(--bd);">
-								<input
-									type="text"
-									placeholder="Ask about the simulation results..."
-									style="
-										flex:1; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
-										padding:10px 14px; color:var(--tx-1); font-size:13px;
-									"
-									onkeydown={(e) => {
-										if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-											const q = e.currentTarget.value;
-											simState.chatMessages = [...simState.chatMessages,
-												{ role: 'user', content: q },
-												{ role: 'assistant', content: `Based on the simulation: ${simState.metrics.length} protocols were tested with ${simState.totalTxns} transactions. The fastest was ${simState.metrics[0]?.protocol?.toUpperCase()} at ${ms(simState.metrics[0]?.avg_settlement_ms || 0)}.` },
-											];
-											e.currentTarget.value = '';
-										}
-									}}
+							<div style="flex:1; min-height:0;">
+								<ChatPanel
+									messages={simState.chatMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))}
+									onSend={handleChatSend}
+									disabled={chatLoading}
 								/>
-								<button style="
-									padding:10px 20px; border:none; border-radius:4px;
-									background:var(--acp); color:#fff; font-weight:600; font-size:13px;
-								">Send</button>
 							</div>
 						</div>
 					{/if}
