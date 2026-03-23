@@ -136,6 +136,8 @@ class SimulationConfig:
     engine_url: str = "http://localhost:4080"
     seed: int = 42
     agent_budget_range: tuple[int, int] = (5000, 50000)
+    use_llm: bool = False
+    llm_model: str = "minimax-m2.5-free"
 
 
 @dataclass

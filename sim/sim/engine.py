@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import random
 import sys
 import time
@@ -9,6 +10,7 @@ from typing import Optional
 
 from .agents import generate_agents
 from .commerce import CommerceClient
+from .llm import LLMDecisionEngine
 from .types import (
     AgentProfile,
     Protocol,
@@ -20,7 +22,7 @@ from .types import (
 
 
 class SimulationEngine:
-    """Runs multi-protocol commerce simulations with rule-based agents."""
+    """Runs multi-protocol commerce simulations with rule-based or LLM-powered agents."""
 
     def __init__(self, config: SimulationConfig):
         self.config = config
@@ -29,6 +31,21 @@ class SimulationEngine:
         self.products: list[dict] = []
         self.result = SimulationResult(config=config)
         self.rng = random.Random(config.seed)
+        self.llm_engine: Optional[LLMDecisionEngine] = None
+
+        # Initialize LLM engine if enabled
+        if config.use_llm:
+            api_key = os.environ.get("OPENCODE_API_KEY", "")
+            if api_key:
+                self.llm_engine = LLMDecisionEngine(
+                    api_key=api_key,
+                    model=config.llm_model,
+                )
+                self._emit("llm_enabled", {"model": config.llm_model})
+            else:
+                self._emit("llm_fallback", {
+                    "reason": "OPENCODE_API_KEY not set, using rule-based decisions",
+                })
 
     def _emit(self, event_type: str, data: dict):
         """Emit a JSON event to stdout for streaming."""
@@ -60,31 +77,67 @@ class SimulationEngine:
         tasks = []
         proto_idx = 0  # flat round-robin across protocols
 
-        for agent in self.agents:
-            if agent.remaining_budget <= 0:
-                continue
+        if self.llm_engine:
+            # LLM-powered decisions
+            candidates = []
+            for agent in self.agents:
+                if agent.remaining_budget <= 0:
+                    continue
+                product = self.rng.choice(self.products)
+                candidates.append((agent, product))
 
-            product = self.rng.choice(self.products)
-            price = product["base_price"]
-            category = product.get("category", "")
+            # Run LLM decisions concurrently
+            protocol_strs = [p.value for p in self.config.protocols]
+            decision_coros = [
+                self.llm_engine.decide(agent, product, self.config.protocols, self.rng)
+                for agent, product in candidates
+            ]
+            decisions = await asyncio.gather(*decision_coros, return_exceptions=True)
 
-            # Agent decides whether to buy (uses seeded RNG)
-            if not agent.wants_to_buy(price, category, self.rng):
-                continue
+            for (agent, product), decision in zip(candidates, decisions):
+                if isinstance(decision, Exception):
+                    self._emit("llm_error", {"agent": agent.agent_id, "error": str(decision)})
+                    continue
+                if not decision.get("buy", False):
+                    continue
 
-            # FLAT distribution: round-robin across protocols for fair comparison
-            protocol = self.config.protocols[proto_idx % len(self.config.protocols)].value
-            proto_idx += 1
+                protocol = decision.get("protocol", protocol_strs[0])
+                if protocol not in protocol_strs:
+                    protocol = protocol_strs[0]
 
-            needs_shipping = product.get("requires_shipping", False)
+                needs_shipping = product.get("requires_shipping", False)
+                tasks.append(self._execute_purchase(
+                    agent=agent,
+                    product=product,
+                    protocol=protocol,
+                    round_num=round_num,
+                    needs_shipping=needs_shipping,
+                ))
+        else:
+            # Rule-based decisions
+            for agent in self.agents:
+                if agent.remaining_budget <= 0:
+                    continue
 
-            tasks.append(self._execute_purchase(
-                agent=agent,
-                product=product,
-                protocol=protocol,
-                round_num=round_num,
-                needs_shipping=needs_shipping,
-            ))
+                product = self.rng.choice(self.products)
+                price = product["base_price"]
+                category = product.get("category", "")
+
+                if not agent.wants_to_buy(price, category, self.rng):
+                    continue
+
+                # FLAT distribution: round-robin across protocols for fair comparison
+                protocol = self.config.protocols[proto_idx % len(self.config.protocols)].value
+                proto_idx += 1
+
+                needs_shipping = product.get("requires_shipping", False)
+                tasks.append(self._execute_purchase(
+                    agent=agent,
+                    product=product,
+                    protocol=protocol,
+                    round_num=round_num,
+                    needs_shipping=needs_shipping,
+                ))
 
         summary.active_agents = len(tasks)
 
@@ -178,12 +231,15 @@ class SimulationEngine:
             p["protocol"]: p for p in metrics.get("protocols", [])
         }
 
-        self._emit("simulation_complete", {
+        completion_data = {
             "total_transactions": self.result.total_transactions,
             "total_volume_cents": self.result.total_volume,
             "duration_seconds": round(self.result.duration_seconds, 2),
             "protocol_summaries": self.result.protocol_summaries,
-        })
+        }
+        if self.llm_engine:
+            completion_data["llm_usage"] = self.llm_engine.usage_summary()
+        self._emit("simulation_complete", completion_data)
 
         await self.client.close()
         return self.result
@@ -240,14 +296,16 @@ class SimulationEngine:
 
 async def main():
     """Run a simulation. Config from env vars or defaults."""
-    import os
 
+    use_llm = os.environ.get("MERIDIAN_USE_LLM", "").lower() in ("1", "true", "yes")
     config = SimulationConfig(
         num_agents=int(os.environ.get("MERIDIAN_AGENTS", "50")),
         num_rounds=int(os.environ.get("MERIDIAN_ROUNDS", "10")),
         protocols=[Protocol.ACP, Protocol.X402, Protocol.AP2, Protocol.MPP, Protocol.ATXP],
         engine_url=os.environ.get("MERIDIAN_ENGINE_URL", "http://localhost:4080"),
         seed=int(os.environ.get("MERIDIAN_SEED", "42")),
+        use_llm=use_llm,
+        llm_model=os.environ.get("MERIDIAN_LLM_MODEL", "minimax-m2.5-free"),
     )
 
     engine = SimulationEngine(config)
