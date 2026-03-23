@@ -7,6 +7,12 @@ use axum::{
     Router,
 };
 use clap::Parser;
+// No Docker needed. All protocol logic runs in-process.
+// ACP: SPT lifecycle in Rust (ported from agentic-commerce-demo)
+// x402: Real ECDSA secp256k1 via k256 crate
+// AP2: Real ECDSA double-signing via k256 crate
+// MPP: Session budget tracking + ECDSA receipts
+// ATXP: Constraint engine with SHA256 mandates
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
