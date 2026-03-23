@@ -101,8 +101,8 @@ impl ProtocolAdapter for AcpAdapter {
 
             let record = SptRecord {
                 max_amount: constraints.max_amount,
-                currency: constraints.currency.clone(),
-                scope_hash: scope_hash.clone(),
+                _currency: constraints.currency.clone(),
+                _scope_hash: scope_hash.clone(),
                 expires_at: constraints.expires_at,
                 consumed: false,
             };
@@ -162,9 +162,9 @@ impl ProtocolAdapter for AcpAdapter {
 
             // 6. Record payment intent
             self.intents.lock().unwrap().insert(pi_id.clone(), PaymentIntentRecord {
-                amount,
+                _amount: amount,
                 status: "completed".into(),
-                spt_id: token.token_id.clone(),
+                _spt_id: token.token_id.clone(),
             });
 
             // 7. Store idempotency
@@ -173,7 +173,7 @@ impl ProtocolAdapter for AcpAdapter {
             Ok(PaymentResult {
                 payment_id: pi_id,
                 protocol: "acp".into(),
-                amount,
+                amount: amount,
                 currency: token.currency.clone(),
                 status: PaymentStatus::Settled,
                 execution_us: 0, // will be set by outer timed_us

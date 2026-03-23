@@ -90,7 +90,7 @@ impl ProtocolAdapter for Ap2Adapter {
             // 4. Store mandate
             let token_id = format!("ap2_{}", Uuid::new_v4().simple());
             self.mandates.lock().unwrap().insert(token_id.clone(), MandateRecord {
-                mandate_type: mandate_type.into(),
+                _mandate_type: mandate_type.into(),
                 max_amount: constraints.max_amount,
                 constraint_hash: format!("{:x}", Sha256::new_with_prefix(&mandate_hash).finalize()),
                 issuer_sig: issuer_sig.to_bytes().to_vec(),

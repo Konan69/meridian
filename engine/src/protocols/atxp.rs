@@ -89,15 +89,15 @@ impl ProtocolAdapter for AtxpAdapter {
             let constraint_hash = format!("{:x}", hasher.finalize());
 
             self.mandates.lock().unwrap().insert(mandate_id.clone(), MandateRecord {
-                max_amount: constraints.max_amount,
+                _max_amount: constraints.max_amount,
                 remaining: constraints.max_amount,
-                currency: constraints.currency.clone(),
+                _currency: constraints.currency.clone(),
                 allowed_merchants: constraints.merchants.clone(),
-                allowed_categories: constraints.categories.clone(),
+                _allowed_categories: constraints.categories.clone(),
                 expires_at: constraints.expires_at,
                 payment_count: 0,
-                max_nesting_depth: 3,
-                constraint_hash: constraint_hash.clone(),
+                _max_nesting_depth: 3,
+                _constraint_hash: constraint_hash.clone(),
                 revoked: false,
             });
 

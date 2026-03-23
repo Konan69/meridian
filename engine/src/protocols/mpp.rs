@@ -63,7 +63,7 @@ impl ProtocolAdapter for MppAdapter {
                 remaining_budget: constraints.max_amount,
                 total_spent: 0,
                 payment_count: 0,
-                challenge_hash: challenge.clone(),
+                _challenge_hash: challenge.clone(),
             });
 
             AuthToken {
