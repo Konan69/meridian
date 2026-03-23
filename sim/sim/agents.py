@@ -39,14 +39,11 @@ def generate_agents(
         persona = rng.choice(PERSONAS)
         name = rng.choice(FIRST_NAMES)
         budget = rng.randint(budget_range[0], budget_range[1])
-
-        # Pick 1-3 preferred categories
         num_cats = rng.randint(1, 3)
         preferred = rng.sample(CATEGORIES, num_cats)
 
-        # Some agents have protocol preferences
         protocol_pref = None
-        if rng.random() < 0.3:  # 30% have a preference
+        if rng.random() < 0.3:
             protocol_pref = rng.choice(list(Protocol))
 
         agents.append(AgentProfile(
@@ -54,11 +51,12 @@ def generate_agents(
             name=f"{name}_{i}",
             role=AgentRole.BUYER,
             budget=budget,
-            price_sensitivity=persona["price_sensitivity"] + rng.gauss(0, 0.05),
-            brand_loyalty=persona["brand_loyalty"] + rng.gauss(0, 0.05),
+            price_sensitivity=max(0.0, min(1.0, persona["price_sensitivity"] + rng.gauss(0, 0.05))),
+            brand_loyalty=max(0.0, min(1.0, persona["brand_loyalty"] + rng.gauss(0, 0.05))),
             preferred_categories=preferred,
-            risk_tolerance=persona["risk_tolerance"] + rng.gauss(0, 0.05),
+            risk_tolerance=max(0.0, min(1.0, persona["risk_tolerance"] + rng.gauss(0, 0.05))),
             protocol_preference=protocol_pref,
+            state_idx=i,  # distribute across US states
         ))
 
     return agents

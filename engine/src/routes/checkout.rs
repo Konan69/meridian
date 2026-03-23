@@ -270,7 +270,7 @@ pub async fn complete_session(
         protocol_data: serde_json::json!({}),
     };
 
-    let _payment = adapter.pay(&auth_token, total, "meridian_merchant").await?;
+    let payment = adapter.pay(&auth_token, total, "meridian_merchant").await?;
 
     // Re-acquire lock and finalize
     let mut sessions = state.sessions.lock().unwrap();
@@ -285,6 +285,18 @@ pub async fn complete_session(
     session.status = SessionStatus::Completed;
     session.order = Some(Order::from_session(&session.id));
     session.updated_at = chrono::Utc::now();
+
+    // Add payment details as a message so the Python sim can read fee/settlement
+    session.messages.push(Message {
+        msg_type: "payment_result".into(),
+        code: Some(payment.protocol.clone()),
+        content: serde_json::json!({
+            "payment_id": payment.payment_id,
+            "fee_cents": payment.fee,
+            "settlement_ms": payment.settlement_time_ms,
+            "status": payment.status,
+        }).to_string(),
+    });
 
     Ok(Json(session.clone()))
 }

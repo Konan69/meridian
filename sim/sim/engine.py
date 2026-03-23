@@ -5,7 +5,6 @@ import json
 import random
 import sys
 import time
-from dataclasses import asdict
 from typing import Optional
 
 from .agents import generate_agents
@@ -30,35 +29,21 @@ class SimulationEngine:
         self.products: list[dict] = []
         self.result = SimulationResult(config=config)
         self.rng = random.Random(config.seed)
-        self._event_callback: Optional[callable] = None
-
-    def on_event(self, callback: callable):
-        """Register a callback for real-time events (for SSE streaming)."""
-        self._event_callback = callback
 
     def _emit(self, event_type: str, data: dict):
-        """Emit an event to the callback and stdout."""
-        event = {"type": event_type, **data}
-        print(json.dumps(event), flush=True)
-        if self._event_callback:
-            self._event_callback(event)
+        """Emit a JSON event to stdout for streaming."""
+        print(json.dumps({"type": event_type, **data}), flush=True)
 
     async def setup(self):
         """Initialize agents and load product catalog."""
-        # Check engine health
         healthy = await self.client.health()
         if not healthy:
-            print("ERROR: Meridian engine not reachable at", self.config.engine_url)
+            self._emit("error", {"message": f"Engine not reachable at {self.config.engine_url}"})
             sys.exit(1)
 
-        # Load products
         self.products = await self.client.get_products()
-        self._emit("setup", {
-            "products": len(self.products),
-            "engine_url": self.config.engine_url,
-        })
+        self._emit("setup", {"products": len(self.products), "engine_url": self.config.engine_url})
 
-        # Generate agents
         self.agents = generate_agents(
             num_agents=self.config.num_agents,
             budget_range=self.config.agent_budget_range,
@@ -78,23 +63,19 @@ class SimulationEngine:
             if agent.remaining_budget <= 0:
                 continue
 
-            # Pick a random product
             product = self.rng.choice(self.products)
             price = product["base_price"]
+            category = product.get("category", "")
 
-            # Agent decides whether to buy
-            if not agent.wants_to_buy(price, product.get("category", "")):
+            # Agent decides whether to buy (uses seeded RNG)
+            if not agent.wants_to_buy(price, category, self.rng):
                 continue
 
-            # Pick protocol: agent preference or random from config
-            if agent.protocol_preference and agent.protocol_preference in self.config.protocols:
-                protocol = agent.protocol_preference.value
-            else:
-                protocol = self.rng.choice(self.config.protocols).value
+            # Agent intelligently picks protocol based on transaction type
+            protocol = agent.pick_protocol(price, self.config.protocols, self.rng)
 
             needs_shipping = product.get("requires_shipping", False)
 
-            # Queue the purchase
             tasks.append(self._execute_purchase(
                 agent=agent,
                 product=product,
@@ -106,12 +87,12 @@ class SimulationEngine:
         summary.active_agents = len(tasks)
 
         if tasks:
-            # Run all purchases concurrently
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for r in results:
                 if isinstance(r, Exception):
                     summary.fail_count += 1
+                    self._emit("error", {"round": round_num, "error": str(r)})
                     continue
                 if isinstance(r, TransactionRecord):
                     summary.transactions.append(r)
@@ -121,6 +102,10 @@ class SimulationEngine:
                         summary.total_fees += r.fee
                     else:
                         summary.fail_count += 1
+                        self._emit("purchase_failed", {
+                            "agent": r.agent_id, "protocol": r.protocol,
+                            "error": r.error, "round": round_num,
+                        })
 
         self._emit("round_complete", {
             "round": round_num,
@@ -128,6 +113,7 @@ class SimulationEngine:
             "success": summary.success_count,
             "failed": summary.fail_count,
             "volume_cents": summary.total_volume,
+            "fees_cents": summary.total_fees,
         })
 
         return summary
@@ -149,6 +135,7 @@ class SimulationEngine:
             round_num=round_num,
             product_name=product.get("name", ""),
             needs_shipping=needs_shipping,
+            agent_address=agent.address if needs_shipping else None,
         )
 
         if record.success:
@@ -158,6 +145,8 @@ class SimulationEngine:
                 "product": product["name"],
                 "protocol": protocol,
                 "amount_cents": record.amount,
+                "fee_cents": record.fee,
+                "settlement_ms": record.settlement_ms,
                 "round": round_num,
             })
 
@@ -166,7 +155,6 @@ class SimulationEngine:
     async def run(self) -> SimulationResult:
         """Run the full simulation."""
         start_time = time.time()
-
         await self.setup()
 
         self._emit("simulation_start", {
@@ -183,7 +171,6 @@ class SimulationEngine:
 
         self.result.duration_seconds = time.time() - start_time
 
-        # Get final protocol metrics from engine
         metrics = await self.client.get_metrics()
         self.result.protocol_summaries = {
             p["protocol"]: p for p in metrics.get("protocols", [])
@@ -199,31 +186,34 @@ class SimulationEngine:
         await self.client.close()
         return self.result
 
-    def print_report(self):
-        """Print a formatted comparison report."""
+    def print_report(self, file=sys.stderr):
+        """Print a formatted comparison report to the given file (default stderr)."""
         r = self.result
-        print("\n" + "=" * 70)
-        print("  MERIDIAN SIMULATION REPORT")
-        print("=" * 70)
-        print(f"  Agents: {self.config.num_agents} | Rounds: {self.config.num_rounds} | Duration: {r.duration_seconds:.1f}s")
-        print(f"  Total Transactions: {r.total_transactions} | Volume: ${r.total_volume / 100:.2f}")
-        print()
+        p = lambda *args, **kw: print(*args, **kw, file=file)
 
-        # Protocol comparison table
-        print(f"  {'Protocol':<8} {'Txns':>6} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Settle':>10} {'Micropay':>10}")
-        print("  " + "-" * 65)
+        p("\n" + "=" * 70)
+        p("  MERIDIAN SIMULATION REPORT")
+        p("=" * 70)
+        p(f"  Agents: {self.config.num_agents} | Rounds: {self.config.num_rounds} | Duration: {r.duration_seconds:.1f}s")
+        p(f"  Total Transactions: {r.total_transactions} | Volume: ${r.total_volume / 100:.2f}")
+        p()
+
+        p(f"  {'Protocol':<8} {'Txns':>6} {'Success':>8} {'Failed':>7} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Settle':>10} {'Micropay':>10}")
+        p("  " + "-" * 80)
 
         for proto_name in ["atxp", "x402", "mpp", "acp", "ap2"]:
-            p = r.protocol_summaries.get(proto_name, {})
-            txns = p.get("total_transactions", 0)
-            vol = p.get("total_volume_cents", 0)
-            fees = p.get("total_fees_cents", 0)
-            settle = p.get("avg_settlement_ms", 0)
-            micro = p.get("micropayment_count", 0)
+            pm = r.protocol_summaries.get(proto_name, {})
+            txns = pm.get("total_transactions", 0)
+            success = pm.get("successful_transactions", 0)
+            failed = pm.get("failed_transactions", 0)
+            vol = pm.get("total_volume_cents", 0)
+            fees = pm.get("total_fees_cents", 0)
+            settle = pm.get("avg_settlement_ms", 0)
+            micro = pm.get("micropayment_count", 0)
             fee_pct = (fees / vol * 100) if vol > 0 else 0
 
-            print(
-                f"  {proto_name.upper():<8} {txns:>6} "
+            p(
+                f"  {proto_name.upper():<8} {txns:>6} {success:>8} {failed:>7} "
                 f"${vol / 100:>10.2f} "
                 f"${fees / 100:>8.2f} "
                 f"{fee_pct:>6.2f}% "
@@ -231,53 +221,36 @@ class SimulationEngine:
                 f"{micro:>10}"
             )
 
-        print()
-
-        # Per-round activity
-        print("  Round Activity:")
+        p()
+        p("  Round Activity:")
         for rd in r.rounds:
             bar = "█" * rd.success_count + "░" * rd.fail_count
-            print(f"    R{rd.round_num:>3}: {bar} ({rd.success_count} ok, {rd.fail_count} fail, ${rd.total_volume / 100:.2f})")
+            p(f"    R{rd.round_num:>3}: {bar} ({rd.success_count} ok, {rd.fail_count} fail, ${rd.total_volume / 100:.2f})")
 
-        print()
-
-        # Agent spending summary
+        p()
         top_spenders = sorted(self.agents, key=lambda a: a.spent, reverse=True)[:5]
-        print("  Top 5 Spenders:")
+        p("  Top 5 Spenders:")
         for a in top_spenders:
-            print(f"    {a.name:<15} ${a.spent / 100:>8.2f} / ${a.budget / 100:.2f} budget")
+            p(f"    {a.name:<15} ${a.spent / 100:>8.2f} / ${a.budget / 100:.2f} budget")
 
-        print("\n" + "=" * 70)
+        p("\n" + "=" * 70)
 
 
 async def main():
     """Run a simulation. Config from env vars or defaults."""
     import os
 
-    num_agents = int(os.environ.get("MERIDIAN_AGENTS", "50"))
-    num_rounds = int(os.environ.get("MERIDIAN_ROUNDS", "10"))
-    engine_url = os.environ.get("MERIDIAN_ENGINE_URL", "http://localhost:4080")
-    seed = int(os.environ.get("MERIDIAN_SEED", "42"))
-
     config = SimulationConfig(
-        num_agents=num_agents,
-        num_rounds=num_rounds,
+        num_agents=int(os.environ.get("MERIDIAN_AGENTS", "50")),
+        num_rounds=int(os.environ.get("MERIDIAN_ROUNDS", "10")),
         protocols=[Protocol.ACP, Protocol.X402, Protocol.AP2, Protocol.MPP, Protocol.ATXP],
-        engine_url=engine_url,
-        seed=seed,
+        engine_url=os.environ.get("MERIDIAN_ENGINE_URL", "http://localhost:4080"),
+        seed=int(os.environ.get("MERIDIAN_SEED", "42")),
     )
 
     engine = SimulationEngine(config)
     await engine.run()
-
-    # Only print report to stderr so stdout stays clean JSON for streaming
-    import io
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
     engine.print_report()
-    report = sys.stdout.getvalue()
-    sys.stdout = old_stdout
-    print(report, file=sys.stderr)
 
 
 if __name__ == "__main__":
