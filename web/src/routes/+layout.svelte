@@ -1,191 +1,83 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
-
 	let { children } = $props();
 
-	const NAV_ITEMS = [
+	const NAV = [
 		{ href: '/', label: 'Dashboard' },
 		{ href: '/sim', label: 'Simulation' },
 		{ href: '/protocols', label: 'Protocols' },
 	];
 
-	const PROTOCOLS = [
-		{ name: 'ACP', color: '#3b82f6' },
-		{ name: 'x402', color: '#10b981' },
-		{ name: 'AP2', color: '#ef4444' },
-		{ name: 'MPP', color: '#8b5cf6' },
-		{ name: 'ATXP', color: '#f59e0b' },
+	const PROTOS = [
+		{ n: 'ACP', c: 'var(--acp)' },
+		{ n: 'x402', c: 'var(--x402)' },
+		{ n: 'AP2', c: 'var(--ap2)' },
+		{ n: 'MPP', c: 'var(--mpp)' },
+		{ n: 'ATXP', c: 'var(--atxp)' },
 	];
 </script>
 
-<svelte:head>
-	<title>Meridian</title>
-</svelte:head>
+<svelte:head><title>Meridian</title></svelte:head>
 
-<div class="app-shell">
-	<!-- MiroFish-style header: 60px height, black bg, clean type -->
-	<header class="app-header">
-		<div class="header-left">
-			<a href="/" class="brand">
-				<span class="brand-mark">M</span>
-				<span class="brand-name">Meridian</span>
+<div style="min-height:100vh; display:flex; flex-direction:column;">
+	<header style="
+		height: 56px;
+		padding: 0 24px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		border-bottom: 1px solid var(--bd);
+		background: var(--bg-1);
+		flex-shrink: 0;
+		position: relative;
+	">
+		<div style="display:flex; align-items:center; gap:10px;">
+			<a href="/" style="text-decoration:none; display:flex; align-items:center; gap:8px;">
+				<span style="font-family:var(--mono); font-weight:800; font-size:18px; color:var(--acp); letter-spacing:1px;">M</span>
+				<span style="font-weight:600; font-size:15px; color:var(--tx-1); letter-spacing:-0.02em;">Meridian</span>
 			</a>
-			<span class="version-badge">v0.1.0</span>
+			<span style="font-family:var(--mono); font-size:10px; color:var(--tx-3); background:var(--bg-3); padding:2px 6px; border-radius:2px;">v0.1</span>
 		</div>
 
-		<nav class="header-center">
-			{#each NAV_ITEMS as item}
+		<nav style="
+			position: absolute;
+			left: 50%;
+			transform: translateX(-50%);
+			display: flex;
+			gap: 2px;
+			background: var(--bg-2);
+			padding: 3px;
+			border-radius: 6px;
+		">
+			{#each NAV as item}
 				<a
 					href={item.href}
-					class="nav-link"
-					class:active={page.url.pathname === item.href}
-				>
-					{item.label}
-				</a>
+					style="
+						font-size: 12px;
+						font-weight: 600;
+						color: {page.url.pathname === item.href ? 'var(--tx-1)' : 'var(--tx-3)'};
+						text-decoration: none;
+						padding: 5px 14px;
+						border-radius: 4px;
+						background: {page.url.pathname === item.href ? 'var(--bg-4)' : 'transparent'};
+						transition: all 0.2s;
+					"
+				>{item.label}</a>
 			{/each}
 		</nav>
 
-		<div class="header-right">
-			{#each PROTOCOLS as proto}
-				<div class="proto-indicator">
-					<span class="proto-dot" style="background: {proto.color}"></span>
-					<span class="proto-label">{proto.name}</span>
+		<div style="display:flex; align-items:center; gap:14px;">
+			{#each PROTOS as p}
+				<div style="display:flex; align-items:center; gap:4px;">
+					<span style="width:6px; height:6px; border-radius:50%; background:{p.c};"></span>
+					<span style="font-family:var(--mono); font-size:10px; font-weight:600; color:var(--tx-3);">{p.n}</span>
 				</div>
 			{/each}
 		</div>
 	</header>
 
-	<main class="app-main">
+	<main style="flex:1; padding:28px 32px; max-width:1400px; width:100%; margin:0 auto;">
 		{@render children()}
 	</main>
 </div>
-
-<style>
-	.app-shell {
-		min-height: 100vh;
-		display: flex;
-		flex-direction: column;
-	}
-
-	/* Header — MiroFish pattern: 60px, clean, monochrome */
-	.app-header {
-		height: 60px;
-		padding: 0 24px;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface-1);
-		z-index: 100;
-		flex-shrink: 0;
-	}
-
-	.header-left {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.brand {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		text-decoration: none;
-		color: var(--color-text-primary);
-	}
-
-	.brand-mark {
-		font-family: var(--font-mono);
-		font-weight: 800;
-		font-size: 18px;
-		letter-spacing: 1px;
-		color: var(--color-protocol-acp);
-	}
-
-	.brand-name {
-		font-family: var(--font-sans);
-		font-weight: 600;
-		font-size: 16px;
-		letter-spacing: -0.02em;
-	}
-
-	.version-badge {
-		font-family: var(--font-mono);
-		font-size: 10px;
-		font-weight: 500;
-		color: var(--color-text-muted);
-		background: var(--color-surface-3);
-		padding: 2px 6px;
-		border-radius: 2px;
-		letter-spacing: 0.03em;
-	}
-
-	/* Center nav — MiroFish uses absolute centering */
-	.header-center {
-		position: absolute;
-		left: 50%;
-		transform: translateX(-50%);
-		display: flex;
-		gap: 4px;
-		background: var(--color-surface-2);
-		padding: 4px;
-		border-radius: 6px;
-	}
-
-	.nav-link {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--color-text-muted);
-		text-decoration: none;
-		padding: 6px 16px;
-		border-radius: 4px;
-		transition: all 0.2s;
-	}
-
-	.nav-link:hover {
-		color: var(--color-text-secondary);
-	}
-
-	.nav-link.active {
-		color: var(--color-text-primary);
-		background: var(--color-surface-4);
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-	}
-
-	/* Protocol indicators */
-	.header-right {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
-
-	.proto-indicator {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-	}
-
-	.proto-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-	}
-
-	.proto-label {
-		font-family: var(--font-mono);
-		font-size: 10px;
-		font-weight: 600;
-		color: var(--color-text-muted);
-		letter-spacing: 0.03em;
-	}
-
-	/* Main content */
-	.app-main {
-		flex: 1;
-		padding: 24px;
-		max-width: 1400px;
-		width: 100%;
-		margin: 0 auto;
-	}
-</style>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	interface ProtocolMetrics {
+	interface Proto {
 		protocol: string;
 		total_transactions: number;
 		successful_transactions: number;
@@ -11,147 +11,134 @@
 		avg_settlement_ms: number;
 		avg_authorization_ms: number;
 		micropayment_count: number;
-		refund_count: number;
 	}
 
 	interface Product {
 		id: string;
 		name: string;
+		description: string;
 		base_price: number;
 		category: string;
 		available_quantity: number;
+		requires_shipping: boolean;
 	}
 
-	const ENGINE_URL = 'http://localhost:4080';
-	const PROTOCOL_COLORS: Record<string, string> = {
-		acp: 'text-protocol-acp',
-		ap2: 'text-protocol-ap2',
-		x402: 'text-protocol-x402',
-		mpp: 'text-protocol-mpp',
-		atxp: 'text-protocol-atxp'
-	};
-	const PROTOCOL_BG: Record<string, string> = {
-		acp: 'bg-protocol-acp/10 border-protocol-acp/20',
-		ap2: 'bg-protocol-ap2/10 border-protocol-ap2/20',
-		x402: 'bg-protocol-x402/10 border-protocol-x402/20',
-		mpp: 'bg-protocol-mpp/10 border-protocol-mpp/20',
-		atxp: 'bg-protocol-atxp/10 border-protocol-atxp/20'
+	const ENGINE = 'http://localhost:4080';
+	const COLORS: Record<string, string> = {
+		acp: 'var(--acp)', ap2: 'var(--ap2)', x402: 'var(--x402)',
+		mpp: 'var(--mpp)', atxp: 'var(--atxp)'
 	};
 
-	let metrics = $state<ProtocolMetrics[]>([]);
+	let protos = $state<Proto[]>([]);
 	let products = $state<Product[]>([]);
-	let engineOnline = $state(false);
+	let online = $state(false);
 	let loading = $state(true);
 
-	function cents(amount: number): string {
-		return `$${(amount / 100).toFixed(2)}`;
-	}
+	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
+	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
+	function pct(a: number, b: number) { return b > 0 ? `${((a / b) * 100).toFixed(2)}%` : '—'; }
 
-	async function fetchData() {
+	async function refresh() {
 		try {
-			const [healthRes, metricsRes, productsRes] = await Promise.all([
-				fetch(`${ENGINE_URL}/health`),
-				fetch(`${ENGINE_URL}/metrics`),
-				fetch(`${ENGINE_URL}/products`)
+			const [h, m, p] = await Promise.all([
+				fetch(`${ENGINE}/health`),
+				fetch(`${ENGINE}/metrics`),
+				fetch(`${ENGINE}/products`)
 			]);
-			engineOnline = healthRes.ok;
-			const metricsData = await metricsRes.json();
-			metrics = metricsData.protocols;
-			products = await productsRes.json();
-		} catch {
-			engineOnline = false;
-		} finally {
-			loading = false;
-		}
+			online = h.ok;
+			protos = ((await m.json()) as { protocols: Proto[] }).protocols
+				.sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
+			products = await p.json();
+		} catch { online = false; }
+		loading = false;
 	}
 
-	onMount(() => {
-		fetchData();
-		const interval = setInterval(fetchData, 3000);
-		return () => clearInterval(interval);
-	});
+	onMount(() => { refresh(); const i = setInterval(refresh, 3000); return () => clearInterval(i); });
 </script>
 
-<div class="max-w-7xl mx-auto space-y-8">
-	<!-- Header -->
-	<div class="flex items-center justify-between">
+<div>
+	<!-- Header row -->
+	<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:28px;">
 		<div>
-			<h1 class="text-2xl font-semibold tracking-tight">Protocol Comparison Dashboard</h1>
-			<p class="text-text-secondary text-sm mt-1">
-				Real-time metrics across 5 agentic commerce protocols
-			</p>
+			<h1 style="font-size:22px; font-weight:600; letter-spacing:-0.03em;">Protocol Comparison</h1>
+			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Real-time metrics across 5 agentic commerce protocols</p>
 		</div>
-		<div class="flex items-center gap-2">
-			<span
-				class="w-2 h-2 rounded-full {engineOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}"
-			></span>
-			<span class="text-xs font-mono text-text-muted">
-				Engine {engineOnline ? 'online' : 'offline'} · :4080
+		<div style="display:flex; align-items:center; gap:8px;">
+			<span style="
+				width:8px; height:8px; border-radius:50%;
+				background:{online ? '#10b981' : '#ef4444'};
+				{online ? 'animation: pulse 2s infinite;' : ''}
+			"></span>
+			<span style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">
+				Engine {online ? 'online' : 'offline'} · :4080
 			</span>
 		</div>
 	</div>
 
 	{#if loading}
-		<div class="text-center py-20 text-text-muted">Loading...</div>
+		<div style="text-align:center; padding:80px 0; color:var(--tx-3); font-size:14px;">Loading...</div>
 	{:else}
-		<!-- Protocol cards grid -->
-		<div class="grid grid-cols-5 gap-4">
-			{#each metrics as proto}
-				<div
-					class="border rounded-lg p-4 space-y-3 {PROTOCOL_BG[proto.protocol] ?? 'bg-surface-1 border-border'}"
-				>
-					<div class="flex items-center justify-between">
-						<span class="font-mono font-semibold {PROTOCOL_COLORS[proto.protocol] ?? ''}">
-							{proto.protocol.toUpperCase()}
+		<!-- Protocol cards -->
+		<div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin-bottom:32px;">
+			{#each protos as p}
+				{@const color = COLORS[p.protocol] ?? '#888'}
+				{@const vol = p.total_volume_cents}
+				{@const fees = p.total_fees_cents}
+				{@const maxExec = protos[protos.length - 1]?.avg_settlement_ms || 1}
+				<div style="
+					background: var(--bg-1);
+					border: 1px solid var(--bd);
+					border-radius: 6px;
+					padding: 18px;
+					transition: border-color 0.2s;
+				" onmouseenter={(e) => e.currentTarget.style.borderColor = color}
+				   onmouseleave={(e) => e.currentTarget.style.borderColor = 'var(--bd)'}>
+
+					<!-- Header -->
+					<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+						<span style="width:8px; height:8px; border-radius:50%; background:{color};"></span>
+						<span style="font-family:var(--mono); font-weight:700; font-size:13px; color:{color};">
+							{p.protocol.toUpperCase()}
 						</span>
-						<span class="text-xs font-mono text-text-muted">
-							{proto.avg_settlement_ms}ms
+						<span style="margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--tx-3);">
+							{ms(p.avg_settlement_ms)}
 						</span>
 					</div>
 
-					<div class="space-y-2 text-sm">
-						<div class="flex justify-between">
-							<span class="text-text-muted">Transactions</span>
-							<span class="font-mono">{proto.total_transactions}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-text-muted">Volume</span>
-							<span class="font-mono">{cents(proto.total_volume_cents)}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-text-muted">Fees</span>
-							<span class="font-mono">{cents(proto.total_fees_cents)}</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-text-muted">Success Rate</span>
-							<span class="font-mono">
-								{proto.total_transactions > 0
-									? ((proto.successful_transactions / proto.total_transactions) * 100).toFixed(1)
-									: '—'}%
+					<!-- Stats -->
+					<div style="display:flex; flex-direction:column; gap:8px; margin-top:12px;">
+						<div style="display:flex; justify-content:space-between; font-size:12px;">
+							<span style="color:var(--tx-3);">Transactions</span>
+							<span style="font-family:var(--mono); font-weight:500;">
+								{p.successful_transactions}<span style="color:var(--tx-3);">/{p.total_transactions}</span>
 							</span>
 						</div>
-						<div class="flex justify-between">
-							<span class="text-text-muted">Micropayments</span>
-							<span class="font-mono">{proto.micropayment_count}</span>
+						<div style="display:flex; justify-content:space-between; font-size:12px;">
+							<span style="color:var(--tx-3);">Volume</span>
+							<span style="font-family:var(--mono); font-weight:500;">{fmt(vol)}</span>
+						</div>
+						<div style="display:flex; justify-content:space-between; font-size:12px;">
+							<span style="color:var(--tx-3);">Fees</span>
+							<span style="font-family:var(--mono); font-weight:500;">
+								{fmt(fees)} <span style="color:var(--tx-3);">({pct(fees, vol)})</span>
+							</span>
+						</div>
+						<div style="display:flex; justify-content:space-between; font-size:12px;">
+							<span style="color:var(--tx-3);">Micropayments</span>
+							<span style="font-family:var(--mono); font-weight:500;">{p.micropayment_count}</span>
 						</div>
 					</div>
 
-					<!-- Settlement bar -->
-					<div class="pt-2">
-						<div class="text-xs text-text-muted mb-1">Settlement Latency</div>
-						<div class="h-1.5 bg-surface-0 rounded-full overflow-hidden">
-							<div
-								class="h-full rounded-full {proto.protocol === 'x402'
-									? 'bg-protocol-x402'
-									: proto.protocol === 'atxp'
-										? 'bg-protocol-atxp'
-										: proto.protocol === 'mpp'
-											? 'bg-protocol-mpp'
-											: proto.protocol === 'ap2'
-												? 'bg-protocol-ap2'
-												: 'bg-protocol-acp'}"
-								style="width: {Math.min((proto.avg_settlement_ms / 3000) * 100, 100)}%"
-							></div>
+					<!-- Exec bar -->
+					<div style="margin-top:14px;">
+						<div style="height:3px; background:var(--bg-0); border-radius:2px; overflow:hidden;">
+							<div style="
+								height:100%;
+								border-radius:2px;
+								background:{color};
+								width:{Math.min((p.avg_settlement_ms / maxExec) * 100, 100)}%;
+								transition: width 0.5s ease;
+							"></div>
 						</div>
 					</div>
 				</div>
@@ -160,28 +147,40 @@
 
 		<!-- Product catalog -->
 		<div>
-			<h2 class="text-lg font-semibold mb-3">Product Catalog</h2>
-			<div class="grid grid-cols-3 gap-3">
-				{#each products as product}
-					<div class="bg-surface-1 border border-border rounded-lg p-4">
-						<div class="flex justify-between items-start">
+			<h2 style="font-size:16px; font-weight:600; margin-bottom:14px; letter-spacing:-0.02em;">Product Catalog</h2>
+			<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
+				{#each products as prod}
+					<div style="
+						background: var(--bg-1);
+						border: 1px solid var(--bd);
+						border-radius: 6px;
+						padding: 16px;
+					">
+						<div style="display:flex; justify-content:space-between; align-items:flex-start;">
 							<div>
-								<div class="font-medium">{product.name}</div>
-								<div class="text-xs text-text-muted font-mono mt-1">{product.id}</div>
+								<div style="font-weight:500; font-size:14px;">{prod.name}</div>
+								<div style="font-family:var(--mono); font-size:10px; color:var(--tx-3); margin-top:3px;">{prod.id}</div>
 							</div>
-							<span class="text-amber-500 font-mono font-semibold">
-								{cents(product.base_price)}
+							<span style="font-family:var(--mono); font-weight:600; font-size:14px; color:var(--atxp);">
+								{fmt(prod.base_price)}
 							</span>
 						</div>
-						<div class="flex items-center gap-2 mt-3">
-							<span
-								class="text-xs px-2 py-0.5 rounded bg-surface-2 text-text-secondary"
-							>
-								{product.category}
+						<p style="font-size:12px; color:var(--tx-2); margin-top:8px; line-height:1.5;">{prod.description}</p>
+						<div style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+							<span style="
+								font-size:10px;
+								padding:2px 8px;
+								border-radius:2px;
+								background:var(--bg-3);
+								color:var(--tx-2);
+								font-weight:500;
+							">{prod.category}</span>
+							<span style="font-size:10px; color:var(--tx-3);">
+								{prod.available_quantity.toLocaleString()} in stock
 							</span>
-							<span class="text-xs text-text-muted">
-								{product.available_quantity} in stock
-							</span>
+							{#if !prod.requires_shipping}
+								<span style="font-size:10px; color:var(--x402); font-weight:500;">Digital</span>
+							{/if}
 						</div>
 					</div>
 				{/each}
@@ -189,3 +188,9 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	@keyframes pulse {
+		50% { opacity: 0.4; }
+	}
+</style>

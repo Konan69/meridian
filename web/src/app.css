@@ -1,149 +1,46 @@
 @import 'tailwindcss';
 
-@theme {
-  /* Meridian Design System — dark adaptation of MiroFish patterns */
-
+:root {
   /* Protocol colors */
-  --color-protocol-acp: #3b82f6;
-  --color-protocol-ap2: #ef4444;
-  --color-protocol-x402: #10b981;
-  --color-protocol-mpp: #8b5cf6;
-  --color-protocol-atxp: #f59e0b;
+  --acp: #3b82f6;
+  --ap2: #ef4444;
+  --x402: #10b981;
+  --mpp: #8b5cf6;
+  --atxp: #f59e0b;
 
-  /* Blue scale (trust) */
-  --color-blue-400: #60a5fa;
-  --color-blue-500: #3b82f6;
-  --color-blue-600: #2563eb;
-  --color-blue-700: #1e40af;
-
-  /* Amber scale (commerce) */
-  --color-amber-400: #fbbf24;
-  --color-amber-500: #f59e0b;
-  --color-amber-600: #d97706;
-
-  /* Surfaces — dark mode (MiroFish's grays inverted) */
-  --color-surface-0: #09090b;
-  --color-surface-1: #111113;
-  --color-surface-2: #18181b;
-  --color-surface-3: #1f1f23;
-  --color-surface-4: #27272a;
+  /* Surfaces */
+  --bg-0: #09090b;
+  --bg-1: #111113;
+  --bg-2: #18181b;
+  --bg-3: #1f1f23;
+  --bg-4: #27272a;
 
   /* Text */
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-muted: #52525b;
+  --tx-1: #fafafa;
+  --tx-2: #a1a1aa;
+  --tx-3: #52525b;
 
-  /* Borders */
-  --color-border: #27272a;
-  --color-border-active: #3b82f6;
+  /* Border */
+  --bd: #27272a;
 
-  /* Status */
-  --color-success: #1a936f;
-  --color-error: #ef4444;
-  --color-warning: #f59e0b;
-  --color-processing: #8b5cf6;
-
-  /* Fonts — matching MiroFish's Space Grotesk + JetBrains Mono */
-  --font-sans: 'Space Grotesk', 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  /* Fonts */
+  --sans: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
 }
 
-/* Global resets — adapted from MiroFish App.vue */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-html {
-  color-scheme: dark;
-}
+html { color-scheme: dark; }
 
 body {
-  background-color: var(--color-surface-0);
-  color: var(--color-text-primary);
-  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--tx-1);
+  font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar — dark version of MiroFish's minimal scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-surface-4);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 3px; }
 
-/* Monospace elements */
-code, pre, .mono {
-  font-family: var(--font-mono);
-}
-
-/* Buttons inherit font */
-button {
-  font-family: inherit;
-}
-
-/* MiroFish-style dot grid background (for graph panels) */
-.dot-grid {
-  background-image: radial-gradient(var(--color-surface-4) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
-/* MiroFish-style backdrop blur for sticky headers */
-.blur-header {
-  background: rgba(9, 9, 11, 0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-/* MiroFish-style terminal panel (for logs) */
-.terminal-panel {
-  background: #000;
-  color: #ddd;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-/* Transitions — MiroFish's cubic-bezier curves */
-.transition-panel {
-  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
-              opacity 0.3s ease,
-              transform 0.3s ease;
-}
-
-/* MiroFish pulse animation for processing indicators */
-@keyframes pulse {
-  50% { opacity: 0.5; }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes breathe {
-  0%, 100% {
-    opacity: 0.7;
-    transform: scale(1);
-    filter: drop-shadow(0 0 2px rgba(59, 130, 246, 0.3));
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.15);
-    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.6));
-  }
-}
-
-@keyframes ripple {
-  0% { transform: scale(0.8); opacity: 1; }
-  100% { transform: scale(2.5); opacity: 0; }
-}
+button { font-family: inherit; cursor: pointer; }

@@ -1,245 +1,221 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-
-	const ENGINE = 'http://localhost:4080';
-	const PROTOCOL_META: Record<string, { color: string; label: string; desc: string }> = {
-		acp: { color: '#3b82f6', label: 'ACP', desc: 'Shared Payment Tokens · Card Rails' },
-		ap2: { color: '#ef4444', label: 'AP2', desc: 'Verifiable Digital Credentials · Multi-Rail' },
-		x402: { color: '#10b981', label: 'x402', desc: 'HTTP 402 · USDC On-Chain' },
-		mpp: { color: '#8b5cf6', label: 'MPP', desc: 'Session Streaming · Multi-Rail' },
-		atxp: { color: '#f59e0b', label: 'ATXP', desc: 'Mandate Engine · Agent-to-Agent' }
+	const COLORS: Record<string, string> = {
+		acp: 'var(--acp)', ap2: 'var(--ap2)', x402: 'var(--x402)',
+		mpp: 'var(--mpp)', atxp: 'var(--atxp)'
+	};
+	const LABELS: Record<string, string> = {
+		acp: 'ACP · Card Rails', ap2: 'AP2 · VDC Multi-Rail', x402: 'x402 · USDC On-Chain',
+		mpp: 'MPP · Session Streaming', atxp: 'ATXP · Mandate Engine'
 	};
 
-	interface SimEvent { type: string; [key: string]: unknown; }
-	interface ProtoMetrics {
-		protocol: string; total_transactions: number; successful_transactions: number;
-		failed_transactions: number; total_volume_cents: number; total_fees_cents: number;
-		avg_settlement_ms: number; micropayment_count: number;
-	}
+	interface SimEvent { type: string; [k: string]: unknown; }
+	interface PM { protocol: string; total_transactions: number; successful_transactions: number; failed_transactions: number; total_volume_cents: number; total_fees_cents: number; avg_settlement_ms: number; micropayment_count: number; }
 
 	let events = $state<SimEvent[]>([]);
 	let running = $state(false);
 	let complete = $state(false);
-	let finalMetrics = $state<ProtoMetrics[]>([]);
+	let metrics = $state<PM[]>([]);
 	let numAgents = $state(50);
 	let numRounds = $state(10);
-	let elapsed = $state('0.0s');
 	let totalTxns = $state(0);
-	let totalVolume = $state(0);
+	let totalVol = $state(0);
+	let elapsed = $state('');
 
-	function cents(n: number) { return `$${(n / 100).toFixed(2)}`; }
+	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
+	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
 
 	let purchases = $derived(events.filter(e => e.type === 'purchase'));
-	let failures = $derived(events.filter(e => e.type === 'purchase_failed'));
-	let roundEvents = $derived(events.filter(e => e.type === 'round_complete'));
+	let rounds = $derived(events.filter(e => e.type === 'round_complete'));
 
-	async function runSimulation() {
-		events = [];
-		running = true;
-		complete = false;
-		finalMetrics = [];
-		totalTxns = 0;
-		totalVolume = 0;
-
+	async function run() {
+		events = []; running = true; complete = false; metrics = [];
 		try {
 			const res = await fetch('/api/simulate', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ agents: numAgents, rounds: numRounds })
 			});
-
 			const reader = res.body?.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-
+			const dec = new TextDecoder();
+			let buf = '';
 			while (reader) {
 				const { done, value } = await reader.read();
 				if (done) break;
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split('\n');
-				buffer = lines.pop() || '';
-
-				for (const line of lines) {
-					if (!line.trim()) continue;
+				buf += dec.decode(value, { stream: true });
+				const lines = buf.split('\n');
+				buf = lines.pop() || '';
+				for (const l of lines) {
+					if (!l.trim()) continue;
 					try {
-						const event: SimEvent = JSON.parse(line);
-						events = [...events, event];
-						if (event.type === 'simulation_complete') {
+						const ev: SimEvent = JSON.parse(l);
+						events = [...events, ev];
+						if (ev.type === 'simulation_complete') {
 							complete = true;
-							elapsed = `${event.duration_seconds}s`;
-							totalTxns = event.total_transactions as number;
-							totalVolume = event.total_volume_cents as number;
-							const summaries = event.protocol_summaries as Record<string, ProtoMetrics>;
-							finalMetrics = Object.values(summaries).sort(
-								(a, b) => a.avg_settlement_ms - b.avg_settlement_ms
-							);
+							elapsed = `${ev.duration_seconds}s`;
+							totalTxns = ev.total_transactions as number;
+							totalVol = ev.total_volume_cents as number;
+							metrics = Object.values(ev.protocol_summaries as Record<string, PM>)
+								.sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
 						}
-					} catch { /* skip */ }
+					} catch {}
 				}
 			}
-		} catch (e) {
-			events = [...events, { type: 'error', message: String(e) }];
-		} finally {
-			running = false;
-		}
+		} catch (e) { events = [...events, { type: 'error', message: String(e) }]; }
+		running = false;
 	}
 </script>
 
-<div class="sim-page">
+<div>
 	<!-- Header -->
-	<div class="sim-header">
-		<div class="sim-title-group">
-			<h1 class="sim-title">Simulation</h1>
-			<p class="sim-subtitle">Protocol comparison across flat agent distribution</p>
+	<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+		<div>
+			<h1 style="font-size:22px; font-weight:600; letter-spacing:-0.03em;">Simulation</h1>
+			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Flat round-robin protocol distribution for fair comparison</p>
 		</div>
-		<div class="sim-controls">
-			<div class="control-field">
-				<label class="control-label">AGENTS</label>
-				<input type="number" bind:value={numAgents} min="10" max="1000" class="control-input" />
-			</div>
-			<div class="control-field">
-				<label class="control-label">ROUNDS</label>
-				<input type="number" bind:value={numRounds} min="1" max="100" class="control-input" />
-			</div>
-			<button onclick={runSimulation} disabled={running} class="run-btn" class:running>
-				{#if running}
-					<span class="spinner"></span>
-					Running...
-				{:else}
-					Run Simulation
-				{/if}
+		<div style="display:flex; align-items:center; gap:14px;">
+			<label style="display:flex; flex-direction:column; gap:2px;">
+				<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Agents</span>
+				<input type="number" bind:value={numAgents} min="10" max="1000" style="
+					width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
+					padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
+				" />
+			</label>
+			<label style="display:flex; flex-direction:column; gap:2px;">
+				<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Rounds</span>
+				<input type="number" bind:value={numRounds} min="1" max="100" style="
+					width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
+					padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
+				" />
+			</label>
+			<button onclick={run} disabled={running} style="
+				padding:8px 20px; border-radius:4px; border:none; font-size:12px; font-weight:600;
+				background:{running ? 'var(--bg-3)' : 'var(--acp)'}; color:{running ? 'var(--tx-3)' : '#fff'};
+				margin-top:14px; display:flex; align-items:center; gap:6px;
+			">
+				{#if running}<span class="spin"></span>Running...{:else}Run Simulation{/if}
 			</button>
 		</div>
 	</div>
 
 	{#if complete}
-		<!-- Summary bar -->
-		<div class="summary-bar">
-			<div class="summary-stat">
-				<span class="summary-value">{totalTxns}</span>
-				<span class="summary-label">TRANSACTIONS</span>
-			</div>
-			<div class="summary-stat">
-				<span class="summary-value">{cents(totalVolume)}</span>
-				<span class="summary-label">VOLUME</span>
-			</div>
-			<div class="summary-stat">
-				<span class="summary-value">{elapsed}</span>
-				<span class="summary-label">DURATION</span>
-			</div>
-			<div class="summary-stat">
-				<span class="summary-value">{numAgents}</span>
-				<span class="summary-label">AGENTS</span>
-			</div>
-		</div>
-
-		<!-- Protocol comparison -->
-		<div class="proto-grid">
-			{#each finalMetrics as p}
-				{@const meta = PROTOCOL_META[p.protocol]}
-				{@const vol = p.total_volume_cents}
-				{@const fees = p.total_fees_cents}
-				{@const feePct = vol > 0 ? ((fees / vol) * 100).toFixed(2) : '0.00'}
-				<div class="proto-card" style="--proto-color: {meta?.color ?? '#888'}">
-					<div class="proto-card-header">
-						<span class="proto-dot"></span>
-						<span class="proto-name">{meta?.label ?? p.protocol}</span>
-						<span class="proto-exec">{p.avg_settlement_ms.toFixed(3)}ms</span>
-					</div>
-					<p class="proto-desc">{meta?.desc ?? ''}</p>
-					<div class="proto-stats">
-						<div class="proto-stat-row">
-							<span class="proto-stat-label">Transactions</span>
-							<span class="proto-stat-value">{p.successful_transactions}<span class="proto-stat-dim">/{p.total_transactions}</span></span>
-						</div>
-						<div class="proto-stat-row">
-							<span class="proto-stat-label">Volume</span>
-							<span class="proto-stat-value">{cents(vol)}</span>
-						</div>
-						<div class="proto-stat-row">
-							<span class="proto-stat-label">Fees</span>
-							<span class="proto-stat-value">{cents(fees)} <span class="proto-stat-dim">({feePct}%)</span></span>
-						</div>
-						<div class="proto-stat-row">
-							<span class="proto-stat-label">Failed</span>
-							<span class="proto-stat-value" class:has-failures={p.failed_transactions > 0}>{p.failed_transactions}</span>
-						</div>
-						<div class="proto-stat-row">
-							<span class="proto-stat-label">Micropayments</span>
-							<span class="proto-stat-value">{p.micropayment_count}</span>
-						</div>
-					</div>
-					<!-- Execution bar -->
-					<div class="exec-bar-container">
-						<div class="exec-bar" style="width: {Math.min((p.avg_settlement_ms / (finalMetrics[finalMetrics.length - 1]?.avg_settlement_ms || 1)) * 100, 100)}%"></div>
-					</div>
+		<!-- Summary -->
+		<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:1px; background:var(--bd); border-radius:6px; overflow:hidden; margin-bottom:20px;">
+			{#each [
+				{ v: totalTxns, l: 'TRANSACTIONS' },
+				{ v: fmt(totalVol), l: 'VOLUME' },
+				{ v: elapsed, l: 'DURATION' },
+				{ v: numAgents, l: 'AGENTS' },
+			] as s}
+				<div style="background:var(--bg-1); padding:16px; text-align:center;">
+					<div style="font-family:var(--mono); font-size:20px; font-weight:700;">{s.v}</div>
+					<div style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-top:4px;">{s.l}</div>
 				</div>
 			{/each}
 		</div>
+
+		<!-- Protocol results table -->
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; padding:20px; margin-bottom:20px;">
+			<h2 style="font-size:14px; font-weight:600; margin-bottom:14px;">Protocol Results</h2>
+			<table style="width:100%; border-collapse:collapse; font-size:12px;">
+				<thead>
+					<tr style="border-bottom:1px solid var(--bd); color:var(--tx-3); text-align:left;">
+						<th style="padding:8px 12px; font-weight:600;">Protocol</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Txns</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Volume</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Fees</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Fee %</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Avg Exec</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Failed</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Micro</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each metrics as p}
+						{@const c = COLORS[p.protocol]}
+						{@const v = p.total_volume_cents}
+						{@const f = p.total_fees_cents}
+						<tr style="border-bottom:1px solid var(--bg-3);">
+							<td style="padding:10px 12px;">
+								<span style="display:flex; align-items:center; gap:6px;">
+									<span style="width:8px; height:8px; border-radius:50%; background:{c};"></span>
+									<span style="font-family:var(--mono); font-weight:700; color:{c};">{p.protocol.toUpperCase()}</span>
+								</span>
+							</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{p.successful_transactions}<span style="color:var(--tx-3);">/{p.total_transactions}</span></td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{fmt(v)}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{fmt(f)}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{v > 0 ? ((f/v)*100).toFixed(2) : '0'}%</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{ms(p.avg_settlement_ms)}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono); color:{p.failed_transactions > 0 ? 'var(--ap2)' : 'var(--tx-3)'};">{p.failed_transactions}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{p.micropayment_count}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
-	<!-- Live feed grid -->
-	<div class="feed-grid">
-		<!-- Round progress -->
-		<div class="feed-panel">
-			<div class="feed-panel-header">
-				<span class="feed-panel-icon">
-					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-						<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-					</svg>
-				</span>
-				<span class="feed-panel-title">Round Progress</span>
-				<span class="feed-panel-count">{roundEvents.length}/{numRounds}</span>
+	<!-- Live feeds -->
+	<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+		<!-- Rounds -->
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; overflow:hidden;">
+			<div style="
+				padding:10px 16px; border-bottom:1px solid var(--bd); background:var(--bg-2);
+				display:flex; align-items:center; justify-content:space-between;
+			">
+				<span style="font-size:11px; font-weight:600; color:var(--tx-2); text-transform:uppercase; letter-spacing:0.05em;">Round Progress</span>
+				<span style="font-family:var(--mono); font-size:10px; color:var(--tx-3);">{rounds.length}/{numRounds}</span>
 			</div>
-			<div class="feed-panel-body">
-				{#each roundEvents as rd}
+			<div style="padding:10px 14px; max-height:340px; overflow-y:auto;">
+				{#each rounds as rd}
 					{@const r = rd as Record<string, unknown>}
-					<div class="round-row">
-						<span class="round-label">R{r.round}</span>
-						<div class="round-bar-track">
-							<div class="round-bar-fill" style="width: {((r.round as number) / numRounds) * 100}%"></div>
+					<div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:11px;">
+						<span style="font-family:var(--mono); color:var(--tx-3); width:28px; text-align:right;">R{r.round}</span>
+						<div style="flex:1; height:4px; background:var(--bg-0); border-radius:2px; overflow:hidden;">
+							<div style="height:100%; background:var(--acp); border-radius:2px; width:{((r.round as number)/numRounds)*100}%;"></div>
 						</div>
-						<span class="round-stats">
-							{r.success} ok · {r.failed} fail · {cents(r.volume_cents as number)}
+						<span style="font-family:var(--mono); font-size:10px; color:var(--tx-2); min-width:130px; text-align:right;">
+							{r.success} ok · {r.failed} fail · {fmt(r.volume_cents as number)}
 						</span>
 					</div>
 				{/each}
-				{#if running && roundEvents.length === 0}
-					<div class="feed-waiting"><span class="spinner-small"></span> Waiting for first round...</div>
+				{#if running && rounds.length === 0}
+					<div style="padding:20px; color:var(--tx-3); font-size:12px; display:flex; align-items:center; gap:8px;">
+						<span class="spin-sm"></span> Waiting...
+					</div>
 				{/if}
 			</div>
 		</div>
 
-		<!-- Live transactions -->
-		<div class="feed-panel">
-			<div class="feed-panel-header">
-				<span class="feed-panel-icon">
-					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M12 2v20M2 12h20"></path>
-					</svg>
-				</span>
-				<span class="feed-panel-title">Live Transactions</span>
-				<span class="feed-panel-count">{purchases.length}</span>
+		<!-- Transactions -->
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; overflow:hidden;">
+			<div style="
+				padding:10px 16px; border-bottom:1px solid var(--bd); background:var(--bg-2);
+				display:flex; align-items:center; justify-content:space-between;
+			">
+				<span style="font-size:11px; font-weight:600; color:var(--tx-2); text-transform:uppercase; letter-spacing:0.05em;">Live Transactions</span>
+				<span style="font-family:var(--mono); font-size:10px; color:var(--tx-3);">{purchases.length}</span>
 			</div>
-			<div class="feed-panel-body tx-feed">
+			<div style="padding:6px 10px; max-height:340px; overflow-y:auto; font-family:var(--mono); font-size:10px;">
 				{#each purchases.slice(-60) as tx}
 					{@const t = tx as Record<string, unknown>}
 					{@const proto = t.protocol as string}
-					<div class="tx-row">
-						<span class="tx-dot" style="background: {PROTOCOL_META[proto]?.color ?? '#888'}"></span>
-						<span class="tx-round">R{t.round}</span>
-						<span class="tx-agent">{t.agent}</span>
-						<span class="tx-arrow">→</span>
-						<span class="tx-product">{t.product}</span>
-						<span class="tx-amount">{cents(t.amount_cents as number)}</span>
-						<span class="tx-proto" style="color: {PROTOCOL_META[proto]?.color}">{proto.toUpperCase()}</span>
-						{#if t.fee_cents}
-							<span class="tx-fee">fee {cents(t.fee_cents as number)}</span>
-						{/if}
+					<div style="
+						display:flex; align-items:center; gap:5px; padding:3px 4px;
+						border-bottom:1px solid var(--bg-2);
+					">
+						<span style="width:5px; height:5px; border-radius:50%; background:{COLORS[proto]}; flex-shrink:0;"></span>
+						<span style="color:var(--tx-3); width:22px;">R{t.round}</span>
+						<span style="color:var(--tx-2); width:75px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{t.agent}</span>
+						<span style="color:var(--tx-3);">→</span>
+						<span style="flex:1; color:var(--tx-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{t.product}</span>
+						<span style="color:var(--atxp); font-weight:600; white-space:nowrap;">{fmt(t.amount_cents as number)}</span>
+						<span style="color:{COLORS[proto]}; font-weight:700; font-size:9px; width:34px; text-align:right;">{proto.toUpperCase()}</span>
 					</div>
 				{/each}
 				{#if running && purchases.length === 0}
-					<div class="feed-waiting"><span class="spinner-small"></span> Waiting for purchases...</div>
+					<div style="padding:20px; color:var(--tx-3); font-size:11px; display:flex; align-items:center; gap:8px;">
+						<span class="spin-sm"></span> Waiting...
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -247,367 +223,13 @@
 </div>
 
 <style>
-	.sim-page {
-		max-width: 1200px;
-		margin: 0 auto;
-		font-family: 'Inter', 'Space Grotesk', system-ui, sans-serif;
+	.spin, .spin-sm {
+		display:inline-block; border:2px solid transparent; border-top-color:currentColor;
+		border-radius:50%; animation:sp 0.6s linear infinite;
 	}
+	.spin { width:14px; height:14px; }
+	.spin-sm { width:10px; height:10px; border-width:1.5px; }
+	@keyframes sp { to { transform:rotate(360deg); } }
 
-	/* Header */
-	.sim-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 24px;
-	}
-	.sim-title {
-		font-size: 20px;
-		font-weight: 600;
-		letter-spacing: -0.02em;
-		color: var(--color-text-primary, #f0f0f5);
-	}
-	.sim-subtitle {
-		font-size: 12px;
-		color: var(--color-text-muted, #55556a);
-		margin-top: 2px;
-	}
-	.sim-controls {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
-	.control-field {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-	.control-label {
-		font-size: 8px;
-		font-weight: 600;
-		color: var(--color-text-muted, #55556a);
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-	}
-	.control-input {
-		width: 64px;
-		background: var(--color-surface-2, #1a1a24);
-		border: 1px solid var(--color-border, #2a2a38);
-		border-radius: 4px;
-		padding: 6px 8px;
-		color: var(--color-text-primary, #f0f0f5);
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 12px;
-	}
-	.control-input:focus {
-		outline: none;
-		border-color: var(--color-border-active, #3b82f6);
-	}
-	.run-btn {
-		padding: 8px 20px;
-		border-radius: 4px;
-		border: none;
-		font-size: 12px;
-		font-weight: 600;
-		letter-spacing: 0.02em;
-		cursor: pointer;
-		transition: all 0.2s;
-		background: #3b82f6;
-		color: #fff;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.run-btn:hover:not(:disabled) { background: #2563eb; }
-	.run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-	.run-btn.running { background: var(--color-surface-3, #22222e); color: var(--color-text-muted); }
-
-	/* Spinner */
-	.spinner, .spinner-small {
-		display: inline-block;
-		border: 2px solid transparent;
-		border-top-color: currentColor;
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
-	}
-	.spinner { width: 14px; height: 14px; }
-	.spinner-small { width: 10px; height: 10px; border-width: 1.5px; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-
-	/* Summary bar */
-	.summary-bar {
-		display: flex;
-		gap: 1px;
-		background: var(--color-border, #2a2a38);
-		border-radius: 4px;
-		overflow: hidden;
-		margin-bottom: 20px;
-	}
-	.summary-stat {
-		flex: 1;
-		background: var(--color-surface-1, #12121a);
-		padding: 12px 16px;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 2px;
-	}
-	.summary-value {
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 18px;
-		font-weight: 700;
-		color: var(--color-text-primary);
-	}
-	.summary-label {
-		font-size: 8px;
-		font-weight: 600;
-		color: var(--color-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.1em;
-	}
-
-	/* Protocol cards grid */
-	.proto-grid {
-		display: grid;
-		grid-template-columns: repeat(5, 1fr);
-		gap: 8px;
-		margin-bottom: 20px;
-	}
-	.proto-card {
-		background: var(--color-surface-1, #12121a);
-		border: 1px solid var(--color-border, #2a2a38);
-		border-radius: 4px;
-		padding: 14px;
-		transition: border-color 0.2s;
-	}
-	.proto-card:hover {
-		border-color: var(--proto-color);
-	}
-	.proto-card-header {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		margin-bottom: 4px;
-	}
-	.proto-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--proto-color);
-	}
-	.proto-name {
-		font-size: 12px;
-		font-weight: 700;
-		color: var(--proto-color);
-		font-family: 'JetBrains Mono', monospace;
-		letter-spacing: 0.03em;
-	}
-	.proto-exec {
-		margin-left: auto;
-		font-size: 10px;
-		font-family: 'JetBrains Mono', monospace;
-		color: var(--color-text-muted);
-	}
-	.proto-desc {
-		font-size: 9px;
-		color: var(--color-text-muted);
-		margin-bottom: 10px;
-		line-height: 1.3;
-	}
-	.proto-stats {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.proto-stat-row {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		font-size: 11px;
-	}
-	.proto-stat-label {
-		color: var(--color-text-muted);
-	}
-	.proto-stat-value {
-		font-family: 'JetBrains Mono', monospace;
-		font-weight: 500;
-		color: var(--color-text-primary);
-	}
-	.proto-stat-dim {
-		color: var(--color-text-muted);
-		font-weight: 400;
-	}
-	.has-failures {
-		color: #ef4444;
-	}
-	.exec-bar-container {
-		margin-top: 10px;
-		height: 3px;
-		background: var(--color-surface-0, #0a0a0f);
-		border-radius: 2px;
-		overflow: hidden;
-	}
-	.exec-bar {
-		height: 100%;
-		background: var(--proto-color);
-		border-radius: 2px;
-		transition: width 0.5s ease;
-	}
-
-	/* Feed grid */
-	.feed-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 12px;
-	}
-	.feed-panel {
-		background: var(--color-surface-1, #12121a);
-		border: 1px solid var(--color-border, #2a2a38);
-		border-radius: 4px;
-		overflow: hidden;
-	}
-	.feed-panel-header {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 10px 14px;
-		border-bottom: 1px solid var(--color-border, #2a2a38);
-		background: var(--color-surface-2, #1a1a24);
-	}
-	.feed-panel-icon {
-		color: var(--color-text-muted);
-	}
-	.feed-panel-title {
-		font-size: 11px;
-		font-weight: 600;
-		color: var(--color-text-secondary, #8888a0);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-	.feed-panel-count {
-		margin-left: auto;
-		font-size: 10px;
-		font-family: 'JetBrains Mono', monospace;
-		color: var(--color-text-muted);
-	}
-	.feed-panel-body {
-		padding: 8px;
-		max-height: 360px;
-		overflow-y: auto;
-	}
-	.feed-waiting {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 16px;
-		color: var(--color-text-muted);
-		font-size: 12px;
-	}
-
-	/* Round rows */
-	.round-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 6px;
-		font-size: 11px;
-	}
-	.round-label {
-		font-family: 'JetBrains Mono', monospace;
-		color: var(--color-text-muted);
-		width: 28px;
-		text-align: right;
-		font-size: 10px;
-	}
-	.round-bar-track {
-		flex: 1;
-		height: 4px;
-		background: var(--color-surface-0, #0a0a0f);
-		border-radius: 2px;
-		overflow: hidden;
-	}
-	.round-bar-fill {
-		height: 100%;
-		background: #3b82f6;
-		border-radius: 2px;
-		transition: width 0.3s ease;
-	}
-	.round-stats {
-		font-family: 'JetBrains Mono', monospace;
-		color: var(--color-text-secondary);
-		font-size: 10px;
-		white-space: nowrap;
-		min-width: 140px;
-		text-align: right;
-	}
-
-	/* Transaction rows */
-	.tx-feed {
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 10px;
-	}
-	.tx-row {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 6px;
-		border-bottom: 1px solid var(--color-surface-2, #1a1a24);
-		transition: background 0.15s;
-	}
-	.tx-row:hover {
-		background: var(--color-surface-2, #1a1a24);
-	}
-	.tx-dot {
-		width: 5px;
-		height: 5px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.tx-round {
-		color: var(--color-text-muted);
-		width: 24px;
-	}
-	.tx-agent {
-		color: var(--color-text-secondary);
-		width: 80px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.tx-arrow {
-		color: var(--color-text-muted);
-	}
-	.tx-product {
-		flex: 1;
-		color: var(--color-text-secondary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.tx-amount {
-		color: #f59e0b;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	.tx-proto {
-		font-weight: 700;
-		font-size: 9px;
-		width: 36px;
-		text-align: right;
-	}
-	.tx-fee {
-		color: var(--color-text-muted);
-		font-size: 9px;
-		white-space: nowrap;
-	}
-
-	/* Scrollbar styling */
-	.feed-panel-body::-webkit-scrollbar {
-		width: 4px;
-	}
-	.feed-panel-body::-webkit-scrollbar-track {
-		background: transparent;
-	}
-	.feed-panel-body::-webkit-scrollbar-thumb {
-		background: var(--color-surface-3, #22222e);
-		border-radius: 2px;
-	}
+	input:focus { outline:none; border-color:var(--acp); }
 </style>
