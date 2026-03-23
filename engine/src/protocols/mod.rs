@@ -7,7 +7,7 @@ pub mod x402;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::Instant;
 
 use crate::core::error::Result;
 use crate::core::types::{AgentWallet, Cents, ProtocolMetrics, SpendingConstraints};
@@ -37,7 +37,8 @@ pub struct PaymentResult {
     pub amount: Cents,
     pub currency: String,
     pub status: PaymentStatus,
-    pub settlement_time_ms: u64,
+    /// REAL measured execution time in microseconds
+    pub execution_us: u64,
     pub fee: Cents,
     pub protocol_data: serde_json::Value,
 }
@@ -51,15 +52,11 @@ pub enum PaymentStatus {
     Refunded,
 }
 
-// ---------------------------------------------------------------------------
-// Settlement / Refund results
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementResult {
     pub payment_id: String,
     pub settled: bool,
-    pub settlement_time_ms: u64,
+    pub execution_us: u64,
     pub final_amount: Cents,
     pub fee: Cents,
 }
@@ -70,11 +67,11 @@ pub struct RefundResult {
     pub original_payment_id: String,
     pub amount: Cents,
     pub success: bool,
-    pub processing_time: Duration,
+    pub execution_us: u64,
 }
 
 // ---------------------------------------------------------------------------
-// Shared metrics tracker with running averages
+// Metrics tracker — records REAL measured timings
 // ---------------------------------------------------------------------------
 
 pub struct MetricsTracker {
@@ -85,10 +82,9 @@ pub struct MetricsTracker {
     pub fees: AtomicU64,
     pub micropay_count: AtomicU64,
     pub refund_count: AtomicU64,
-    /// Sum of all settlement times in ms (divide by success_count for average)
-    pub total_settlement_ms: AtomicU64,
-    /// Sum of all auth times in ms
-    pub total_auth_ms: AtomicU64,
+    /// Sum of REAL execution times in microseconds
+    pub total_exec_us: AtomicU64,
+    pub total_auth_us: AtomicU64,
 }
 
 impl MetricsTracker {
@@ -101,128 +97,77 @@ impl MetricsTracker {
             fees: AtomicU64::new(0),
             micropay_count: AtomicU64::new(0),
             refund_count: AtomicU64::new(0),
-            total_settlement_ms: AtomicU64::new(0),
-            total_auth_ms: AtomicU64::new(0),
+            total_exec_us: AtomicU64::new(0),
+            total_auth_us: AtomicU64::new(0),
         }
     }
 
-    pub fn record_success(&self, amount: Cents, fee: Cents, settlement_ms: u64, is_micropayment: bool) {
+    pub fn record_success(&self, amount: Cents, fee: Cents, exec_us: u64, is_micro: bool) {
         self.txn_count.fetch_add(1, Ordering::Relaxed);
         self.success_count.fetch_add(1, Ordering::Relaxed);
         self.volume.fetch_add(amount, Ordering::Relaxed);
         self.fees.fetch_add(fee, Ordering::Relaxed);
-        self.total_settlement_ms.fetch_add(settlement_ms, Ordering::Relaxed);
-        if is_micropayment {
-            self.micropay_count.fetch_add(1, Ordering::Relaxed);
-        }
+        self.total_exec_us.fetch_add(exec_us, Ordering::Relaxed);
+        if is_micro { self.micropay_count.fetch_add(1, Ordering::Relaxed); }
     }
 
-    pub fn record_failure(&self) {
+    pub fn record_failure(&self, exec_us: u64) {
         self.txn_count.fetch_add(1, Ordering::Relaxed);
         self.fail_count.fetch_add(1, Ordering::Relaxed);
+        self.total_exec_us.fetch_add(exec_us, Ordering::Relaxed);
     }
 
-    pub fn avg_settlement_ms(&self) -> f64 {
+    pub fn record_auth(&self, auth_us: u64) {
+        self.total_auth_us.fetch_add(auth_us, Ordering::Relaxed);
+    }
+
+    pub fn to_metrics(&self, protocol: &str) -> ProtocolMetrics {
         let success = self.success_count.load(Ordering::Relaxed);
-        if success == 0 {
-            return 0.0;
-        }
-        self.total_settlement_ms.load(Ordering::Relaxed) as f64 / success as f64
-    }
+        let total = self.txn_count.load(Ordering::Relaxed);
+        let avg_exec = if total > 0 {
+            self.total_exec_us.load(Ordering::Relaxed) as f64 / total as f64 / 1000.0
+        } else { 0.0 };
+        let avg_auth = if success > 0 {
+            self.total_auth_us.load(Ordering::Relaxed) as f64 / success as f64 / 1000.0
+        } else { 0.0 };
 
-    pub fn to_metrics(&self, protocol: &str, base_auth_ms: f64) -> ProtocolMetrics {
         ProtocolMetrics {
             protocol: protocol.into(),
-            total_transactions: self.txn_count.load(Ordering::Relaxed),
-            successful_transactions: self.success_count.load(Ordering::Relaxed),
+            total_transactions: total,
+            successful_transactions: success,
             failed_transactions: self.fail_count.load(Ordering::Relaxed),
             total_volume_cents: self.volume.load(Ordering::Relaxed),
             total_fees_cents: self.fees.load(Ordering::Relaxed),
-            avg_settlement_ms: self.avg_settlement_ms(),
-            avg_authorization_ms: base_auth_ms,
+            avg_settlement_ms: avg_exec,
+            avg_authorization_ms: avg_auth,
             micropayment_count: self.micropay_count.load(Ordering::Relaxed),
             refund_count: self.refund_count.load(Ordering::Relaxed),
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Jittered latency — adds realistic variance
-// ---------------------------------------------------------------------------
-
-/// Add gaussian-like jitter to a base latency. Returns ms.
-/// Uses a simple triangle distribution (sum of 2 uniform randoms) for speed.
-pub fn jittered_ms(base_ms: u64, jitter_pct: f64) -> u64 {
-    let jitter_range = (base_ms as f64 * jitter_pct) as i64;
-    if jitter_range == 0 {
-        return base_ms;
-    }
-    // Triangle distribution: sum of two uniform randoms, centered on base
-    let r1 = rand_u64() % (jitter_range as u64 * 2);
-    let r2 = rand_u64() % (jitter_range as u64 * 2);
-    let offset = (r1 as i64 + r2 as i64) / 2 - jitter_range;
-    (base_ms as i64 + offset).max(1) as u64
-}
-
-/// Simple fast pseudo-random using thread-local state
-fn rand_u64() -> u64 {
-    use std::cell::Cell;
-    thread_local! {
-        static STATE: Cell<u64> = Cell::new(0x12345678_9abcdef0);
-    }
-    STATE.with(|s| {
-        let mut x = s.get();
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        s.set(x);
-        x
-    })
-}
-
-/// Simulate a failure based on a failure rate (0.0 to 1.0)
-pub fn should_fail(failure_rate: f64) -> bool {
-    if failure_rate <= 0.0 {
-        return false;
-    }
-    (rand_u64() % 10000) < (failure_rate * 10000.0) as u64
+/// Measure execution time of a closure in microseconds
+pub fn timed_us<F, R>(f: F) -> (R, u64)
+where F: FnOnce() -> R {
+    let start = Instant::now();
+    let result = f();
+    let elapsed = start.elapsed().as_micros() as u64;
+    (result, elapsed)
 }
 
 // ---------------------------------------------------------------------------
-// The trait — every protocol implements this
+// The trait
 // ---------------------------------------------------------------------------
 
 #[async_trait]
 pub trait ProtocolAdapter: Send + Sync {
     fn name(&self) -> &str;
-
-    async fn authorize(
-        &self,
-        wallet: &AgentWallet,
-        constraints: &SpendingConstraints,
-    ) -> Result<AuthToken>;
-
-    async fn pay(
-        &self,
-        token: &AuthToken,
-        amount: Cents,
-        merchant: &str,
-    ) -> Result<PaymentResult>;
-
+    async fn authorize(&self, wallet: &AgentWallet, constraints: &SpendingConstraints) -> Result<AuthToken>;
+    async fn pay(&self, token: &AuthToken, amount: Cents, merchant: &str) -> Result<PaymentResult>;
     async fn settle(&self, payment: &PaymentResult) -> Result<SettlementResult>;
-
     async fn refund(&self, payment: &PaymentResult, reason: &str) -> Result<RefundResult>;
-
     fn metrics(&self) -> ProtocolMetrics;
-
     fn fee_for(&self, amount: Cents) -> Cents;
-
-    fn settlement_latency_ms(&self) -> u64;
-
     fn supports_micropayments(&self) -> bool;
-
     fn autonomy_level(&self) -> f64;
-
-    /// Protocol-specific failure rate (0.0 to 1.0)
-    fn failure_rate(&self) -> f64;
 }

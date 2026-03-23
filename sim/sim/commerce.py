@@ -133,9 +133,9 @@ class CommerceClient:
                         try:
                             payment_data = json.loads(msg["content"])
                             fee = payment_data.get("fee_cents", 0)
-                            settlement_ms = payment_data.get("settlement_ms", 0)
+                            # execution_us is REAL measured time from the engine
+                            settlement_ms = payment_data.get("execution_us", 0) / 1000.0
                         except (json.JSONDecodeError, KeyError):
-                            # Fallback: estimate fee from formula
                             proto_enum = Protocol(protocol)
                             fee = PROTOCOL_FEE_FORMULAS.get(proto_enum, lambda a: 0)(total)
 

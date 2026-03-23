@@ -255,21 +255,30 @@ pub async fn complete_session(
         (total, protocol, currency)
     }; // lock dropped here
 
-    // Get protocol adapter and process payment (async, no lock held)
+    // Get protocol adapter and run FULL protocol flow: authorize → pay
     let adapter = state
         .protocols
         .get(&protocol_name)
         .ok_or_else(|| EngineError::ProtocolError(format!("unknown protocol: {protocol_name}")))?;
 
-    let auth_token = crate::protocols::AuthToken {
-        token_id: req.payment_token.clone(),
+    // 1. Authorize — creates real SPT/mandate/session/signed payload in the adapter
+    let wallet = crate::core::types::AgentWallet {
+        agent_id: req.payment_token.clone(),
+        balance: total,
         protocol: protocol_name.clone(),
-        max_amount: total,
-        currency,
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-        protocol_data: serde_json::json!({}),
+        credentials: serde_json::json!({}),
     };
+    let constraints = crate::core::types::SpendingConstraints {
+        max_amount: total,
+        currency: currency.clone(),
+        merchants: None,
+        categories: None,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        requires_confirmation: false,
+    };
+    let auth_token = adapter.authorize(&wallet, &constraints).await?;
 
+    // 2. Pay — validates the token that authorize() just created, runs real protocol logic
     let payment = adapter.pay(&auth_token, total, "meridian_merchant").await?;
 
     // Re-acquire lock and finalize
@@ -286,14 +295,14 @@ pub async fn complete_session(
     session.order = Some(Order::from_session(&session.id));
     session.updated_at = chrono::Utc::now();
 
-    // Add payment details as a message so the Python sim can read fee/settlement
+    // Add payment details as a message so the Python sim can read fee/execution time
     session.messages.push(Message {
         msg_type: "payment_result".into(),
         code: Some(payment.protocol.clone()),
         content: serde_json::json!({
             "payment_id": payment.payment_id,
             "fee_cents": payment.fee,
-            "settlement_ms": payment.settlement_time_ms,
+            "execution_us": payment.execution_us,
             "status": payment.status,
         }).to_string(),
     });

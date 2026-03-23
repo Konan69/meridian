@@ -58,6 +58,7 @@ class SimulationEngine:
         """Execute one round of the simulation."""
         summary = RoundSummary(round_num=round_num)
         tasks = []
+        proto_idx = 0  # flat round-robin across protocols
 
         for agent in self.agents:
             if agent.remaining_budget <= 0:
@@ -71,8 +72,9 @@ class SimulationEngine:
             if not agent.wants_to_buy(price, category, self.rng):
                 continue
 
-            # Agent intelligently picks protocol based on transaction type
-            protocol = agent.pick_protocol(price, self.config.protocols, self.rng)
+            # FLAT distribution: round-robin across protocols for fair comparison
+            protocol = self.config.protocols[proto_idx % len(self.config.protocols)].value
+            proto_idx += 1
 
             needs_shipping = product.get("requires_shipping", False)
 
@@ -198,7 +200,7 @@ class SimulationEngine:
         p(f"  Total Transactions: {r.total_transactions} | Volume: ${r.total_volume / 100:.2f}")
         p()
 
-        p(f"  {'Protocol':<8} {'Txns':>6} {'Success':>8} {'Failed':>7} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Settle':>10} {'Micropay':>10}")
+        p(f"  {'Protocol':<8} {'Txns':>6} {'OK':>5} {'Fail':>5} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Avg Exec':>12} {'Micropay':>10}")
         p("  " + "-" * 80)
 
         for proto_name in ["atxp", "x402", "mpp", "acp", "ap2"]:
@@ -208,16 +210,16 @@ class SimulationEngine:
             failed = pm.get("failed_transactions", 0)
             vol = pm.get("total_volume_cents", 0)
             fees = pm.get("total_fees_cents", 0)
-            settle = pm.get("avg_settlement_ms", 0)
+            avg_exec = pm.get("avg_settlement_ms", 0)  # this is now real avg execution ms
             micro = pm.get("micropayment_count", 0)
             fee_pct = (fees / vol * 100) if vol > 0 else 0
 
             p(
-                f"  {proto_name.upper():<8} {txns:>6} {success:>8} {failed:>7} "
+                f"  {proto_name.upper():<8} {txns:>6} {success:>5} {failed:>5} "
                 f"${vol / 100:>10.2f} "
                 f"${fees / 100:>8.2f} "
                 f"{fee_pct:>6.2f}% "
-                f"{settle:>8.0f}ms "
+                f"{avg_exec:>10.3f}ms "
                 f"{micro:>10}"
             )
 
