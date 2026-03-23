@@ -2,36 +2,46 @@
 	import { onMount } from 'svelte';
 
 	const ENGINE = 'http://localhost:4080';
-	const COLORS: Record<string, string> = {
-		acp: '#3b82f6', ap2: '#ef4444', x402: '#10b981', mpp: '#8b5cf6', atxp: '#f59e0b'
+	const PROTOCOL_META: Record<string, { color: string; label: string; desc: string }> = {
+		acp: { color: '#3b82f6', label: 'ACP', desc: 'Shared Payment Tokens · Card Rails' },
+		ap2: { color: '#ef4444', label: 'AP2', desc: 'Verifiable Digital Credentials · Multi-Rail' },
+		x402: { color: '#10b981', label: 'x402', desc: 'HTTP 402 · USDC On-Chain' },
+		mpp: { color: '#8b5cf6', label: 'MPP', desc: 'Session Streaming · Multi-Rail' },
+		atxp: { color: '#f59e0b', label: 'ATXP', desc: 'Mandate Engine · Agent-to-Agent' }
 	};
 
-	interface SimEvent {
-		type: string;
-		[key: string]: unknown;
+	interface SimEvent { type: string; [key: string]: unknown; }
+	interface ProtoMetrics {
+		protocol: string; total_transactions: number; successful_transactions: number;
+		failed_transactions: number; total_volume_cents: number; total_fees_cents: number;
+		avg_settlement_ms: number; micropayment_count: number;
 	}
 
 	let events = $state<SimEvent[]>([]);
 	let running = $state(false);
 	let complete = $state(false);
-	let finalMetrics = $state<Record<string, unknown>[]>([]);
-
-	// Config
+	let finalMetrics = $state<ProtoMetrics[]>([]);
 	let numAgents = $state(50);
 	let numRounds = $state(10);
+	let elapsed = $state('0.0s');
+	let totalTxns = $state(0);
+	let totalVolume = $state(0);
 
-	function cents(n: number) {
-		return `$${(n / 100).toFixed(2)}`;
-	}
+	function cents(n: number) { return `$${(n / 100).toFixed(2)}`; }
+
+	let purchases = $derived(events.filter(e => e.type === 'purchase'));
+	let failures = $derived(events.filter(e => e.type === 'purchase_failed'));
+	let roundEvents = $derived(events.filter(e => e.type === 'round_complete'));
 
 	async function runSimulation() {
 		events = [];
 		running = true;
 		complete = false;
 		finalMetrics = [];
+		totalTxns = 0;
+		totalVolume = 0;
 
 		try {
-			// Call the Python sim via a local API endpoint
 			const res = await fetch('/api/simulate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -45,7 +55,6 @@
 			while (reader) {
 				const { done, value } = await reader.read();
 				if (done) break;
-
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split('\n');
 				buffer = lines.pop() || '';
@@ -55,13 +64,17 @@
 					try {
 						const event: SimEvent = JSON.parse(line);
 						events = [...events, event];
-
 						if (event.type === 'simulation_complete') {
 							complete = true;
-							const summaries = event.protocol_summaries as Record<string, unknown>;
-							finalMetrics = Object.values(summaries);
+							elapsed = `${event.duration_seconds}s`;
+							totalTxns = event.total_transactions as number;
+							totalVolume = event.total_volume_cents as number;
+							const summaries = event.protocol_summaries as Record<string, ProtoMetrics>;
+							finalMetrics = Object.values(summaries).sort(
+								(a, b) => a.avg_settlement_ms - b.avg_settlement_ms
+							);
 						}
-					} catch { /* skip bad lines */ }
+					} catch { /* skip */ }
 				}
 			}
 		} catch (e) {
@@ -70,140 +83,531 @@
 			running = false;
 		}
 	}
-
-	let purchases = $derived(events.filter(e => e.type === 'purchase'));
-	let roundEvents = $derived(events.filter(e => e.type === 'round_complete'));
 </script>
 
-<div class="max-w-6xl mx-auto space-y-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-semibold">Run Simulation</h1>
-
-		<div class="flex items-center gap-4">
-			<label class="flex items-center gap-2 text-sm">
-				<span class="text-text-muted">Agents:</span>
-				<input
-					type="number"
-					bind:value={numAgents}
-					min="10"
-					max="1000"
-					class="w-20 bg-surface-2 border border-border rounded px-2 py-1 text-sm font-mono"
-				/>
-			</label>
-			<label class="flex items-center gap-2 text-sm">
-				<span class="text-text-muted">Rounds:</span>
-				<input
-					type="number"
-					bind:value={numRounds}
-					min="1"
-					max="100"
-					class="w-20 bg-surface-2 border border-border rounded px-2 py-1 text-sm font-mono"
-				/>
-			</label>
-			<button
-				onclick={runSimulation}
-				disabled={running}
-				class="px-4 py-2 rounded-lg font-medium text-sm transition-all
-					{running
-						? 'bg-surface-3 text-text-muted cursor-not-allowed'
-						: 'bg-blue-600 hover:bg-blue-500 text-white'}"
-			>
-				{running ? 'Running...' : 'Start Simulation'}
+<div class="sim-page">
+	<!-- Header -->
+	<div class="sim-header">
+		<div class="sim-title-group">
+			<h1 class="sim-title">Simulation</h1>
+			<p class="sim-subtitle">Protocol comparison across flat agent distribution</p>
+		</div>
+		<div class="sim-controls">
+			<div class="control-field">
+				<label class="control-label">AGENTS</label>
+				<input type="number" bind:value={numAgents} min="10" max="1000" class="control-input" />
+			</div>
+			<div class="control-field">
+				<label class="control-label">ROUNDS</label>
+				<input type="number" bind:value={numRounds} min="1" max="100" class="control-input" />
+			</div>
+			<button onclick={runSimulation} disabled={running} class="run-btn" class:running>
+				{#if running}
+					<span class="spinner"></span>
+					Running...
+				{:else}
+					Run Simulation
+				{/if}
 			</button>
 		</div>
 	</div>
 
-	{#if complete && finalMetrics.length > 0}
-		<!-- Protocol comparison results -->
-		<div class="bg-surface-1 border border-border rounded-lg p-6">
-			<h2 class="text-lg font-semibold mb-4">Protocol Comparison Results</h2>
-			<div class="overflow-x-auto">
-				<table class="w-full text-sm">
-					<thead>
-						<tr class="text-text-muted text-left border-b border-border">
-							<th class="pb-2 pr-4">Protocol</th>
-							<th class="pb-2 pr-4 text-right">Txns</th>
-							<th class="pb-2 pr-4 text-right">Volume</th>
-							<th class="pb-2 pr-4 text-right">Fees</th>
-							<th class="pb-2 pr-4 text-right">Fee %</th>
-							<th class="pb-2 pr-4 text-right">Settlement</th>
-							<th class="pb-2 text-right">Micropay</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each finalMetrics.sort((a, b) => (a.avg_settlement_ms as number) - (b.avg_settlement_ms as number)) as p}
-							{@const proto = p.protocol as string}
-							{@const vol = p.total_volume_cents as number}
-							{@const fees = p.total_fees_cents as number}
-							<tr class="border-b border-border/50">
-								<td class="py-2 pr-4">
-									<span class="flex items-center gap-2">
-										<span class="w-2.5 h-2.5 rounded-full" style="background-color: {COLORS[proto]}"></span>
-										<span class="font-mono font-bold" style="color: {COLORS[proto]}">{proto.toUpperCase()}</span>
-									</span>
-								</td>
-								<td class="py-2 pr-4 text-right font-mono">{p.total_transactions}</td>
-								<td class="py-2 pr-4 text-right font-mono">{cents(vol)}</td>
-								<td class="py-2 pr-4 text-right font-mono">{cents(fees)}</td>
-								<td class="py-2 pr-4 text-right font-mono">{vol > 0 ? ((fees / vol) * 100).toFixed(2) : '0'}%</td>
-								<td class="py-2 pr-4 text-right font-mono">{p.avg_settlement_ms}ms</td>
-								<td class="py-2 text-right font-mono">{p.micropayment_count}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+	{#if complete}
+		<!-- Summary bar -->
+		<div class="summary-bar">
+			<div class="summary-stat">
+				<span class="summary-value">{totalTxns}</span>
+				<span class="summary-label">TRANSACTIONS</span>
 			</div>
+			<div class="summary-stat">
+				<span class="summary-value">{cents(totalVolume)}</span>
+				<span class="summary-label">VOLUME</span>
+			</div>
+			<div class="summary-stat">
+				<span class="summary-value">{elapsed}</span>
+				<span class="summary-label">DURATION</span>
+			</div>
+			<div class="summary-stat">
+				<span class="summary-value">{numAgents}</span>
+				<span class="summary-label">AGENTS</span>
+			</div>
+		</div>
+
+		<!-- Protocol comparison -->
+		<div class="proto-grid">
+			{#each finalMetrics as p}
+				{@const meta = PROTOCOL_META[p.protocol]}
+				{@const vol = p.total_volume_cents}
+				{@const fees = p.total_fees_cents}
+				{@const feePct = vol > 0 ? ((fees / vol) * 100).toFixed(2) : '0.00'}
+				<div class="proto-card" style="--proto-color: {meta?.color ?? '#888'}">
+					<div class="proto-card-header">
+						<span class="proto-dot"></span>
+						<span class="proto-name">{meta?.label ?? p.protocol}</span>
+						<span class="proto-exec">{p.avg_settlement_ms.toFixed(3)}ms</span>
+					</div>
+					<p class="proto-desc">{meta?.desc ?? ''}</p>
+					<div class="proto-stats">
+						<div class="proto-stat-row">
+							<span class="proto-stat-label">Transactions</span>
+							<span class="proto-stat-value">{p.successful_transactions}<span class="proto-stat-dim">/{p.total_transactions}</span></span>
+						</div>
+						<div class="proto-stat-row">
+							<span class="proto-stat-label">Volume</span>
+							<span class="proto-stat-value">{cents(vol)}</span>
+						</div>
+						<div class="proto-stat-row">
+							<span class="proto-stat-label">Fees</span>
+							<span class="proto-stat-value">{cents(fees)} <span class="proto-stat-dim">({feePct}%)</span></span>
+						</div>
+						<div class="proto-stat-row">
+							<span class="proto-stat-label">Failed</span>
+							<span class="proto-stat-value" class:has-failures={p.failed_transactions > 0}>{p.failed_transactions}</span>
+						</div>
+						<div class="proto-stat-row">
+							<span class="proto-stat-label">Micropayments</span>
+							<span class="proto-stat-value">{p.micropayment_count}</span>
+						</div>
+					</div>
+					<!-- Execution bar -->
+					<div class="exec-bar-container">
+						<div class="exec-bar" style="width: {Math.min((p.avg_settlement_ms / (finalMetrics[finalMetrics.length - 1]?.avg_settlement_ms || 1)) * 100, 100)}%"></div>
+					</div>
+				</div>
+			{/each}
 		</div>
 	{/if}
 
-	<!-- Live event feed -->
-	<div class="grid grid-cols-2 gap-6">
+	<!-- Live feed grid -->
+	<div class="feed-grid">
 		<!-- Round progress -->
-		<div class="bg-surface-1 border border-border rounded-lg p-4">
-			<h3 class="text-sm font-semibold text-text-muted mb-3">Round Progress</h3>
-			<div class="space-y-1.5 max-h-80 overflow-y-auto">
+		<div class="feed-panel">
+			<div class="feed-panel-header">
+				<span class="feed-panel-icon">
+					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+						<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+					</svg>
+				</span>
+				<span class="feed-panel-title">Round Progress</span>
+				<span class="feed-panel-count">{roundEvents.length}/{numRounds}</span>
+			</div>
+			<div class="feed-panel-body">
 				{#each roundEvents as rd}
 					{@const r = rd as Record<string, unknown>}
-					<div class="flex items-center gap-2 text-sm">
-						<span class="text-text-muted font-mono w-8">R{r.round}</span>
-						<div class="flex-1 h-2 bg-surface-0 rounded-full overflow-hidden">
-							<div
-								class="h-full bg-blue-500 rounded-full transition-all"
-								style="width: {((r.round as number) / numRounds) * 100}%"
-							></div>
+					<div class="round-row">
+						<span class="round-label">R{r.round}</span>
+						<div class="round-bar-track">
+							<div class="round-bar-fill" style="width: {((r.round as number) / numRounds) * 100}%"></div>
 						</div>
-						<span class="font-mono text-xs text-text-secondary">
-							{r.success} ok · {cents(r.volume_cents as number)}
+						<span class="round-stats">
+							{r.success} ok · {r.failed} fail · {cents(r.volume_cents as number)}
 						</span>
 					</div>
 				{/each}
 				{#if running && roundEvents.length === 0}
-					<div class="text-text-muted text-sm animate-pulse">Waiting for first round...</div>
+					<div class="feed-waiting"><span class="spinner-small"></span> Waiting for first round...</div>
 				{/if}
 			</div>
 		</div>
 
-		<!-- Live purchase feed -->
-		<div class="bg-surface-1 border border-border rounded-lg p-4">
-			<h3 class="text-sm font-semibold text-text-muted mb-3">
-				Live Transactions
-				<span class="font-mono text-text-muted">({purchases.length})</span>
-			</h3>
-			<div class="space-y-1 max-h-80 overflow-y-auto text-xs font-mono">
-				{#each purchases.slice(-50) as tx}
+		<!-- Live transactions -->
+		<div class="feed-panel">
+			<div class="feed-panel-header">
+				<span class="feed-panel-icon">
+					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 2v20M2 12h20"></path>
+					</svg>
+				</span>
+				<span class="feed-panel-title">Live Transactions</span>
+				<span class="feed-panel-count">{purchases.length}</span>
+			</div>
+			<div class="feed-panel-body tx-feed">
+				{#each purchases.slice(-60) as tx}
 					{@const t = tx as Record<string, unknown>}
-					<div class="flex items-center gap-2 py-0.5">
-						<span class="w-1.5 h-1.5 rounded-full" style="background-color: {COLORS[t.protocol as string]}"></span>
-						<span class="text-text-muted">R{t.round}</span>
-						<span class="text-text-secondary truncate flex-1">{t.agent} → {t.product}</span>
-						<span class="text-amber-400">{cents(t.amount_cents as number)}</span>
-						<span style="color: {COLORS[t.protocol as string]}">{(t.protocol as string).toUpperCase()}</span>
+					{@const proto = t.protocol as string}
+					<div class="tx-row">
+						<span class="tx-dot" style="background: {PROTOCOL_META[proto]?.color ?? '#888'}"></span>
+						<span class="tx-round">R{t.round}</span>
+						<span class="tx-agent">{t.agent}</span>
+						<span class="tx-arrow">→</span>
+						<span class="tx-product">{t.product}</span>
+						<span class="tx-amount">{cents(t.amount_cents as number)}</span>
+						<span class="tx-proto" style="color: {PROTOCOL_META[proto]?.color}">{proto.toUpperCase()}</span>
+						{#if t.fee_cents}
+							<span class="tx-fee">fee {cents(t.fee_cents as number)}</span>
+						{/if}
 					</div>
 				{/each}
 				{#if running && purchases.length === 0}
-					<div class="text-text-muted animate-pulse">Waiting for purchases...</div>
+					<div class="feed-waiting"><span class="spinner-small"></span> Waiting for purchases...</div>
 				{/if}
 			</div>
 		</div>
 	</div>
 </div>
+
+<style>
+	.sim-page {
+		max-width: 1200px;
+		margin: 0 auto;
+		font-family: 'Inter', 'Space Grotesk', system-ui, sans-serif;
+	}
+
+	/* Header */
+	.sim-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 24px;
+	}
+	.sim-title {
+		font-size: 20px;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		color: var(--color-text-primary, #f0f0f5);
+	}
+	.sim-subtitle {
+		font-size: 12px;
+		color: var(--color-text-muted, #55556a);
+		margin-top: 2px;
+	}
+	.sim-controls {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.control-field {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.control-label {
+		font-size: 8px;
+		font-weight: 600;
+		color: var(--color-text-muted, #55556a);
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+	.control-input {
+		width: 64px;
+		background: var(--color-surface-2, #1a1a24);
+		border: 1px solid var(--color-border, #2a2a38);
+		border-radius: 4px;
+		padding: 6px 8px;
+		color: var(--color-text-primary, #f0f0f5);
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 12px;
+	}
+	.control-input:focus {
+		outline: none;
+		border-color: var(--color-border-active, #3b82f6);
+	}
+	.run-btn {
+		padding: 8px 20px;
+		border-radius: 4px;
+		border: none;
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		cursor: pointer;
+		transition: all 0.2s;
+		background: #3b82f6;
+		color: #fff;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.run-btn:hover:not(:disabled) { background: #2563eb; }
+	.run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+	.run-btn.running { background: var(--color-surface-3, #22222e); color: var(--color-text-muted); }
+
+	/* Spinner */
+	.spinner, .spinner-small {
+		display: inline-block;
+		border: 2px solid transparent;
+		border-top-color: currentColor;
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+	.spinner { width: 14px; height: 14px; }
+	.spinner-small { width: 10px; height: 10px; border-width: 1.5px; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	/* Summary bar */
+	.summary-bar {
+		display: flex;
+		gap: 1px;
+		background: var(--color-border, #2a2a38);
+		border-radius: 4px;
+		overflow: hidden;
+		margin-bottom: 20px;
+	}
+	.summary-stat {
+		flex: 1;
+		background: var(--color-surface-1, #12121a);
+		padding: 12px 16px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+	.summary-value {
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 18px;
+		font-weight: 700;
+		color: var(--color-text-primary);
+	}
+	.summary-label {
+		font-size: 8px;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+	}
+
+	/* Protocol cards grid */
+	.proto-grid {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 8px;
+		margin-bottom: 20px;
+	}
+	.proto-card {
+		background: var(--color-surface-1, #12121a);
+		border: 1px solid var(--color-border, #2a2a38);
+		border-radius: 4px;
+		padding: 14px;
+		transition: border-color 0.2s;
+	}
+	.proto-card:hover {
+		border-color: var(--proto-color);
+	}
+	.proto-card-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 4px;
+	}
+	.proto-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--proto-color);
+	}
+	.proto-name {
+		font-size: 12px;
+		font-weight: 700;
+		color: var(--proto-color);
+		font-family: 'JetBrains Mono', monospace;
+		letter-spacing: 0.03em;
+	}
+	.proto-exec {
+		margin-left: auto;
+		font-size: 10px;
+		font-family: 'JetBrains Mono', monospace;
+		color: var(--color-text-muted);
+	}
+	.proto-desc {
+		font-size: 9px;
+		color: var(--color-text-muted);
+		margin-bottom: 10px;
+		line-height: 1.3;
+	}
+	.proto-stats {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.proto-stat-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		font-size: 11px;
+	}
+	.proto-stat-label {
+		color: var(--color-text-muted);
+	}
+	.proto-stat-value {
+		font-family: 'JetBrains Mono', monospace;
+		font-weight: 500;
+		color: var(--color-text-primary);
+	}
+	.proto-stat-dim {
+		color: var(--color-text-muted);
+		font-weight: 400;
+	}
+	.has-failures {
+		color: #ef4444;
+	}
+	.exec-bar-container {
+		margin-top: 10px;
+		height: 3px;
+		background: var(--color-surface-0, #0a0a0f);
+		border-radius: 2px;
+		overflow: hidden;
+	}
+	.exec-bar {
+		height: 100%;
+		background: var(--proto-color);
+		border-radius: 2px;
+		transition: width 0.5s ease;
+	}
+
+	/* Feed grid */
+	.feed-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 12px;
+	}
+	.feed-panel {
+		background: var(--color-surface-1, #12121a);
+		border: 1px solid var(--color-border, #2a2a38);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	.feed-panel-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 10px 14px;
+		border-bottom: 1px solid var(--color-border, #2a2a38);
+		background: var(--color-surface-2, #1a1a24);
+	}
+	.feed-panel-icon {
+		color: var(--color-text-muted);
+	}
+	.feed-panel-title {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text-secondary, #8888a0);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.feed-panel-count {
+		margin-left: auto;
+		font-size: 10px;
+		font-family: 'JetBrains Mono', monospace;
+		color: var(--color-text-muted);
+	}
+	.feed-panel-body {
+		padding: 8px;
+		max-height: 360px;
+		overflow-y: auto;
+	}
+	.feed-waiting {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 16px;
+		color: var(--color-text-muted);
+		font-size: 12px;
+	}
+
+	/* Round rows */
+	.round-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 6px;
+		font-size: 11px;
+	}
+	.round-label {
+		font-family: 'JetBrains Mono', monospace;
+		color: var(--color-text-muted);
+		width: 28px;
+		text-align: right;
+		font-size: 10px;
+	}
+	.round-bar-track {
+		flex: 1;
+		height: 4px;
+		background: var(--color-surface-0, #0a0a0f);
+		border-radius: 2px;
+		overflow: hidden;
+	}
+	.round-bar-fill {
+		height: 100%;
+		background: #3b82f6;
+		border-radius: 2px;
+		transition: width 0.3s ease;
+	}
+	.round-stats {
+		font-family: 'JetBrains Mono', monospace;
+		color: var(--color-text-secondary);
+		font-size: 10px;
+		white-space: nowrap;
+		min-width: 140px;
+		text-align: right;
+	}
+
+	/* Transaction rows */
+	.tx-feed {
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 10px;
+	}
+	.tx-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 6px;
+		border-bottom: 1px solid var(--color-surface-2, #1a1a24);
+		transition: background 0.15s;
+	}
+	.tx-row:hover {
+		background: var(--color-surface-2, #1a1a24);
+	}
+	.tx-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.tx-round {
+		color: var(--color-text-muted);
+		width: 24px;
+	}
+	.tx-agent {
+		color: var(--color-text-secondary);
+		width: 80px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.tx-arrow {
+		color: var(--color-text-muted);
+	}
+	.tx-product {
+		flex: 1;
+		color: var(--color-text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.tx-amount {
+		color: #f59e0b;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.tx-proto {
+		font-weight: 700;
+		font-size: 9px;
+		width: 36px;
+		text-align: right;
+	}
+	.tx-fee {
+		color: var(--color-text-muted);
+		font-size: 9px;
+		white-space: nowrap;
+	}
+
+	/* Scrollbar styling */
+	.feed-panel-body::-webkit-scrollbar {
+		width: 4px;
+	}
+	.feed-panel-body::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.feed-panel-body::-webkit-scrollbar-thumb {
+		background: var(--color-surface-3, #22222e);
+		border-radius: 2px;
+	}
+</style>
