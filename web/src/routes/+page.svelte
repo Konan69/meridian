@@ -64,12 +64,11 @@
 			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Real-time metrics across 5 agentic commerce protocols</p>
 		</div>
 		<div style="display:flex; align-items:center; gap:8px;">
-			<span style="
-				width:8px; height:8px; border-radius:50%;
-				background:{online ? '#10b981' : '#ef4444'};
-				{online ? 'animation: pulse 2s infinite;' : ''}
-			"></span>
-			<span style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">
+			<span
+				style="width:8px; height:8px; border-radius:50%; background:{online ? '#10b981' : '#ef4444'}; {online ? 'animation: pulse 2s infinite;' : ''}"
+				aria-hidden="true"
+			></span>
+			<span style="font-family:var(--mono); font-size:11px; color:var(--tx-3);" aria-live="polite">
 				Engine {online ? 'online' : 'offline'} · :4080
 			</span>
 		</div>
@@ -79,13 +78,14 @@
 		<div style="text-align:center; padding:80px 0; color:var(--tx-3); font-size:14px;">Loading...</div>
 	{:else}
 		<!-- Protocol cards -->
-		<div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin-bottom:32px;">
+		<div class="protocol-grid" style="margin-bottom:32px;">
 			{#each protos as p}
 				{@const color = COLORS[p.protocol] ?? '#888'}
 				{@const vol = p.total_volume_cents}
 				{@const fees = p.total_fees_cents}
 				{@const maxExec = protos[protos.length - 1]?.avg_settlement_ms || 1}
-				<div style="
+				<div role="article"
+					style="
 					background: var(--bg-1);
 					border: 1px solid var(--bd);
 					border-radius: 6px;
@@ -148,7 +148,7 @@
 		<!-- Product catalog -->
 		<div>
 			<h2 style="font-size:16px; font-weight:600; margin-bottom:14px; letter-spacing:-0.02em;">Product Catalog</h2>
-			<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;">
+			<div class="product-grid">
 				{#each products as prod}
 					<div style="
 						background: var(--bg-1);
@@ -192,5 +192,26 @@
 <style>
 	@keyframes pulse {
 		50% { opacity: 0.4; }
+	}
+	.protocol-grid {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 10px;
+	}
+	.product-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 10px;
+	}
+	@media (max-width: 1100px) {
+		.protocol-grid { grid-template-columns: repeat(3, 1fr); }
+	}
+	@media (max-width: 768px) {
+		.protocol-grid { grid-template-columns: repeat(2, 1fr); }
+		.product-grid { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 480px) {
+		.protocol-grid { grid-template-columns: 1fr; }
+		.product-grid { grid-template-columns: 1fr; }
 	}
 </style>

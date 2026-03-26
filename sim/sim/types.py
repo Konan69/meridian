@@ -29,11 +29,36 @@ PROTOCOL_FEE_FORMULAS = {
 
 # Protocol characteristics for intelligent selection
 PROTOCOL_TRAITS = {
-    Protocol.ACP: {"supports_micropay": False, "min_practical": 1000, "settlement_ms": 2000, "autonomy": 0.6},
-    Protocol.AP2: {"supports_micropay": False, "min_practical": 800, "settlement_ms": 3000, "autonomy": 0.5},
-    Protocol.X402: {"supports_micropay": True, "min_practical": 1, "settlement_ms": 200, "autonomy": 1.0},
-    Protocol.MPP: {"supports_micropay": True, "min_practical": 1, "settlement_ms": 500, "autonomy": 0.8},
-    Protocol.ATXP: {"supports_micropay": True, "min_practical": 1, "settlement_ms": 150, "autonomy": 0.9},
+    Protocol.ACP: {
+        "supports_micropay": False,
+        "min_practical": 1000,
+        "settlement_ms": 2000,
+        "autonomy": 0.6,
+    },
+    Protocol.AP2: {
+        "supports_micropay": False,
+        "min_practical": 800,
+        "settlement_ms": 3000,
+        "autonomy": 0.5,
+    },
+    Protocol.X402: {
+        "supports_micropay": True,
+        "min_practical": 1,
+        "settlement_ms": 200,
+        "autonomy": 1.0,
+    },
+    Protocol.MPP: {
+        "supports_micropay": True,
+        "min_practical": 1,
+        "settlement_ms": 500,
+        "autonomy": 0.8,
+    },
+    Protocol.ATXP: {
+        "supports_micropay": True,
+        "min_practical": 1,
+        "settlement_ms": 150,
+        "autonomy": 0.9,
+    },
 }
 
 # US states for address diversity
@@ -108,14 +133,18 @@ class AgentProfile:
 
         # Micropayment: prefer protocols that support them
         if amount < 100:  # < $1.00
-            micro_protos = [p for p in protocols if PROTOCOL_TRAITS[p]["supports_micropay"]]
+            micro_protos = [
+                p for p in protocols if PROTOCOL_TRAITS[p]["supports_micropay"]
+            ]
             if micro_protos:
                 return rng.choice(micro_protos).value
 
         # Price-sensitive agents prefer low-fee protocols
         if self.price_sensitivity > 0.7:
             # Sort by estimated fee, pick from cheapest 2
-            sorted_protos = sorted(protocols, key=lambda p: PROTOCOL_FEE_FORMULAS[p](amount))
+            sorted_protos = sorted(
+                protocols, key=lambda p: PROTOCOL_FEE_FORMULAS[p](amount)
+            )
             return rng.choice(sorted_protos[:2]).value
 
         # High-value purchases: prefer consumer-protected protocols (ACP, AP2)
@@ -137,7 +166,14 @@ class SimulationConfig:
     seed: int = 42
     agent_budget_range: tuple[int, int] = (5000, 50000)
     use_llm: bool = False
-    llm_model: str = "minimax-m2.5-free"
+    llm_model: str = "minimax-m2.5"
+
+    def __post_init__(self):
+        if self.agent_budget_range[0] > self.agent_budget_range[1]:
+            self.agent_budget_range = (
+                self.agent_budget_range[1],
+                self.agent_budget_range[0],
+            )
 
 
 @dataclass

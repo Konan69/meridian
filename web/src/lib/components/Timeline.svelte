@@ -1,5 +1,6 @@
 <script>
   import ProtocolBadge from './ProtocolBadge.svelte';
+  import { AVATAR_COLORS, getAvatarColor } from '$lib/constants';
 
   /**
    * @type {{
@@ -29,24 +30,6 @@
       });
     }
   });
-
-  const avatarColors = [
-    '#3b82f6', '#ef4444', '#10b981', '#8b5cf6',
-    '#f59e0b', '#ec4899', '#06b6d4', '#f97316',
-  ];
-
-  function avatarColor(name) {
-    if (!name) return avatarColors[0];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return avatarColors[Math.abs(hash) % avatarColors.length];
-  }
-
-  function avatarLetter(name) {
-    return (name ?? 'A')[0].toUpperCase();
-  }
 
   function formatAmount(cents) {
     if (cents == null) return '--';
@@ -89,13 +72,13 @@
     <span class="timeline-title">EVENT TIMELINE</span>
     <span class="timeline-count">{events.length} events</span>
   </div>
-  <div class="timeline-feed" bind:this={feedEl}>
+  <div class="timeline-feed" bind:this={feedEl} aria-label="Event timeline" role="log">
     {#each events as evt, idx (idx)}
-      <div class="event-card" style="animation-delay: {Math.min(idx * 30, 300)}ms">
+          <div class="event-card" style="animation-delay: {Math.min(idx * 30, 300)}ms">
         <div class="card-header">
           <div class="agent-info">
-            <div class="avatar" style:background={avatarColor(evt.agent)}>
-              {avatarLetter(evt.agent)}
+            <div class="avatar" style:background={getAvatarColor(evt.agent)}>
+              {evt.agent ? evt.agent[0].toUpperCase() : 'A'}
             </div>
             <span class="agent-name">{evt.agent ?? 'Unknown'}</span>
           </div>

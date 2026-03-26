@@ -15,7 +15,8 @@ class CommerceClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=30)
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
     async def close(self):
@@ -40,7 +41,9 @@ class CommerceClient:
         async with session.get(f"{self.engine_url}/metrics") as resp:
             return await resp.json()
 
-    async def create_checkout(self, items: list[dict], protocol: str, agent_id: str) -> dict:
+    async def create_checkout(
+        self, items: list[dict], protocol: str, agent_id: str
+    ) -> dict:
         session = await self._get_session()
         async with session.post(
             f"{self.engine_url}/checkout_sessions",
@@ -66,7 +69,9 @@ class CommerceClient:
         ) as resp:
             return await resp.json()
 
-    async def complete_checkout(self, session_id: str, payment_token: str, protocol: str) -> dict:
+    async def complete_checkout(
+        self, session_id: str, payment_token: str, protocol: str
+    ) -> dict:
         session = await self._get_session()
         async with session.post(
             f"{self.engine_url}/checkout_sessions/{session_id}/complete",
@@ -88,6 +93,7 @@ class CommerceClient:
         agent_address: Optional[dict] = None,
     ) -> TransactionRecord:
         """Execute a full checkout flow and return a transaction record."""
+        session_id = None
         try:
             # 1. Create session
             checkout = await self.create_checkout(
@@ -98,9 +104,137 @@ class CommerceClient:
 
             if "id" not in checkout:
                 return TransactionRecord(
-                    round_num=round_num, agent_id=agent_id, protocol=protocol,
-                    product_id=product_id, product_name=product_name,
-                    amount=0, fee=0, settlement_ms=0, success=False,
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=0,
+                    fee=0,
+                    settlement_ms=0,
+                    success=False,
+                    error=checkout.get("message", str(checkout)),
+                )
+
+            session_id = checkout["id"]
+
+            # 2. Update with address if shipping needed
+            if needs_shipping and agent_address:
+                try:
+                    await self.update_checkout(
+                        session_id=session_id,
+                        fulfillment_address=agent_address,
+                        selected_fulfillment_option_id="ship_standard",
+                    )
+                except Exception as e:
+                    await self._cancel_session(session_id)
+                    return TransactionRecord(
+                        round_num=round_num,
+                        agent_id=agent_id,
+                        protocol=protocol,
+                        product_id=product_id,
+                        product_name=product_name,
+                        amount=0,
+                        fee=0,
+                        settlement_ms=0,
+                        success=False,
+                        error=f"address update failed: {e}",
+                    )
+
+            # 3. Complete checkout
+            token = f"token_{protocol}_{agent_id}_{round_num}"
+            result = await self.complete_checkout(session_id, token, protocol)
+
+            if result.get("status") == "completed":
+                # Extract total
+                total = 0
+                for t in result.get("totals", []):
+                    if t.get("type") == "total":
+                        total = t["amount"]
+
+                # Extract fee and settlement from payment_result message
+                fee = 0
+                settlement_ms = 0.0
+                for msg in result.get("messages", []):
+                    if msg.get("type") == "payment_result":
+                        try:
+                            payment_data = json.loads(msg["content"])
+                            fee = payment_data.get("fee_cents", 0)
+                            # execution_us is REAL measured time from the engine
+                            settlement_ms = payment_data.get("execution_us", 0) / 1000.0
+                        except (json.JSONDecodeError, KeyError):
+                            proto_enum = Protocol(protocol)
+                            fee = PROTOCOL_FEE_FORMULAS.get(proto_enum, lambda a: 0)(
+                                total
+                            )
+
+                return TransactionRecord(
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=total,
+                    fee=fee,
+                    settlement_ms=settlement_ms,
+                    success=True,
+                    session_id=session_id,
+                    order_id=result.get("order", {}).get("id"),
+                )
+            else:
+                return TransactionRecord(
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=0,
+                    fee=0,
+                    settlement_ms=0,
+                    success=False,
+                    error=result.get("message", "checkout failed"),
+                )
+
+        except Exception as e:
+            if session_id:
+                try:
+                    await self._cancel_session(session_id)
+                except Exception:
+                    pass
+            return TransactionRecord(
+                round_num=round_num,
+                agent_id=agent_id,
+                protocol=protocol,
+                product_id=product_id,
+                product_name=product_name,
+                amount=0,
+                fee=0,
+                settlement_ms=0,
+                success=False,
+                error=str(e),
+            )
+
+    async def _cancel_session(self, session_id: str):
+        """Cancel an orphaned checkout session."""
+        session = await self._get_session()
+        try:
+            await session.post(
+                f"{self.engine_url}/checkout_sessions/{session_id}/cancel"
+            )
+        except Exception:
+            pass
+
+            if "id" not in checkout:
+                return TransactionRecord(
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=0,
+                    fee=0,
+                    settlement_ms=0,
+                    success=False,
                     error=checkout.get("message", str(checkout)),
                 )
 
@@ -137,27 +271,47 @@ class CommerceClient:
                             settlement_ms = payment_data.get("execution_us", 0) / 1000.0
                         except (json.JSONDecodeError, KeyError):
                             proto_enum = Protocol(protocol)
-                            fee = PROTOCOL_FEE_FORMULAS.get(proto_enum, lambda a: 0)(total)
+                            fee = PROTOCOL_FEE_FORMULAS.get(proto_enum, lambda a: 0)(
+                                total
+                            )
 
                 return TransactionRecord(
-                    round_num=round_num, agent_id=agent_id, protocol=protocol,
-                    product_id=product_id, product_name=product_name,
-                    amount=total, fee=fee, settlement_ms=settlement_ms,
-                    success=True, session_id=session_id,
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=total,
+                    fee=fee,
+                    settlement_ms=settlement_ms,
+                    success=True,
+                    session_id=session_id,
                     order_id=result.get("order", {}).get("id"),
                 )
             else:
                 return TransactionRecord(
-                    round_num=round_num, agent_id=agent_id, protocol=protocol,
-                    product_id=product_id, product_name=product_name,
-                    amount=0, fee=0, settlement_ms=0, success=False,
+                    round_num=round_num,
+                    agent_id=agent_id,
+                    protocol=protocol,
+                    product_id=product_id,
+                    product_name=product_name,
+                    amount=0,
+                    fee=0,
+                    settlement_ms=0,
+                    success=False,
                     error=result.get("message", "checkout failed"),
                 )
 
         except Exception as e:
             return TransactionRecord(
-                round_num=round_num, agent_id=agent_id, protocol=protocol,
-                product_id=product_id, product_name=product_name,
-                amount=0, fee=0, settlement_ms=0, success=False,
+                round_num=round_num,
+                agent_id=agent_id,
+                protocol=protocol,
+                product_id=product_id,
+                product_name=product_name,
+                amount=0,
+                fee=0,
+                settlement_ms=0,
+                success=False,
                 error=str(e),
             )

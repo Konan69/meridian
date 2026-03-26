@@ -41,7 +41,8 @@
 			{@const v = p.total_volume_cents}
 			{@const f = p.total_fees_cents}
 			{@const maxExec = protos[protos.length - 1]?.avg_settlement_ms || 1}
-			<div style="
+			<div role="article"
+				style="
 				background: var(--bg-1);
 				border: 1px solid var(--bd);
 				border-radius: 6px;

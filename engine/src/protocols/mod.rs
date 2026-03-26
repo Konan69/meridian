@@ -2,6 +2,7 @@ pub mod acp;
 pub mod ap2;
 pub mod atxp;
 pub mod mpp;
+pub mod remote;
 pub mod x402;
 
 use async_trait::async_trait;
@@ -74,6 +75,7 @@ pub struct RefundResult {
 // Metrics tracker — records REAL measured timings
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct MetricsTracker {
     pub txn_count: AtomicU64,
     pub success_count: AtomicU64,
@@ -85,6 +87,22 @@ pub struct MetricsTracker {
     /// Sum of REAL execution times in microseconds
     pub total_exec_us: AtomicU64,
     pub total_auth_us: AtomicU64,
+}
+
+impl Clone for MetricsTracker {
+    fn clone(&self) -> Self {
+        Self {
+            txn_count: AtomicU64::new(self.txn_count.load(Ordering::Relaxed)),
+            success_count: AtomicU64::new(self.success_count.load(Ordering::Relaxed)),
+            fail_count: AtomicU64::new(self.fail_count.load(Ordering::Relaxed)),
+            volume: AtomicU64::new(self.volume.load(Ordering::Relaxed)),
+            fees: AtomicU64::new(self.fees.load(Ordering::Relaxed)),
+            micropay_count: AtomicU64::new(self.micropay_count.load(Ordering::Relaxed)),
+            refund_count: AtomicU64::new(self.refund_count.load(Ordering::Relaxed)),
+            total_exec_us: AtomicU64::new(self.total_exec_us.load(Ordering::Relaxed)),
+            total_auth_us: AtomicU64::new(self.total_auth_us.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl MetricsTracker {
@@ -108,7 +126,9 @@ impl MetricsTracker {
         self.volume.fetch_add(amount, Ordering::Relaxed);
         self.fees.fetch_add(fee, Ordering::Relaxed);
         self.total_exec_us.fetch_add(exec_us, Ordering::Relaxed);
-        if is_micro { self.micropay_count.fetch_add(1, Ordering::Relaxed); }
+        if is_micro {
+            self.micropay_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub fn record_failure(&self, exec_us: u64) {
@@ -126,10 +146,14 @@ impl MetricsTracker {
         let total = self.txn_count.load(Ordering::Relaxed);
         let avg_exec = if total > 0 {
             self.total_exec_us.load(Ordering::Relaxed) as f64 / total as f64 / 1000.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
         let avg_auth = if success > 0 {
             self.total_auth_us.load(Ordering::Relaxed) as f64 / success as f64 / 1000.0
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         ProtocolMetrics {
             protocol: protocol.into(),
@@ -148,7 +172,9 @@ impl MetricsTracker {
 
 /// Measure execution time of a closure in microseconds
 pub fn timed_us<F, R>(f: F) -> (R, u64)
-where F: FnOnce() -> R {
+where
+    F: FnOnce() -> R,
+{
     let start = Instant::now();
     let result = f();
     let elapsed = start.elapsed().as_micros() as u64;
@@ -162,7 +188,11 @@ where F: FnOnce() -> R {
 #[async_trait]
 pub trait ProtocolAdapter: Send + Sync {
     fn name(&self) -> &str;
-    async fn authorize(&self, wallet: &AgentWallet, constraints: &SpendingConstraints) -> Result<AuthToken>;
+    async fn authorize(
+        &self,
+        wallet: &AgentWallet,
+        constraints: &SpendingConstraints,
+    ) -> Result<AuthToken>;
     async fn pay(&self, token: &AuthToken, amount: Cents, merchant: &str) -> Result<PaymentResult>;
     async fn settle(&self, payment: &PaymentResult) -> Result<SettlementResult>;
     async fn refund(&self, payment: &PaymentResult, reason: &str) -> Result<RefundResult>;

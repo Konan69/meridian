@@ -35,7 +35,7 @@
     <span class="log-title">SYSTEM LOG</span>
     <span class="log-count">{logs.length} entries</span>
   </div>
-  <div class="log-content" bind:this={logContainer}>
+  <div class="log-content" bind:this={logContainer} aria-live="polite" aria-label="System log entries" role="log">
     {#each logs as log, idx (idx)}
       <div class="log-line">
         <span class="log-time">{log.time}</span>

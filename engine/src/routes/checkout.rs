@@ -1,16 +1,16 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::core::error::{EngineError, Result};
 use crate::core::pricing;
 use crate::core::types::*;
-use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -21,7 +21,7 @@ pub struct CreateSessionRequest {
     pub items: Vec<ItemRequest>,
     pub buyer: Option<Buyer>,
     pub fulfillment_address: Option<Address>,
-    pub protocol: Option<String>,
+    pub protocol: String,
     pub agent_id: Option<String>,
 }
 
@@ -42,6 +42,7 @@ pub struct UpdateSessionRequest {
 #[derive(Deserialize)]
 pub struct CompleteSessionRequest {
     pub buyer: Option<Buyer>,
+    #[allow(dead_code)]
     pub payment_token: String,
     pub protocol: Option<String>,
 }
@@ -58,10 +59,34 @@ pub async fn create_session(
         return Err(EngineError::InvalidRequest("items cannot be empty".into()));
     }
 
-    let protocol = req.protocol.as_deref().unwrap_or("acp");
+    // Validate all items have valid quantity
+    for item in &req.items {
+        if item.quantity == 0 {
+            return Err(EngineError::InvalidRequest(format!(
+                "quantity must be positive for product {}",
+                item.id
+            )));
+        }
+    }
+
+    let protocol = req.protocol.as_str();
+    if !state.protocols.contains_key(protocol) {
+        return Err(EngineError::ProtocolError(format!(
+            "unsupported protocol: {}. strict live mode currently supports: {}",
+            protocol,
+            state
+                .protocols
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
     let mut session = CheckoutSession::new(protocol, req.agent_id);
 
-    // Resolve items against catalog
+    // Resolve items against catalog with stock validation
+    // NOTE: For simulation, we validate stock at request time but don't decrement
+    // (catalog is static reference data, not live inventory)
     let mut line_items = Vec::new();
     for item in &req.items {
         let product = state
@@ -70,10 +95,11 @@ pub async fn create_session(
             .find(|p| p.id == item.id)
             .ok_or_else(|| EngineError::NotFound(format!("product {}", item.id)))?;
 
+        // Stock validation at request time (simulates what would happen in real checkout)
         if item.quantity > product.available_quantity {
             return Err(EngineError::InvalidRequest(format!(
-                "insufficient stock for {}",
-                product.name
+                "insufficient stock for {} (requested: {}, available: {})",
+                product.name, item.quantity, product.available_quantity
             )));
         }
 
@@ -109,12 +135,18 @@ pub async fn create_session(
     let addr_state = req.fulfillment_address.as_ref().map(|a| a.state.as_str());
     session.totals = pricing::calculate_totals(&session.line_items, fulfillment, addr_state);
 
-    // Store session
+    // Store session in memory
     state
         .sessions
         .lock()
         .unwrap()
         .insert(session.id.clone(), session.clone());
+
+    // Persist session to SQLite
+    {
+        let store = state.store.lock().unwrap();
+        let _ = store.save_session(&session);
+    }
 
     Ok((StatusCode::CREATED, Json(session)))
 }
@@ -209,7 +241,15 @@ pub async fn update_session(
     session.totals = pricing::calculate_totals(&session.line_items, fulfillment, addr_state);
     session.updated_at = chrono::Utc::now();
 
-    Ok(Json(session.clone()))
+    let result = session.clone();
+
+    // Persist updated session to SQLite
+    {
+        let store = state.store.lock().unwrap();
+        let _ = store.save_session(&result);
+    }
+
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -261,25 +301,42 @@ pub async fn complete_session(
         .get(&protocol_name)
         .ok_or_else(|| EngineError::ProtocolError(format!("unknown protocol: {protocol_name}")))?;
 
-    // 1. Authorize — creates real SPT/mandate/session/signed payload in the adapter
-    let wallet = crate::core::types::AgentWallet {
-        agent_id: req.payment_token.clone(),
-        balance: total,
-        protocol: protocol_name.clone(),
-        credentials: serde_json::json!({}),
-    };
+    // 1. Authorize using a real externally funded wallet.
+    // NOTE: agent_id should come from session, not from payment_token (security)
+    let agent_id = state
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&id)
+        .and_then(|s| s.agent_id.clone())
+        .unwrap_or_else(|| "unknown_agent".to_string());
+
+    // No treasury auto-topups or synthetic balances in strict live mode.
+    let wallet = state
+        .wallet_service
+        .to_agent_wallet(&agent_id, &protocol_name)
+        .map_err(|e| EngineError::PaymentDeclined(format!("wallet error: {}", e)))?;
+
     let constraints = crate::core::types::SpendingConstraints {
         max_amount: total,
         currency: currency.clone(),
-        merchants: None,
+        merchants: Some(vec![std::env::var("X402_PAY_TO").map_err(|_| {
+            EngineError::InvalidRequest("X402_PAY_TO must be set".into())
+        })?]),
         categories: None,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         requires_confirmation: false,
     };
     let auth_token = adapter.authorize(&wallet, &constraints).await?;
 
-    // 2. Pay — validates the token that authorize() just created, runs real protocol logic
-    let payment = adapter.pay(&auth_token, total, "meridian_merchant").await?;
+    // 3. Pay — validation and settlement happen on the real rail. Any insufficient-funds
+    // failure must come from the rail itself, not an internal shadow balance.
+    let pay_to = auth_token
+        .protocol_data
+        .get("pay_to")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| EngineError::ProtocolError("missing x402 pay_to address".into()))?;
+    let payment = adapter.pay(&auth_token, total, pay_to).await?;
 
     // Re-acquire lock and finalize
     let mut sessions = state.sessions.lock().unwrap();
@@ -304,10 +361,32 @@ pub async fn complete_session(
             "fee_cents": payment.fee,
             "execution_us": payment.execution_us,
             "status": payment.status,
-        }).to_string(),
+        })
+        .to_string(),
     });
 
-    Ok(Json(session.clone()))
+    let result = session.clone();
+
+    // Persist session and transaction to SQLite
+    {
+        let store = state.store.lock().unwrap();
+        let _ = store.save_session(&result);
+
+        let tx_record = TransactionRecord {
+            id: payment.payment_id.clone(),
+            session_id: id.clone(),
+            protocol: payment.protocol.clone(),
+            agent_id: result.agent_id.clone().unwrap_or_default(),
+            amount: payment.amount,
+            fee: payment.fee,
+            execution_us: payment.execution_us,
+            status: format!("{:?}", payment.status),
+            created_at: chrono::Utc::now(),
+        };
+        let _ = store.save_transaction(&tx_record);
+    }
+
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +411,15 @@ pub async fn cancel_session(
     session.status = SessionStatus::Canceled;
     session.updated_at = chrono::Utc::now();
 
-    Ok(Json(session.clone()))
+    let result = session.clone();
+
+    // Persist canceled session to SQLite
+    {
+        let store = state.store.lock().unwrap();
+        let _ = store.save_session(&result);
+    }
+
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------

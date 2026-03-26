@@ -1,6 +1,9 @@
 # Meridian
 
-Agentic commerce simulation platform. Runs thousands of AI agents through realistic commerce scenarios across competing payment protocols — measuring which architectures produce better outcomes under different market conditions.
+Agentic commerce simulation platform. Runs thousands of AI agents through
+realistic commerce scenarios across competing payment protocols while using
+strict live integrations only. Meridian now requires all five protocol rails
+to be present at boot and fails closed if any protocol is missing.
 
 ## Protocols Compared
 
@@ -17,15 +20,59 @@ Agentic commerce simulation platform. Runs thousands of AI agents through realis
 ```
 SvelteKit (:5173) → Rust Engine (:4080) ← Python Simulation
    frontend            commerce            agent orchestration
-   dark theme           5 protocols         50-1000 agents
+   dark theme           5 live protocols    50-1000 agents
    D3 graphs            axum + serde        rule-based decisions
    live streaming        SQLite              async concurrent
 ```
+
+## Strict Live Mode
+
+Meridian no longer boots in a partial or simulated protocol state.
+
+- All five protocols are mandatory: `acp`, `ap2`, `atxp`, `mpp`, `x402`
+- `x402` runs natively inside the engine
+- `acp`, `ap2`, `atxp`, and `mpp` must be provided as real external adapter
+  services
+- Creating a checkout session requires an explicit `protocol`
+- If any adapter is missing or fails capability checks, engine startup fails
+
+### Required Environment Variables
+
+```bash
+export WALLET_MASTER_SEED=...
+export MERIDIAN_PUBLIC_BASE_URL=http://localhost:4080
+
+export X402_RPC_URL=...
+export X402_MASTER_SEED=...
+export X402_PAY_TO=0x...
+
+export STRIPE_SECRET_KEY=...
+export AP2_RPC_URL=...
+export AP2_MASTER_SEED=...
+export ATXP_COORDINATOR_URL=...
+
+export ACP_ADAPTER_URL=http://localhost:9001
+export MPP_ADAPTER_URL=http://localhost:9002
+export AP2_ADAPTER_URL=http://localhost:9003
+export ATXP_ADAPTER_URL=http://localhost:9004
+```
+
+### Remote Adapter Contract
+
+Each non-`x402` protocol adapter must expose:
+
+- `GET /capabilities`
+- `POST /authorize`
+- `POST /pay`
+- `POST /settle`
+- `POST /refund`
 
 ## Quick Start
 
 ```bash
 # Prerequisites: Rust, Node.js 20+, Python 3.11, uv
+
+# 0. Export the required env vars for all five protocols
 
 # 1. Build and start the commerce engine
 cd engine && cargo run -- --port 4080
@@ -75,7 +122,7 @@ meridian/
 ├── engine/          # Rust commerce engine
 │   ├── src/
 │   │   ├── core/        # types, pricing, errors
-│   │   ├── protocols/   # ACP, AP2, x402, MPP, ATXP adapters
+│   │   ├── protocols/   # x402 native + remote ACP/AP2/ATXP/MPP adapters
 │   │   └── routes/      # HTTP endpoints
 │   └── Cargo.toml
 ├── sim/             # Python simulation layer

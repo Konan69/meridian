@@ -33,16 +33,17 @@
 	}
 </script>
 
-<div style="display:flex; gap:2px; align-items:center;">
+<div style="display:flex; gap:2px; align-items:center;" role="navigation" aria-label="Simulation steps">
 	{#each STEPS as step, i}
 		{@const s = status(step.key)}
 		{@const clickable = canNavigateTo(step.key)}
 		<button
 			onclick={() => clickable && onStepClick(step.key)}
 			disabled={!clickable}
+			aria-current={s === 'active' ? 'step' : undefined}
 			style="
 				display:flex; align-items:center; gap:8px;
-				padding:8px 14px;
+				padding:10px 16px;
 				background:{s === 'active' ? 'var(--bg-3)' : 'transparent'};
 				border:none;
 				border-radius:4px;
@@ -60,7 +61,7 @@
 				color:{s === 'active' ? 'var(--tx-1)' : s === 'completed' ? 'var(--tx-2)' : 'var(--tx-3)'};
 			">{step.label}</span>
 			{#if s === 'completed'}
-				<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--x402)" stroke-width="3">
+				<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--x402)" stroke-width="3" aria-hidden="true">
 					<polyline points="20 6 9 17 4 12"></polyline>
 				</svg>
 			{/if}

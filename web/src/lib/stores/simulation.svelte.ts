@@ -82,7 +82,7 @@ function createSimState() {
 		protocols: ['acp', 'x402', 'ap2', 'mpp', 'atxp'],
 		seed: 42,
 		use_llm: false,
-		llm_model: 'minimax-m2.5-free',
+		llm_model: 'minimax-m2.5',
 	});
 	let elapsed = $state('');
 	let totalTxns = $state(0);

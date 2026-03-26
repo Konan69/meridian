@@ -14,7 +14,7 @@ from .types import PROTOCOL_FEE_FORMULAS, PROTOCOL_TRAITS, Protocol
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
-DEFAULT_MODEL = "minimax-m2.5-free"
+DEFAULT_MODEL = "minimax-m2.5"
 MAX_CONCURRENT = 5  # conservative for free tier rate limits
 REQUEST_TIMEOUT = 30
 
@@ -34,9 +34,9 @@ def _build_system_prompt(agent: dict, available_protocols: list[str]) -> str:
         except ValueError:
             proto_info.append(f"- {p.upper()}: no details")
 
-    return f"""You are {agent['name']}, a shopping agent.
+    return f"""You are {agent["name"]}, a shopping agent.
 
-Profile: budget=${agent['remaining_budget'] / 100:.2f} remaining, price_sensitivity={agent['price_sensitivity']:.2f}, preferred=[{', '.join(agent.get('preferred_categories', []))}]
+Profile: budget=${agent["remaining_budget"] / 100:.2f} remaining, price_sensitivity={agent["price_sensitivity"]:.2f}, preferred=[{", ".join(agent.get("preferred_categories", []))}]
 
 Protocols:
 {chr(10).join(proto_info)}
@@ -99,6 +99,7 @@ class LLMDecisionEngine:
         agent: dict,
         product: dict,
         protocols: list[str],
+        rng,
     ) -> dict:
         """Make a purchase decision. Falls back to rule-based on failure."""
         async with self.semaphore:
@@ -107,8 +108,7 @@ class LLMDecisionEngine:
             except Exception as e:
                 self.failed_requests += 1
                 logger.debug(f"LLM failed for {agent['name']}: {e}")
-                # Fallback to rule-based
-                return self._rule_based_fallback(agent, product, protocols)
+                return self._rule_based_fallback(agent, product, protocols, rng)
 
     async def _call_llm(self, agent: dict, product: dict, protocols: list[str]) -> dict:
         self.total_requests += 1
@@ -159,21 +159,28 @@ class LLMDecisionEngine:
 
         return result
 
-    def _rule_based_fallback(self, agent: dict, product: dict, protocols: list[str]) -> dict:
-        """Simple rule-based decision as fallback."""
-        import random
+    def _rule_based_fallback(
+        self, agent: dict, product: dict, protocols: list[str], rng
+    ) -> dict:
+        """Rule-based decision matching AgentProfile.wants_to_buy() logic."""
         price = product.get("price", 0)
         remaining = agent.get("remaining_budget", 0)
 
         if price > remaining:
             return {"buy": False, "protocol": "", "reasoning": "over budget"}
 
-        buy_prob = 0.5 + (agent.get("risk_tolerance", 0.5) - 0.5) * 0.3
-        if agent.get("price_sensitivity", 0.5) > 0.7 and price > remaining * 0.3:
-            buy_prob *= 0.3
+        price_sensitivity = agent.get("price_sensitivity", 0.5)
+        if price_sensitivity > 0.7 and price > agent.get("budget", remaining) * 0.3:
+            if rng.random() > price_sensitivity:
+                return {
+                    "buy": False,
+                    "protocol": "",
+                    "reasoning": "price too sensitive",
+                }
 
-        buy = random.random() < buy_prob
-        proto = random.choice(protocols) if protocols else "acp"
+        buy_prob = 0.5 + (agent.get("risk_tolerance", 0.5) - 0.5) * 0.3
+        buy = rng.random() < buy_prob
+        proto = rng.choice(protocols) if protocols else "acp"
         return {"buy": buy, "protocol": proto, "reasoning": "rule-based fallback"}
 
     def stats(self) -> dict:

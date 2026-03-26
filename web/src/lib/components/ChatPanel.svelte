@@ -67,6 +67,9 @@
 	<!-- Messages -->
 	<div
 		bind:this={scrollContainer}
+		role="log"
+		aria-live="polite"
+		aria-label="Chat messages"
 		style="
 			flex:1; overflow-y:auto; padding:16px;
 			display:flex; flex-direction:column; gap:12px;
@@ -148,7 +151,9 @@
 		display:flex; gap:8px; padding:12px 16px;
 		border-top:1px solid var(--bd); background:var(--bg-1);
 	">
+		<label for="chat-input" class="sr-only">Type your message</label>
 		<input
+			id="chat-input"
 			type="text"
 			bind:value={inputValue}
 			onkeydown={handleKeydown}
@@ -179,5 +184,16 @@
 	@keyframes typing {
 		0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
 		30% { opacity: 1; transform: translateY(-4px); }
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 </style>

@@ -21,8 +21,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 # Real crypto for protocol implementations
-k256 = { version = "0.13", features = ["ecdsa", "sha256"] }  # secp256k1 for x402/AP2 signing
+k256 = { version = "0.13", features = ["ecdsa", "sha256", "arithmetic"] }
 rand = "0.8"
 base64 = "0.22"
 hmac = "0.12"
 tokio-stream = "0.1"
+hex = "0.4"
+# Real blockchain + HTTP
+reqwest = { version = "0.12", features = ["json", "multipart"] }

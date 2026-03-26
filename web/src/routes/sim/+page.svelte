@@ -47,7 +47,7 @@
 					if (!l.trim()) continue;
 					try {
 						const ev: SimEvent = JSON.parse(l);
-						events = [...events, ev];
+						events = [...events.slice(-499), ev];
 						if (ev.type === 'simulation_complete') {
 							complete = true;
 							elapsed = `${ev.duration_seconds}s`;
@@ -59,7 +59,7 @@
 					} catch {}
 				}
 			}
-		} catch (e) { events = [...events, { type: 'error', message: String(e) }]; }
+		} catch (e) { events = [...events.slice(-499), { type: 'error', message: String(e) }]; }
 		running = false;
 	}
 </script>
@@ -98,7 +98,7 @@
 
 	{#if complete}
 		<!-- Summary -->
-		<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:1px; background:var(--bd); border-radius:6px; overflow:hidden; margin-bottom:20px;">
+		<div class="summary-grid" style="gap:1px; background:var(--bd); border-radius:6px; overflow:hidden; margin-bottom:20px;">
 			{#each [
 				{ v: totalTxns, l: 'TRANSACTIONS' },
 				{ v: fmt(totalVol), l: 'VOLUME' },
@@ -155,7 +155,7 @@
 	{/if}
 
 	<!-- Live feeds -->
-	<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+	<div class="feeds-grid" style="gap:12px;">
 		<!-- Rounds -->
 		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; overflow:hidden;">
 			<div style="
@@ -232,4 +232,19 @@
 	@keyframes sp { to { transform:rotate(360deg); } }
 
 	input:focus { outline:none; border-color:var(--acp); }
+	.summary-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+	}
+	.feeds-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+	}
+	@media (max-width: 900px) {
+		.summary-grid { grid-template-columns: repeat(2, 1fr); }
+		.feeds-grid { grid-template-columns: 1fr; }
+	}
+	@media (max-width: 480px) {
+		.summary-grid { grid-template-columns: 1fr; }
+	}
 </style>

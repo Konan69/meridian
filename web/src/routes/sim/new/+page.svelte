@@ -190,7 +190,7 @@
 					if (!l.trim()) continue;
 					try {
 						const ev = JSON.parse(l);
-						simState.events = [...simState.events, ev];
+						simState.events = [...simState.events.slice(-499), ev];
 						simState.addLog(`[${ev.type}] ${ev.agent || ''} ${ev.product || ''} ${ev.protocol || ''}`);
 
 						if (ev.type === 'simulation_complete') {
@@ -260,7 +260,7 @@
 		<StepIndicator currentStep={simState.step} onStepClick={goToStep} />
 
 		<!-- View mode switcher (MiroFish pattern) -->
-		<div style="display:flex; gap:2px; background:var(--bg-2); padding:3px; border-radius:6px;">
+		<div role="group" aria-label="View mode selector" style="display:flex; gap:2px; background:var(--bg-2); padding:3px; border-radius:6px;">
 			{#each [
 				{ key: 'graph', label: 'Graph' },
 				{ key: 'split', label: 'Split' },
@@ -268,8 +268,9 @@
 			] as mode}
 				<button
 					onclick={() => viewMode = mode.key as any}
+					aria-pressed={viewMode === mode.key}
 					style="
-						font-size:11px; font-weight:600; padding:4px 12px; border:none;
+						font-size:11px; font-weight:600; padding:8px 16px; border:none;
 						border-radius:4px; cursor:pointer;
 						background:{viewMode === mode.key ? 'var(--bg-4)' : 'transparent'};
 						color:{viewMode === mode.key ? 'var(--tx-1)' : 'var(--tx-3)'};
@@ -346,7 +347,7 @@
 								{simState.graphNodes.length} entities · {simState.graphEdges.length} relationships
 							</p>
 
-							<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:20px;">
+							<div class="entity-grid" style="gap:8px; margin-bottom:20px;">
 								{#each [...new Set(simState.graphNodes.map(n => n.type))] as type}
 									<div style="background:var(--bg-2); border-radius:4px; padding:12px; text-align:center;">
 										<div style="font-family:var(--mono); font-size:20px; font-weight:700;">
@@ -376,23 +377,23 @@
 
 							<!-- Config editor -->
 							<div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
-								<label style="display:flex; flex-direction:column; gap:2px;">
+								<label for="cfg-agents" style="display:flex; flex-direction:column; gap:2px;">
 									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Agents</span>
-									<input type="number" bind:value={simState.config.num_agents} min="10" max="1000" style="
+									<input id="cfg-agents" type="number" bind:value={simState.config.num_agents} min="10" max="1000" style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
 									" />
 								</label>
-								<label style="display:flex; flex-direction:column; gap:2px;">
+								<label for="cfg-rounds" style="display:flex; flex-direction:column; gap:2px;">
 									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Rounds</span>
-									<input type="number" bind:value={simState.config.num_rounds} min="1" max="100" style="
+									<input id="cfg-rounds" type="number" bind:value={simState.config.num_rounds} min="1" max="100" style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
 									" />
 								</label>
-								<label style="display:flex; flex-direction:column; gap:2px;">
+								<label for="cfg-seed" style="display:flex; flex-direction:column; gap:2px;">
 									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Seed</span>
-									<input type="number" bind:value={simState.config.seed} style="
+									<input id="cfg-seed" type="number" bind:value={simState.config.seed} style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
 									" />
@@ -400,7 +401,7 @@
 							</div>
 
 							<!-- Agent cards grid -->
-							<div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; max-height:400px; overflow-y:auto;">
+							<div class="agent-grid" style="gap:8px; max-height:400px; overflow-y:auto;">
 								{#each simState.agents.slice(0, 20) as agent}
 									<AgentCard {agent} />
 								{/each}
@@ -430,7 +431,7 @@
 
 							{#if simState.complete}
 								<!-- Summary -->
-								<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:1px; background:var(--bd); border-radius:6px; overflow:hidden; margin:16px 0;">
+								<div class="summary-grid" style="gap:1px; background:var(--bd); border-radius:6px; overflow:hidden; margin:16px 0;">
 									{#each [
 										{ v: simState.totalTxns, l: 'TRANSACTIONS' },
 										{ v: fmt(simState.totalVolume), l: 'VOLUME' },
@@ -519,3 +520,29 @@
 		{/if}
 	</div>
 </div>
+
+<style>
+	.entity-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+	}
+	.agent-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+	}
+	.summary-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+	}
+	@media (max-width: 1100px) {
+		.entity-grid { grid-template-columns: repeat(2, 1fr); }
+		.summary-grid { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 768px) {
+		.agent-grid { grid-template-columns: 1fr; }
+	}
+	@media (max-width: 480px) {
+		.entity-grid { grid-template-columns: 1fr; }
+		.summary-grid { grid-template-columns: 1fr; }
+	}
+</style>

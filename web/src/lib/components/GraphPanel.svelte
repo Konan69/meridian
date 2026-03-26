@@ -11,6 +11,7 @@
 	import { zoom as d3Zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
 	import { select } from 'd3-selection';
 	import type { GraphNode, GraphEdge } from './graphDemo';
+	import { TYPE_COLORS, getEntityColor } from '$lib/constants';
 
 	/* ── Types ── */
 
@@ -31,14 +32,6 @@
 	}
 
 	/* ── Constants ── */
-
-	const TYPE_COLORS: Record<string, string> = {
-		Buyer: '#3b82f6',
-		Merchant: '#10b981',
-		Product: '#f59e0b',
-		Brand: '#8b5cf6',
-		Transaction: '#ef4444'
-	};
 
 	const ENTITY_TYPES = Object.keys(TYPE_COLORS);
 
@@ -79,7 +72,7 @@
 				id: n.id,
 				name: n.name,
 				type: n.type,
-				color: n.color ?? TYPE_COLORS[n.type] ?? '#71717a',
+				color: n.color ?? getEntityColor(n.type),
 				properties: n.properties
 			};
 			nodeMap.set(n.id, sn);
@@ -162,6 +155,13 @@
 
 	function handleNodeClick(node: SimNode) {
 		selected = { node };
+	}
+
+	function handleNodeKeydown(e: KeyboardEvent, node: SimNode) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			selected = { node };
+		}
 	}
 
 	function closeDetail() {
@@ -260,12 +260,14 @@
 
 			<!-- Nodes -->
 			{#each simNodes as node (node.id)}
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<g
 					transform="translate({nodeX(node)}, {nodeY(node)})"
 					style="cursor: pointer;"
+					role="button"
+					tabindex="0"
+					aria-label="{node.type}: {node.name}"
 					onclick={() => handleNodeClick(node)}
+					onkeydown={(e) => handleNodeKeydown(e, node)}
 				>
 					<!-- Outer glow for selected -->
 					{#if selected?.node.id === node.id}
@@ -341,7 +343,7 @@
 						width: 10px;
 						height: 10px;
 						border-radius: 50%;
-						background: {TYPE_COLORS[entityType]};
+						background: {getEntityColor(entityType)};
 						flex-shrink: 0;
 					"
 				></span>
@@ -411,13 +413,14 @@
 				</div>
 				<button
 					onclick={closeDetail}
+					aria-label="Close detail panel"
 					style="
 						background: none;
 						border: none;
 						color: var(--tx-3, #52525b);
 						font-size: 18px;
 						cursor: pointer;
-						padding: 0 4px;
+						padding: 8px 12px;
 						line-height: 1;
 					"
 				>
@@ -546,7 +549,7 @@
 									<span style="color: var(--tx-3, #52525b);">
 										{isSource ? '\u2192' : '\u2190'}
 									</span>
-									<span style="color: {TYPE_COLORS[nodes.find((n) => n.id === (isSource ? edge.target : edge.source))?.type ?? ''] ?? '#71717a'};">
+									<span style="color: {getEntityColor(nodes.find((n) => n.id === (isSource ? edge.target : edge.source))?.type ?? '')};">
 										{nodes.find((n) => n.id === (isSource ? edge.target : edge.source))?.name ?? '?'}
 									</span>
 									{#if edge.label}

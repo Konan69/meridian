@@ -1,9 +1,9 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::core::types::ProtocolMetrics;
 use crate::AppState;
+use crate::core::types::ProtocolMetrics;
 
 #[derive(Serialize)]
 pub struct MetricsResponse {

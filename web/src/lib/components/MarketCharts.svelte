@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { PROTOCOL_COLORS } from '$lib/constants';
+
 	interface ProtoMetric {
 		protocol: string;
 		total_transactions: number;
@@ -16,16 +18,8 @@
 
 	let { metrics }: Props = $props();
 
-	const protocolColors: Record<string, string> = {
-		acp: '#3b82f6',
-		ap2: '#ef4444',
-		x402: '#10b981',
-		mpp: '#8b5cf6',
-		atxp: '#f59e0b',
-	};
-
 	function color(protocol: string): string {
-		return protocolColors[protocol.toLowerCase()] ?? '#6b7280';
+		return PROTOCOL_COLORS[protocol.toLowerCase()] ?? '#6b7280';
 	}
 
 	function fmtDollars(cents: number): string {
@@ -70,6 +64,19 @@
 	const chartPadding = { top: 32, right: 80, bottom: 8, left: 0 };
 	let chartWidth = $derived(400);
 
+	// Responsive chart width
+	$effect(() => {
+		const updateWidth = () => {
+			const container = document.querySelector('.market-charts-grid');
+			if (container) {
+				chartWidth = Math.max(200, container.clientWidth - 64);
+			}
+		};
+		updateWidth();
+		window.addEventListener('resize', updateWidth);
+		return () => window.removeEventListener('resize', updateWidth);
+	});
+
 	function svgHeight(count: number): number {
 		return chartPadding.top + count * (barHeight + 8) + chartPadding.bottom;
 	}
@@ -81,13 +88,14 @@
 	}
 </script>
 
-<div style="
+<div class="market-charts-grid" style="
 	display:grid; grid-template-columns:1fr 1fr; gap:12px;
 	font-family:var(--sans);
 ">
 	<!-- 1. Volume by Protocol -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(volumeData.length)}" style="width:100%; height:auto;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(volumeData.length)}" role="img" aria-label="Volume by protocol bar chart" style="width:100%; height:auto;">
+			<title>Volume by Protocol</title>
 			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Volume by Protocol</text>
 			{#each volumeData as m, i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
@@ -109,7 +117,8 @@
 
 	<!-- 2. Fee Rate Comparison -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(feeData.length)}" style="width:100%; height:auto;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(feeData.length)}" role="img" aria-label="Fee rate comparison bar chart" style="width:100%; height:auto;">
+			<title>Fee Rate Comparison</title>
 			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Fee Rate Comparison</text>
 			{#each feeData as m, i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
@@ -128,7 +137,8 @@
 
 	<!-- 3. Execution Time (log scale) -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(execData.length)}" style="width:100%; height:auto;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(execData.length)}" role="img" aria-label="Execution time by protocol bar chart" style="width:100%; height:auto;">
+			<title>Execution Time</title>
 			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Execution Time</text>
 			{#each execData as m, i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
@@ -147,7 +157,8 @@
 
 	<!-- 4. Success Rate -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(successData.length)}" style="width:100%; height:auto;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(successData.length)}" role="img" aria-label="Success rate by protocol bar chart" style="width:100%; height:auto;">
+			<title>Success Rate</title>
 			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Success Rate</text>
 			{#each successData as m, i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
@@ -167,3 +178,12 @@
 		</svg>
 	</div>
 </div>
+
+<style>
+	.market-charts-grid {
+		grid-template-columns: 1fr 1fr;
+	}
+	@media (max-width: 900px) {
+		.market-charts-grid { grid-template-columns: 1fr; }
+	}
+</style>

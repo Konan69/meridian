@@ -1,30 +1,30 @@
+mod config;
 mod core;
+mod db;
 mod protocols;
 mod routes;
 
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use clap::Parser;
-// No Docker needed. All protocol logic runs in-process.
-// ACP: SPT lifecycle in Rust (ported from agentic-commerce-demo)
-// x402: Real ECDSA secp256k1 via k256 crate
-// AP2: Real ECDSA double-signing via k256 crate
-// MPP: Session budget tracking + ECDSA receipts
-// ATXP: Constraint engine with SHA256 mandates
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::core::types::{CheckoutSession, Product};
+use crate::core::wallet::SharedWalletService;
+use crate::db::Store;
 use crate::protocols::ProtocolAdapter;
 
 pub struct AppState {
-    pub catalog: Vec<Product>,
+    pub catalog: Arc<Vec<Product>>,
     pub sessions: Mutex<HashMap<String, CheckoutSession>>,
     pub protocols: HashMap<String, Box<dyn ProtocolAdapter>>,
+    pub store: Mutex<Store>,
+    pub wallet_service: SharedWalletService,
 }
 
 #[derive(Parser)]
@@ -35,6 +35,9 @@ struct Cli {
 
     #[arg(long, default_value = "catalog.json")]
     catalog: String,
+
+    #[arg(long, default_value = "meridian.db")]
+    db: String,
 }
 
 fn default_catalog() -> Vec<Product> {
@@ -105,10 +108,16 @@ fn default_catalog() -> Vec<Product> {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("meridian_engine=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("meridian_engine=info".parse().unwrap()),
+        )
         .init();
 
     let cli = Cli::parse();
+
+    // Initialize SQLite store
+    let store = Store::new(&cli.db).expect("failed to open database");
+    tracing::info!("opened SQLite database at {}", cli.db);
 
     // Load catalog
     let catalog = if std::path::Path::new(&cli.catalog).exists() {
@@ -121,25 +130,94 @@ async fn main() {
 
     tracing::info!("loaded {} products", catalog.len());
 
-    // Initialize protocol adapters
+    // Save products to DB
+    for product in &catalog {
+        store
+            .save_product(product)
+            .expect("failed to save product to DB");
+    }
+    tracing::info!("persisted {} products to SQLite", catalog.len());
+
+    // Initialize protocol adapters with real credentials
+    let cfg = config::load();
+    tracing::info!(
+        "x402 config: rpc={}, chain_id={}, pay_to={}",
+        cfg.x402.rpc_url,
+        cfg.x402.chain_id,
+        cfg.x402.pay_to
+    );
+    tracing::info!(
+        "stripe config: key={}...",
+        cfg.stripe.secret_key.chars().take(10).collect::<String>()
+    );
+    tracing::info!("atxp config: coordinator={}", cfg.atxp.coordinator_url);
+    tracing::warn!(
+        "strict live mode enabled: all five protocols are required and must resolve to real adapters"
+    );
+
+    // Initialize wallet service with master seed for per-agent key derivation
+    let wallet_master_seed =
+        std::env::var("WALLET_MASTER_SEED").expect("WALLET_MASTER_SEED must be set");
+    let wallet_service = crate::core::wallet::create_wallet_service(&wallet_master_seed);
+    tracing::info!("wallet service initialized with master seed");
+
     let mut protocol_map: HashMap<String, Box<dyn ProtocolAdapter>> = HashMap::new();
-    protocol_map.insert("acp".into(), Box::new(protocols::acp::AcpAdapter::new()));
-    protocol_map.insert("x402".into(), Box::new(protocols::x402::X402Adapter::new()));
-    protocol_map.insert("ap2".into(), Box::new(protocols::ap2::Ap2Adapter::new()));
-    protocol_map.insert("mpp".into(), Box::new(protocols::mpp::MppAdapter::new()));
-    protocol_map.insert("atxp".into(), Box::new(protocols::atxp::AtxpAdapter::new()));
+    protocol_map.insert(
+        "x402".into(),
+        Box::new(protocols::x402::X402Adapter::new(cfg.clone())),
+    );
+
+    let acp_adapter = protocols::remote::RemoteAdapter::new("acp", &cfg.remote_adapters.acp_url)
+        .await
+        .expect("failed to initialize ACP remote adapter");
+    protocol_map.insert("acp".into(), Box::new(acp_adapter));
+
+    let mpp_adapter = protocols::remote::RemoteAdapter::new("mpp", &cfg.remote_adapters.mpp_url)
+        .await
+        .expect("failed to initialize MPP remote adapter");
+    protocol_map.insert("mpp".into(), Box::new(mpp_adapter));
+
+    let ap2_adapter = protocols::remote::RemoteAdapter::new("ap2", &cfg.remote_adapters.ap2_url)
+        .await
+        .expect("failed to initialize AP2 remote adapter");
+    protocol_map.insert("ap2".into(), Box::new(ap2_adapter));
+
+    let atxp_adapter = protocols::remote::RemoteAdapter::new("atxp", &cfg.remote_adapters.atxp_url)
+        .await
+        .expect("failed to initialize ATXP remote adapter");
+    protocol_map.insert("atxp".into(), Box::new(atxp_adapter));
 
     tracing::info!(
         "initialized {} protocol adapters: {:?}",
         protocol_map.len(),
         protocol_map.keys().collect::<Vec<_>>()
     );
+    assert_eq!(
+        protocol_map.len(),
+        5,
+        "strict live mode requires acp, ap2, atxp, mpp, and x402 to all initialize"
+    );
 
     let state = Arc::new(AppState {
-        catalog,
+        catalog: Arc::new(catalog),
         sessions: Mutex::new(HashMap::new()),
         protocols: protocol_map,
+        store: Mutex::new(store),
+        wallet_service,
     });
+
+    let cors = if let Ok(origin) = std::env::var("CORS_ORIGIN") {
+        tracing::info!("CORS enabled for origin: {}", origin);
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::AllowOrigin::exact(
+                origin.parse().unwrap(),
+            ))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        tracing::warn!("CORS_ORIGIN not set, defaulting to permissive (dev only!)");
+        CorsLayer::permissive()
+    };
 
     let app = Router::new()
         // Product catalog
@@ -158,18 +236,39 @@ async fn main() {
             "/checkout_sessions/{id}/cancel",
             post(routes::checkout::cancel_session),
         )
+        // Wallet management
+        .route("/wallets", get(routes::wallet::list_wallets))
+        .route("/wallets/balance", get(routes::wallet::total_balance))
+        .route(
+            "/wallets/{agent_id}/{protocol}",
+            get(routes::wallet::get_wallet),
+        )
+        .route("/wallets", post(routes::wallet::create_wallet))
+        // Transactions
+        .route(
+            "/transactions",
+            get(routes::transactions::list_transactions),
+        )
         // Metrics
         .route("/metrics", get(routes::metrics::get_metrics))
         // SSE event stream
         .route("/events", get(routes::events::event_stream))
         // Health
         .route("/health", get(|| async { "ok" }))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
+        .layer(cors)
+        .with_state(state.clone());
 
     let addr = format!("0.0.0.0:{}", cli.port);
     tracing::info!("meridian engine listening on {addr}");
-    tracing::info!("protocols: ACP, AP2, x402, MPP, ATXP");
+    tracing::info!(
+        "protocols: {}",
+        state
+            .protocols
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

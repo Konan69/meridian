@@ -1,5 +1,6 @@
 <script>
   import ProtocolBadge from './ProtocolBadge.svelte';
+  import { AVATAR_COLORS, getAvatarColor } from '$lib/constants';
 
   /**
    * @type {{
@@ -19,19 +20,7 @@
    */
   let { agent } = $props();
 
-  const avatarColors = [
-    '#3b82f6', '#ef4444', '#10b981', '#8b5cf6',
-    '#f59e0b', '#ec4899', '#06b6d4', '#f97316',
-  ];
-
-  let color = $derived(() => {
-    const name = agent?.name ?? '';
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return avatarColors[Math.abs(hash) % avatarColors.length];
-  });
+  let color = $derived(getAvatarColor(agent?.name ?? ''));
 
   let letter = $derived((agent?.name ?? 'A')[0].toUpperCase());
   let spentPct = $derived(agent?.budget > 0 ? Math.min((agent.spent / agent.budget) * 100, 100) : 0);

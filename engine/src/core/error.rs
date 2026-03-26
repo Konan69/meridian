@@ -25,6 +25,12 @@ pub enum EngineError {
     #[error("protocol error: {0}")]
     ProtocolError(String),
 
+    #[error("external service error: {0}")]
+    ExternalService(String),
+
+    #[error("invalid address: {0}")]
+    InvalidAddress(String),
+
     #[error("internal: {0}")]
     Internal(String),
 
@@ -46,17 +52,21 @@ impl IntoResponse for EngineError {
     fn into_response(self) -> Response {
         let (status, error_type, code) = match &self {
             EngineError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found", "not_found"),
-            EngineError::InvalidRequest(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request", "invalid_request")
-            }
+            EngineError::InvalidRequest(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid_request",
+            ),
             EngineError::SessionTerminal(_) => (
                 StatusCode::METHOD_NOT_ALLOWED,
                 "invalid_request",
                 "session_not_modifiable",
             ),
-            EngineError::PaymentDeclined(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request", "payment_declined")
-            }
+            EngineError::PaymentDeclined(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "payment_declined",
+            ),
             EngineError::VaultTokenInvalid(_) => (
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
@@ -67,11 +77,9 @@ impl IntoResponse for EngineError {
                 "idempotency_conflict",
                 "idempotency_conflict",
             ),
-            EngineError::ProtocolError(_) => (
-                StatusCode::BAD_REQUEST,
-                "protocol_error",
-                "protocol_error",
-            ),
+            EngineError::ProtocolError(_) => {
+                (StatusCode::BAD_REQUEST, "protocol_error", "protocol_error")
+            }
             EngineError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "processing_error",
@@ -81,6 +89,16 @@ impl IntoResponse for EngineError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "processing_error",
                 "database_error",
+            ),
+            EngineError::ExternalService(_) => (
+                StatusCode::BAD_GATEWAY,
+                "external_service_error",
+                "external_service_error",
+            ),
+            EngineError::InvalidAddress(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_address",
+                "invalid_address",
             ),
         };
 

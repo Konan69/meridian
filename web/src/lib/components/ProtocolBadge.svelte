@@ -1,25 +1,18 @@
 <script>
+  import { getProtocolColor } from '$lib/constants';
   /** @type {{ protocol: string }} */
   let { protocol } = $props();
 
   let label = $derived(protocol?.toUpperCase() ?? 'UNKNOWN');
-
-  const colorMap = {
-    acp: 'var(--acp, #3b82f6)',
-    ap2: 'var(--ap2, #ef4444)',
-    x402: 'var(--x402, #10b981)',
-    mpp: 'var(--mpp, #8b5cf6)',
-    atxp: 'var(--atxp, #f59e0b)',
-  };
-
-  let dotColor = $derived(colorMap[protocol?.toLowerCase()] ?? 'var(--tx-3, #666)');
+  let dotColor = $derived(getProtocolColor(protocol ?? ''));
 </script>
 
 <span
   class="protocol-badge"
   style:--dot-color={dotColor}
+  aria-label="Protocol: {label}"
 >
-  <span class="dot"></span>
+  <span class="dot" aria-hidden="true"></span>
   {label}
 </span>
 

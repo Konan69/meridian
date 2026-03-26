@@ -10,7 +10,9 @@ from typing import Optional
 
 from .agents import generate_agents
 from .commerce import CommerceClient
+from .graph import CommerceGraphBuilder
 from .llm import LLMDecisionEngine
+from .memory import MemoryUpdater
 from .types import (
     AgentProfile,
     Protocol,
@@ -32,6 +34,8 @@ class SimulationEngine:
         self.result = SimulationResult(config=config)
         self.rng = random.Random(config.seed)
         self.llm_engine: Optional[LLMDecisionEngine] = None
+        self.graph: Optional[CommerceGraphBuilder] = None
+        self.memory: Optional[MemoryUpdater] = None
 
         # Initialize LLM engine if enabled
         if config.use_llm:
@@ -43,9 +47,12 @@ class SimulationEngine:
                 )
                 self._emit("llm_enabled", {"model": config.llm_model})
             else:
-                self._emit("llm_fallback", {
-                    "reason": "OPENCODE_API_KEY not set, using rule-based decisions",
-                })
+                self._emit(
+                    "llm_fallback",
+                    {
+                        "reason": "OPENCODE_API_KEY not set, using rule-based decisions",
+                    },
+                )
 
     def _emit(self, event_type: str, data: dict):
         """Emit a JSON event to stdout for streaming."""
@@ -55,21 +62,47 @@ class SimulationEngine:
         """Initialize agents and load product catalog."""
         healthy = await self.client.health()
         if not healthy:
-            self._emit("error", {"message": f"Engine not reachable at {self.config.engine_url}"})
-            sys.exit(1)
+            self._emit(
+                "error",
+                {"message": f"Engine not reachable at {self.config.engine_url}"},
+            )
+            raise RuntimeError(f"Engine not reachable at {self.config.engine_url}")
 
         self.products = await self.client.get_products()
-        self._emit("setup", {"products": len(self.products), "engine_url": self.config.engine_url})
+        self._emit(
+            "setup",
+            {"products": len(self.products), "engine_url": self.config.engine_url},
+        )
 
         self.agents = generate_agents(
             num_agents=self.config.num_agents,
             budget_range=self.config.agent_budget_range,
             seed=self.config.seed,
         )
-        self._emit("agents_ready", {
-            "count": len(self.agents),
-            "total_budget_cents": sum(a.budget for a in self.agents),
-        })
+        self._emit(
+            "agents_ready",
+            {
+                "count": len(self.agents),
+                "total_budget_cents": sum(a.budget for a in self.agents),
+            },
+        )
+
+        # Initialize knowledge graph if OPENCODE_API_KEY is available
+        if os.environ.get("OPENCODE_API_KEY"):
+            try:
+                self.graph = CommerceGraphBuilder()
+                await self.graph.initialize()
+                self.memory = MemoryUpdater(self.graph)
+                self._emit("graph_enabled", {"db_path": self.graph.db_path})
+            except Exception as exc:
+                self._emit(
+                    "graph_fallback",
+                    {
+                        "reason": f"Knowledge graph init failed: {exc}",
+                    },
+                )
+                self.graph = None
+                self.memory = None
 
     async def run_round(self, round_num: int) -> RoundSummary:
         """Execute one round of the simulation."""
@@ -96,7 +129,9 @@ class SimulationEngine:
 
             for (agent, product), decision in zip(candidates, decisions):
                 if isinstance(decision, Exception):
-                    self._emit("llm_error", {"agent": agent.agent_id, "error": str(decision)})
+                    self._emit(
+                        "llm_error", {"agent": agent.agent_id, "error": str(decision)}
+                    )
                     continue
                 if not decision.get("buy", False):
                     continue
@@ -106,13 +141,15 @@ class SimulationEngine:
                     protocol = protocol_strs[0]
 
                 needs_shipping = product.get("requires_shipping", False)
-                tasks.append(self._execute_purchase(
-                    agent=agent,
-                    product=product,
-                    protocol=protocol,
-                    round_num=round_num,
-                    needs_shipping=needs_shipping,
-                ))
+                tasks.append(
+                    self._execute_purchase(
+                        agent=agent,
+                        product=product,
+                        protocol=protocol,
+                        round_num=round_num,
+                        needs_shipping=needs_shipping,
+                    )
+                )
         else:
             # Rule-based decisions
             for agent in self.agents:
@@ -127,17 +164,21 @@ class SimulationEngine:
                     continue
 
                 # FLAT distribution: round-robin across protocols for fair comparison
-                protocol = self.config.protocols[proto_idx % len(self.config.protocols)].value
+                protocol = self.config.protocols[
+                    proto_idx % len(self.config.protocols)
+                ].value
                 proto_idx += 1
 
                 needs_shipping = product.get("requires_shipping", False)
-                tasks.append(self._execute_purchase(
-                    agent=agent,
-                    product=product,
-                    protocol=protocol,
-                    round_num=round_num,
-                    needs_shipping=needs_shipping,
-                ))
+                tasks.append(
+                    self._execute_purchase(
+                        agent=agent,
+                        product=product,
+                        protocol=protocol,
+                        round_num=round_num,
+                        needs_shipping=needs_shipping,
+                    )
+                )
 
         summary.active_agents = len(tasks)
 
@@ -157,19 +198,43 @@ class SimulationEngine:
                         summary.total_fees += r.fee
                     else:
                         summary.fail_count += 1
-                        self._emit("purchase_failed", {
-                            "agent": r.agent_id, "protocol": r.protocol,
-                            "error": r.error, "round": round_num,
-                        })
+                        self._emit(
+                            "purchase_failed",
+                            {
+                                "agent": r.agent_id,
+                                "protocol": r.protocol,
+                                "error": r.error,
+                                "round": round_num,
+                            },
+                        )
 
-        self._emit("round_complete", {
-            "round": round_num,
-            "active_agents": summary.active_agents,
-            "success": summary.success_count,
-            "failed": summary.fail_count,
-            "volume_cents": summary.total_volume,
-            "fees_cents": summary.total_fees,
-        })
+        self._emit(
+            "round_complete",
+            {
+                "round": round_num,
+                "active_agents": summary.active_agents,
+                "success": summary.success_count,
+                "failed": summary.fail_count,
+                "volume_cents": summary.total_volume,
+                "fees_cents": summary.total_fees,
+            },
+        )
+
+        # Record round summary to knowledge graph
+        if self.graph:
+            try:
+                await self.graph.record_round(
+                    {
+                        "round_num": round_num,
+                        "total_volume": summary.total_volume,
+                        "total_fees": summary.total_fees,
+                        "success_count": summary.success_count,
+                        "fail_count": summary.fail_count,
+                        "active_agents": summary.active_agents,
+                    }
+                )
+            except Exception:
+                pass  # non-fatal
 
         return summary
 
@@ -195,15 +260,36 @@ class SimulationEngine:
 
         if record.success:
             agent.spent += record.amount
-            self._emit("purchase", {
-                "agent": agent.agent_id,
-                "product": product["name"],
-                "protocol": protocol,
-                "amount_cents": record.amount,
-                "fee_cents": record.fee,
-                "settlement_ms": record.settlement_ms,
-                "round": round_num,
-            })
+            self._emit(
+                "purchase",
+                {
+                    "agent": agent.agent_id,
+                    "product": product["name"],
+                    "protocol": protocol,
+                    "amount_cents": record.amount,
+                    "fee_cents": record.fee,
+                    "settlement_ms": record.settlement_ms,
+                    "round": round_num,
+                },
+            )
+            # Record to knowledge graph
+            if self.memory:
+                await self.memory.record_purchase(
+                    agent_id=agent.agent_id,
+                    product_name=product["name"],
+                    protocol=protocol,
+                    amount_cents=record.amount,
+                    round_num=round_num,
+                )
+        else:
+            # Record failure to knowledge graph
+            if self.memory:
+                await self.memory.record_failure(
+                    agent_id=agent.agent_id,
+                    protocol=protocol,
+                    error=record.error or "unknown",
+                    round_num=round_num,
+                )
 
         return record
 
@@ -212,11 +298,14 @@ class SimulationEngine:
         start_time = time.time()
         await self.setup()
 
-        self._emit("simulation_start", {
-            "agents": self.config.num_agents,
-            "rounds": self.config.num_rounds,
-            "protocols": [p.value for p in self.config.protocols],
-        })
+        self._emit(
+            "simulation_start",
+            {
+                "agents": self.config.num_agents,
+                "rounds": self.config.num_rounds,
+                "protocols": [p.value for p in self.config.protocols],
+            },
+        )
 
         for round_num in range(1, self.config.num_rounds + 1):
             summary = await self.run_round(round_num)
@@ -241,6 +330,18 @@ class SimulationEngine:
             completion_data["llm_usage"] = self.llm_engine.usage_summary()
         self._emit("simulation_complete", completion_data)
 
+        # Flush and close knowledge graph
+        if self.memory:
+            try:
+                await self.memory.close()
+            except Exception:
+                pass
+        if self.graph:
+            try:
+                await self.graph.close()
+            except Exception:
+                pass
+
         await self.client.close()
         return self.result
 
@@ -252,11 +353,17 @@ class SimulationEngine:
         p("\n" + "=" * 70)
         p("  MERIDIAN SIMULATION REPORT")
         p("=" * 70)
-        p(f"  Agents: {self.config.num_agents} | Rounds: {self.config.num_rounds} | Duration: {r.duration_seconds:.1f}s")
-        p(f"  Total Transactions: {r.total_transactions} | Volume: ${r.total_volume / 100:.2f}")
+        p(
+            f"  Agents: {self.config.num_agents} | Rounds: {self.config.num_rounds} | Duration: {r.duration_seconds:.1f}s"
+        )
+        p(
+            f"  Total Transactions: {r.total_transactions} | Volume: ${r.total_volume / 100:.2f}"
+        )
         p()
 
-        p(f"  {'Protocol':<8} {'Txns':>6} {'OK':>5} {'Fail':>5} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Avg Exec':>12} {'Micropay':>10}")
+        p(
+            f"  {'Protocol':<8} {'Txns':>6} {'OK':>5} {'Fail':>5} {'Volume':>12} {'Fees':>10} {'Fee%':>7} {'Avg Exec':>12} {'Micropay':>10}"
+        )
         p("  " + "-" * 80)
 
         for proto_name in ["atxp", "x402", "mpp", "acp", "ap2"]:
@@ -266,7 +373,9 @@ class SimulationEngine:
             failed = pm.get("failed_transactions", 0)
             vol = pm.get("total_volume_cents", 0)
             fees = pm.get("total_fees_cents", 0)
-            avg_exec = pm.get("avg_settlement_ms", 0)  # this is now real avg execution ms
+            avg_exec = pm.get(
+                "avg_settlement_ms", 0
+            )  # this is now real avg execution ms
             micro = pm.get("micropayment_count", 0)
             fee_pct = (fees / vol * 100) if vol > 0 else 0
 
@@ -283,7 +392,9 @@ class SimulationEngine:
         p("  Round Activity:")
         for rd in r.rounds:
             bar = "█" * rd.success_count + "░" * rd.fail_count
-            p(f"    R{rd.round_num:>3}: {bar} ({rd.success_count} ok, {rd.fail_count} fail, ${rd.total_volume / 100:.2f})")
+            p(
+                f"    R{rd.round_num:>3}: {bar} ({rd.success_count} ok, {rd.fail_count} fail, ${rd.total_volume / 100:.2f})"
+            )
 
         p()
         top_spenders = sorted(self.agents, key=lambda a: a.spent, reverse=True)[:5]
@@ -301,11 +412,17 @@ async def main():
     config = SimulationConfig(
         num_agents=int(os.environ.get("MERIDIAN_AGENTS", "50")),
         num_rounds=int(os.environ.get("MERIDIAN_ROUNDS", "10")),
-        protocols=[Protocol.ACP, Protocol.X402, Protocol.AP2, Protocol.MPP, Protocol.ATXP],
+        protocols=[
+            Protocol.ACP,
+            Protocol.X402,
+            Protocol.AP2,
+            Protocol.MPP,
+            Protocol.ATXP,
+        ],
         engine_url=os.environ.get("MERIDIAN_ENGINE_URL", "http://localhost:4080"),
         seed=int(os.environ.get("MERIDIAN_SEED", "42")),
         use_llm=use_llm,
-        llm_model=os.environ.get("MERIDIAN_LLM_MODEL", "minimax-m2.5-free"),
+        llm_model=os.environ.get("MERIDIAN_LLM_MODEL", "minimax-m2.5"),
     )
 
     engine = SimulationEngine(config)

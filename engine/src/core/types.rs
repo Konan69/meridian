@@ -207,6 +207,23 @@ impl Order {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Transaction Record (persisted to SQLite)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionRecord {
+    pub id: String,
+    pub session_id: String,
+    pub protocol: String,
+    pub agent_id: String,
+    pub amount: Cents,
+    pub fee: Cents,
+    pub execution_us: u64,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
 // Payment types (VaultToken, PaymentIntent) are managed internally
 // by the protocol adapters — ACP keeps its own vault in acp.rs,
 // x402 signs per-request, etc. No shared payment types needed here.
