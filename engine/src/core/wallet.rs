@@ -1,48 +1,40 @@
-use hmac::{Hmac, Mac};
 use k256::ecdsa::SigningKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::core::error::{EngineError, Result};
-use crate::core::types::{AgentWallet, Cents};
-
-type HmacSha256 = Hmac<Sha256>;
+use crate::core::types::{ActorWallet, Cents};
 
 #[derive(Debug, Clone)]
 pub struct WalletInfo {
-    pub agent_id: String,
+    pub owner_kind: String,
+    pub owner_id: String,
     pub protocol: String,
     pub balance: Cents,
-    pub address: String,
+    pub address: Option<String>,
 }
 
 pub struct WalletService {
     wallets: RwLock<HashMap<String, WalletInfo>>,
-    master_seed: String,
 }
 
 impl WalletService {
-    pub fn new(master_seed: String) -> Self {
+    pub fn new() -> Self {
         Self {
             wallets: RwLock::new(HashMap::new()),
-            master_seed,
         }
     }
 
-    fn derive_key(&self, protocol: &str, agent_id: &str) -> [u8; 32] {
-        let mut mac = HmacSha256::new_from_slice(self.master_seed.as_bytes())
-            .expect("HMAC can take key of any size");
-        mac.update(format!("{}:{}", protocol, agent_id).as_bytes());
-        let result = mac.finalize();
-        let bytes = result.into_bytes();
+    fn derive_key(&self, owner_kind: &str, owner_id: &str, protocol: &str) -> [u8; 32] {
+        let bytes = Sha256::digest(format!("{}:{}:{}", owner_kind, owner_id, protocol).as_bytes());
         let mut key = [0u8; 32];
         key.copy_from_slice(&bytes[..32]);
         key
     }
 
-    fn derive_address(&self, protocol: &str, agent_id: &str) -> String {
-        let key = self.derive_key(protocol, agent_id);
+    fn derive_address(&self, owner_kind: &str, owner_id: &str, protocol: &str) -> String {
+        let key = self.derive_key(owner_kind, owner_id, protocol);
         let signing_key = SigningKey::from_slice(&key).expect("key is valid 32 bytes");
         let verifying_key = signing_key.verifying_key();
         let pub_key = verifying_key.to_encoded_point(false);
@@ -53,36 +45,45 @@ impl WalletService {
 
     pub fn create_wallet(
         &self,
-        agent_id: &str,
+        owner_kind: &str,
+        owner_id: &str,
         protocol: &str,
         initial_balance: Cents,
     ) -> Result<WalletInfo> {
-        let address = self.derive_address(protocol, agent_id);
         let wallet = WalletInfo {
-            agent_id: agent_id.to_string(),
+            owner_kind: owner_kind.to_string(),
+            owner_id: owner_id.to_string(),
             protocol: protocol.to_string(),
             balance: initial_balance,
-            address,
+            address: None,
         };
 
-        let key = format!("{}:{}", agent_id, protocol);
+        let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let mut wallets = self.wallets.write().unwrap();
         wallets.insert(key, wallet.clone());
 
         Ok(wallet)
     }
 
-    pub fn get_wallet(&self, agent_id: &str, protocol: &str) -> Result<WalletInfo> {
-        let key = format!("{}:{}", agent_id, protocol);
+    pub fn get_wallet(&self, owner_kind: &str, owner_id: &str, protocol: &str) -> Result<WalletInfo> {
+        let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let wallets = self.wallets.read().unwrap();
 
         wallets.get(&key).cloned().ok_or_else(|| {
-            EngineError::NotFound(format!("wallet for agent {} on {}", agent_id, protocol))
+            EngineError::NotFound(format!(
+                "wallet for {} {} on {}",
+                owner_kind, owner_id, protocol
+            ))
         })
     }
 
-    pub fn get_or_create_wallet(&self, agent_id: &str, protocol: &str) -> Result<WalletInfo> {
-        let key = format!("{}:{}", agent_id, protocol);
+    pub fn get_or_create_wallet(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        protocol: &str,
+    ) -> Result<WalletInfo> {
+        let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let wallets = self.wallets.read().unwrap();
 
         if let Some(wallet) = wallets.get(&key) {
@@ -90,16 +91,19 @@ impl WalletService {
         }
         drop(wallets);
 
-        self.create_wallet(agent_id, protocol, 0)?;
-        self.get_wallet(agent_id, protocol)
+        self.create_wallet(owner_kind, owner_id, protocol, 0)?;
+        self.get_wallet(owner_kind, owner_id, protocol)
     }
 
-    pub fn deduct(&self, agent_id: &str, protocol: &str, amount: Cents) -> Result<()> {
-        let key = format!("{}:{}", agent_id, protocol);
+    pub fn deduct(&self, owner_kind: &str, owner_id: &str, protocol: &str, amount: Cents) -> Result<()> {
+        let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let mut wallets = self.wallets.write().unwrap();
 
         let wallet = wallets.get_mut(&key).ok_or_else(|| {
-            EngineError::NotFound(format!("wallet for agent {} on {}", agent_id, protocol))
+            EngineError::NotFound(format!(
+                "wallet for {} {} on {}",
+                owner_kind, owner_id, protocol
+            ))
         })?;
 
         if wallet.balance < amount {
@@ -111,42 +115,54 @@ impl WalletService {
 
         wallet.balance -= amount;
         tracing::debug!(
-            "deducted {} from {}:{}. new balance: {}",
+            "deducted {} from {}:{}:{}. new balance: {}",
             amount,
-            agent_id,
+            owner_kind,
+            owner_id,
             protocol,
             wallet.balance
         );
         Ok(())
     }
 
-    pub fn credit(&self, agent_id: &str, protocol: &str, amount: Cents) -> Result<()> {
-        let key = format!("{}:{}", agent_id, protocol);
+    pub fn credit(&self, owner_kind: &str, owner_id: &str, protocol: &str, amount: Cents) -> Result<()> {
+        let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let mut wallets = self.wallets.write().unwrap();
 
         let wallet = wallets.get_mut(&key).ok_or_else(|| {
-            EngineError::NotFound(format!("wallet for agent {} on {}", agent_id, protocol))
+            EngineError::NotFound(format!(
+                "wallet for {} {} on {}",
+                owner_kind, owner_id, protocol
+            ))
         })?;
 
         wallet.balance += amount;
         tracing::debug!(
-            "credited {} to {}:{}. new balance: {}",
+            "credited {} to {}:{}:{}. new balance: {}",
             amount,
-            agent_id,
+            owner_kind,
+            owner_id,
             protocol,
             wallet.balance
         );
         Ok(())
     }
 
-    pub fn to_agent_wallet(&self, agent_id: &str, protocol: &str) -> Result<AgentWallet> {
-        let wallet = self.get_or_create_wallet(agent_id, protocol)?;
-        Ok(AgentWallet {
-            agent_id: wallet.agent_id,
+    pub fn to_actor_wallet(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        protocol: &str,
+    ) -> Result<ActorWallet> {
+        let wallet = self.get_or_create_wallet(owner_kind, owner_id, protocol)?;
+        Ok(ActorWallet {
+            owner_kind: wallet.owner_kind,
+            owner_id: wallet.owner_id,
             balance: wallet.balance,
             protocol: wallet.protocol.clone(),
             credentials: serde_json::json!({
-                "address": wallet.address,
+                "derived_address": self.derive_address(owner_kind, owner_id, protocol),
+                "provider_managed": true,
             }),
         })
     }
@@ -164,6 +180,6 @@ impl WalletService {
 
 pub type SharedWalletService = Arc<WalletService>;
 
-pub fn create_wallet_service(master_seed: &str) -> SharedWalletService {
-    Arc::new(WalletService::new(master_seed.to_string()))
+pub fn create_wallet_service() -> SharedWalletService {
+    Arc::new(WalletService::new())
 }

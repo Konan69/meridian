@@ -1,9 +1,6 @@
 use async_trait::async_trait;
-use k256::ecdsa::{Signature, SigningKey, signature::Signer};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::time::Instant;
 use uuid::Uuid;
 
 use super::{
@@ -12,191 +9,125 @@ use super::{
 };
 use crate::config::Config;
 use crate::core::error::{EngineError, Result};
-use crate::core::types::{AgentWallet, Cents, ProtocolMetrics, SpendingConstraints};
+use crate::core::types::{ActorWallet, Cents, ProtocolMetrics, SpendingConstraints};
 
-#[derive(Debug, Serialize)]
-struct StripePaymentIntentCreateRequest {
-    amount: i64,
-    currency: String,
-    #[serde(rename = "capture_method")]
-    capture_method: String,
-    #[serde(rename = "payment_method_types")]
-    payment_method_types: Vec<String>,
-    confirmation: String,
-    metadata: HashMap<String, String>,
-}
-
-#[derive(Debug, Serialize)]
-struct StripePaymentIntentCaptureRequest {
-    amount_to_capture: i64,
-    metadata: HashMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StripePaymentIntentResponse {
-    id: String,
-    status: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct StripeErrorResponse {
-    error: StripeErrorDetail,
-}
-
-#[derive(Debug, Deserialize)]
-struct StripeErrorDetail {
-    message: String,
-}
-
+#[derive(Debug, Clone)]
 pub struct MppAdapter {
     metrics: MetricsTracker,
-    stripe_secret_key: String,
-    signing_key: SigningKey,
-    sessions: Mutex<HashMap<String, SessionRecord>>,
     http_client: reqwest::Client,
+    service_url: String,
 }
 
-struct SessionRecord {
-    budget: Cents,
-    remaining_budget: Cents,
-    total_spent: Cents,
-    payment_count: u32,
-    stripe_pi_id: String,
-    stripe_pi_status: String,
-    captured_amount: Cents,
-    challenge: String,
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MppHealthResponse {
+    status: String,
+    service: String,
+    supports_engine_runtime: bool,
+    runtime_ready_reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MppHealthStatus {
+    pub runtime_ready: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MppAuthorizeRequest {
+    actor_id: String,
+    merchant: String,
+    amount_usd: f64,
+    memo: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MppAuthorizeResponse {
+    _ok: bool,
+    actor_id: String,
+    merchant: String,
+    amount_usd: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MppExecuteRequest {
+    actor_id: String,
+    merchant: String,
+    amount_usd: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MppExecuteResponse {
+    _ok: bool,
+    actor_id: String,
+    merchant: String,
+    amount_usd: f64,
+    payment_id: String,
+    receipt: serde_json::Value,
 }
 
 impl MppAdapter {
     pub fn new(config: Config) -> Self {
         Self {
             metrics: MetricsTracker::new(),
-            stripe_secret_key: config.stripe.secret_key,
-            signing_key: SigningKey::random(&mut rand::thread_rng()),
-            sessions: Mutex::new(HashMap::new()),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(45))
                 .build()
                 .unwrap_or_default(),
+            service_url: config.stripe_service_url,
         }
     }
 
-    fn wallet_address(&self) -> String {
-        let verifying_key = self.signing_key.verifying_key();
-        let pub_key = verifying_key.to_encoded_point(false);
-        let hash = Sha256::digest(&pub_key.as_bytes()[1..]);
-        let last_20 = &hash[hash.len() - 20..];
-        format!("0x{}", hex::encode(last_20))
-    }
-
-    async fn create_stripe_payment_intent(
-        &self,
-        amount: Cents,
-        currency: &str,
-        session_id: &str,
-        merchant: &str,
-    ) -> Result<String> {
-        let idempotency_key = format!("mpp_pi_{}_{}", session_id, Uuid::new_v4().simple());
-        let mut metadata = HashMap::new();
-        metadata.insert("session_id".to_string(), session_id.to_string());
-        metadata.insert("merchant".to_string(), merchant.to_string());
-        metadata.insert("rail".to_string(), "tempo_usdc".to_string());
-
-        let request = StripePaymentIntentCreateRequest {
-            amount: amount as i64,
-            currency: currency.to_string(),
-            capture_method: "manual".to_string(),
-            payment_method_types: vec!["card".to_string()],
-            confirmation: "automatic".to_string(),
-            metadata,
-        };
-
-        let resp = self
-            .http_client
-            .post("https://api.stripe.com/v1/payment_intents")
-            .basic_auth(&self.stripe_secret_key, Option::<&str>::None)
-            .header("Idempotency-Key", &idempotency_key)
-            .form(&request)
+    pub async fn health_status(config: &Config) -> MppHealthStatus {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        let response = match client
+            .get(format!("{}/health", config.stripe_service_url.trim_end_matches('/')))
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("Stripe request failed: {}", e)))?;
-
-        let status = resp.status();
-        let error_body = resp.text().await.unwrap_or_default();
-
-        if !status.is_success() {
-            if let Ok(stripe_err) = serde_json::from_str::<StripeErrorResponse>(&error_body) {
-                return Err(EngineError::ExternalService(format!(
-                    "Stripe error: {}",
-                    stripe_err.error.message
-                )));
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return MppHealthStatus {
+                    runtime_ready: false,
+                    reason: format!("MPP service unreachable: {}", error),
+                }
             }
-            return Err(EngineError::ExternalService(format!(
-                "Stripe error: {}",
-                status
-            )));
-        }
-
-        let pi: StripePaymentIntentResponse = serde_json::from_str(&error_body).map_err(|e| {
-            EngineError::ExternalService(format!("failed to parse response: {}", e))
-        })?;
-
-        Ok(pi.id)
-    }
-
-    async fn capture_stripe_payment(
-        &self,
-        pi_id: &str,
-        amount: Cents,
-        session_id: &str,
-        merchant: &str,
-    ) -> Result<()> {
-        let idempotency_key = format!(
-            "mpp_capture_{}_{}_{}",
-            pi_id,
-            amount,
-            Uuid::new_v4().simple()
-        );
-        let mut metadata = HashMap::new();
-        metadata.insert("session_id".to_string(), session_id.to_string());
-        metadata.insert("merchant".to_string(), merchant.to_string());
-        metadata.insert("captured_amount".to_string(), amount.to_string());
-
-        let request = StripePaymentIntentCaptureRequest {
-            amount_to_capture: amount as i64,
-            metadata,
         };
 
-        let resp = self
-            .http_client
-            .post(format!(
-                "https://api.stripe.com/v1/payment_intents/{}/capture",
-                pi_id
-            ))
-            .basic_auth(&self.stripe_secret_key, Option::<&str>::None)
-            .header("Idempotency-Key", &idempotency_key)
-            .form(&request)
-            .send()
-            .await
-            .map_err(|e| EngineError::ExternalService(format!("Stripe capture failed: {}", e)))?;
-
-        let status = resp.status();
-        let error_body = resp.text().await.unwrap_or_default();
-
-        if !status.is_success() {
-            if let Ok(stripe_err) = serde_json::from_str::<StripeErrorResponse>(&error_body) {
-                return Err(EngineError::ExternalService(format!(
-                    "Stripe capture error: {}",
-                    stripe_err.error.message
-                )));
-            }
-            return Err(EngineError::ExternalService(format!(
-                "Stripe capture error: {}",
-                status
-            )));
+        if !response.status().is_success() {
+            return MppHealthStatus {
+                runtime_ready: false,
+                reason: format!("MPP service health returned {}", response.status()),
+            };
         }
 
-        Ok(())
+        let body: MppHealthResponse = match response.json().await {
+            Ok(body) => body,
+            Err(error) => {
+                return MppHealthStatus {
+                    runtime_ready: false,
+                    reason: format!("MPP service health parse failed: {}", error),
+                }
+            }
+        };
+
+        MppHealthStatus {
+            runtime_ready: body.status == "ok"
+                && body.service == "meridian-stripe"
+                && body.supports_engine_runtime,
+            reason: body.runtime_ready_reason,
+        }
+    }
+
+    fn cents_to_usd(amount: Cents) -> f64 {
+        amount as f64 / 100.0
     }
 }
 
@@ -208,121 +139,100 @@ impl ProtocolAdapter for MppAdapter {
 
     async fn authorize(
         &self,
-        _wallet: &AgentWallet,
+        wallet: &ActorWallet,
         constraints: &SpendingConstraints,
     ) -> Result<AuthToken> {
-        let start = std::time::Instant::now();
-        let session_id = format!("mpp_session_{}", Uuid::new_v4().simple());
-
-        let mut hasher = Sha256::new();
-        hasher.update(session_id.as_bytes());
-        hasher.update(constraints.max_amount.to_le_bytes());
-        hasher.update(chrono::Utc::now().to_rfc3339().as_bytes());
-        let challenge = format!("{:x}", hasher.finalize());
-
-        let _challenge_sig: Signature = self.signing_key.sign(challenge.as_bytes());
-
         let merchant = constraints
             .merchants
             .as_ref()
-            .and_then(|m| m.first().map(|s| s.as_str()))
-            .unwrap_or("merchant");
+            .and_then(|merchants| merchants.first())
+            .cloned()
+            .unwrap_or_else(|| "meridian-mpp-merchant".to_string());
+        let memo = format!("meridian-mpp:{}:{}", wallet.owner_id, merchant);
 
-        let pi_id = self
-            .create_stripe_payment_intent(
-                constraints.max_amount,
-                &constraints.currency,
-                &session_id,
-                merchant,
-            )
-            .await?;
+        let started = Instant::now();
+        let response = self
+            .http_client
+            .post(format!("{}/mpp/authorize", self.service_url.trim_end_matches('/')))
+            .json(&MppAuthorizeRequest {
+                actor_id: wallet.owner_id.clone(),
+                merchant: merchant.clone(),
+                amount_usd: Self::cents_to_usd(constraints.max_amount),
+                memo: memo.clone(),
+            })
+            .send()
+            .await
+            .map_err(|e| EngineError::ExternalService(format!("mpp authorize request failed: {}", e)))?;
 
-        {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.insert(
-                session_id.clone(),
-                SessionRecord {
-                    budget: constraints.max_amount,
-                    remaining_budget: constraints.max_amount,
-                    total_spent: 0,
-                    payment_count: 0,
-                    stripe_pi_id: pi_id.clone(),
-                    stripe_pi_status: "requires_capture".to_string(),
-                    captured_amount: 0,
-                    challenge: challenge.clone(),
-                },
-            );
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(EngineError::ExternalService(format!(
+                "mpp authorize returned {}: {}",
+                status,
+                String::from_utf8_lossy(&bytes)
+            )));
         }
 
-        let token = AuthToken {
-            token_id: session_id,
+        let body: MppAuthorizeResponse = serde_json::from_slice(&bytes)
+            .map_err(|e| EngineError::ExternalService(format!("mpp authorize parse failed: {}", e)))?;
+        self.metrics.record_auth(started.elapsed().as_micros() as u64);
+
+        Ok(AuthToken {
+            token_id: format!("mpp_auth_{}", Uuid::new_v4().simple()),
             protocol: "mpp".into(),
             max_amount: constraints.max_amount,
             currency: constraints.currency.clone(),
             expires_at: constraints.expires_at,
             protocol_data: serde_json::json!({
-                "session_type": "streaming",
-                "capture_method": "manual",
-                "challenge": challenge,
-                "rail": "tempo_usdc",
-                "wallet_address": self.wallet_address(),
-                "stripe_pi_id": pi_id,
+                "actor_id": body.actor_id,
+                "merchant": body.merchant,
+                "amount_usd": body.amount_usd,
+                "memo": memo,
             }),
-        };
-
-        let auth_us = start.elapsed().as_micros() as u64;
-        self.metrics.record_auth(auth_us);
-        Ok(token)
+        })
     }
 
     async fn pay(&self, token: &AuthToken, amount: Cents, merchant: &str) -> Result<PaymentResult> {
-        let start = std::time::Instant::now();
+        let actor_id = token
+            .protocol_data
+            .get("actor_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| EngineError::ProtocolError("mpp auth token missing actor_id".into()))?;
 
-        let stripe_pi_id = {
-            let mut sessions = self.sessions.lock().unwrap();
-            let session = sessions
-                .get_mut(&token.token_id)
-                .ok_or_else(|| EngineError::PaymentDeclined("session not found".into()))?;
+        let started = Instant::now();
+        let response = self
+            .http_client
+            .post(format!("{}/mpp/execute", self.service_url.trim_end_matches('/')))
+            .json(&MppExecuteRequest {
+                actor_id: actor_id.to_string(),
+                merchant: merchant.to_string(),
+                amount_usd: Self::cents_to_usd(amount),
+            })
+            .send()
+            .await
+            .map_err(|e| EngineError::ExternalService(format!("mpp execute request failed: {}", e)))?;
 
-            if amount > session.remaining_budget {
-                return Err(EngineError::PaymentDeclined(format!(
-                    "amount {} exceeds session remaining budget {}",
-                    amount, session.remaining_budget
-                )));
-            }
-
-            session.remaining_budget -= amount;
-            session.total_spent += amount;
-            session.payment_count += 1;
-            session.captured_amount += amount;
-
-            session.stripe_pi_id.clone()
-        };
-
-        self.capture_stripe_payment(&stripe_pi_id, amount, &token.token_id, merchant)
-            .await?;
-
-        {
-            let mut sessions = self.sessions.lock().unwrap();
-            if let Some(session) = sessions.get_mut(&token.token_id) {
-                session.stripe_pi_status = "partially_captured".to_string();
-            }
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap_or_default();
+        if !status.is_success() {
+            let exec_us = started.elapsed().as_micros() as u64;
+            self.metrics.record_failure(exec_us);
+            return Err(EngineError::ExternalService(format!(
+                "mpp execute returned {}: {}",
+                status,
+                String::from_utf8_lossy(&bytes)
+            )));
         }
 
-        let mut receipt = Vec::new();
-        receipt.extend_from_slice(b"mpp:receipt:");
-        receipt.extend_from_slice(&amount.to_le_bytes());
-        receipt.extend_from_slice(merchant.as_bytes());
-        receipt.extend_from_slice(token.token_id.as_bytes());
-        receipt.extend_from_slice(stripe_pi_id.as_bytes());
-        let receipt_hash = Sha256::digest(&receipt);
-        let _receipt_sig: Signature = self.signing_key.sign(&receipt_hash);
-
+        let body: MppExecuteResponse = serde_json::from_slice(&bytes)
+            .map_err(|e| EngineError::ExternalService(format!("mpp execute parse failed: {}", e)))?;
+        let exec_us = started.elapsed().as_micros() as u64;
         let fee = self.fee_for(amount);
-        let exec_us = start.elapsed().as_micros() as u64;
+        self.metrics.record_success(amount, fee, exec_us, amount < 100);
 
-        let payment = PaymentResult {
-            payment_id: format!("mpp_pay_{}", Uuid::new_v4().simple()),
+        Ok(PaymentResult {
+            payment_id: body.payment_id.clone(),
             protocol: "mpp".into(),
             amount,
             currency: token.currency.clone(),
@@ -330,17 +240,12 @@ impl ProtocolAdapter for MppAdapter {
             execution_us: exec_us,
             fee,
             protocol_data: serde_json::json!({
-                "merchant": merchant,
-                "session_id": token.token_id,
-                "stripe_pi_id": stripe_pi_id,
-                "receipt_hash": format!("{:x}", receipt_hash),
-                "wallet_address": self.wallet_address(),
+                "merchant": body.merchant,
+                "amount_usd": body.amount_usd,
+                "receipt": body.receipt,
+                "actor_id": body.actor_id,
             }),
-        };
-
-        self.metrics
-            .record_success(payment.amount, payment.fee, exec_us, amount < 100);
-        Ok(payment)
+        })
     }
 
     async fn settle(&self, payment: &PaymentResult) -> Result<SettlementResult> {
@@ -353,51 +258,22 @@ impl ProtocolAdapter for MppAdapter {
         })
     }
 
-    async fn refund(&self, payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
-        let start = std::time::Instant::now();
-        self.metrics
-            .refund_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let session_id = payment
-            .protocol_data
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let refunded = if let Some(ref sid) = session_id {
-            let mut sessions = self.sessions.lock().unwrap();
-            if let Some(session) = sessions.get_mut(sid) {
-                session.remaining_budget += payment.amount;
-                session.total_spent = session.total_spent.saturating_sub(payment.amount);
-                session.payment_count = session.payment_count.saturating_sub(1);
-                session.captured_amount = session.captured_amount.saturating_sub(payment.amount);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        Ok(RefundResult {
-            refund_id: format!("mpp_rf_{}", Uuid::new_v4().simple()),
-            original_payment_id: payment.payment_id.clone(),
-            amount: payment.amount,
-            success: refunded,
-            execution_us: start.elapsed().as_micros() as u64,
-        })
+    async fn refund(&self, _payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
+        Err(EngineError::ProtocolError("mpp refunds are not implemented yet".into()))
     }
 
     fn metrics(&self) -> ProtocolMetrics {
         self.metrics.to_metrics("mpp")
     }
+
     fn fee_for(&self, amount: Cents) -> Cents {
         std::cmp::max((amount * 15 / 1000) + 5, 1)
     }
+
     fn supports_micropayments(&self) -> bool {
         true
     }
+
     fn autonomy_level(&self) -> f64 {
         0.8
     }

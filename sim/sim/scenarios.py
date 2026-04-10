@@ -59,8 +59,8 @@ SCENARIO_DESCRIPTIONS: dict[str, str] = {
         "handle sub-$1 transactions efficiently without excessive fee ratios."
     ),
     "protocol_arena": (
-        "All five protocols competing head-to-head with identical traffic. "
-        "Flat round-robin distribution for fair comparison."
+        "All five protocols competing inside the same stablecoin economy. "
+        "Agents, merchants, treasury balances, and route pressure determine usage."
     ),
     "stress_test": (
         "High-load scenario: 500 agents over 50 rounds. Stress-tests throughput, "

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
-use crate::core::types::{CheckoutSession, Product};
+use crate::core::types::{CheckoutSession, Product, ProtocolCapability};
 use crate::core::wallet::SharedWalletService;
 use crate::db::Store;
 use crate::protocols::ProtocolAdapter;
@@ -23,6 +23,7 @@ pub struct AppState {
     pub catalog: Arc<Vec<Product>>,
     pub sessions: Mutex<HashMap<String, CheckoutSession>>,
     pub protocols: HashMap<String, Box<dyn ProtocolAdapter>>,
+    pub protocol_capabilities: Vec<ProtocolCapability>,
     pub store: Mutex<Store>,
     pub wallet_service: SharedWalletService,
 }
@@ -141,67 +142,57 @@ async fn main() {
     // Initialize protocol adapters with real credentials
     let cfg = config::load();
     tracing::info!(
-        "x402 config: rpc={}, chain_id={}, pay_to={}",
+        "x402 config: rpc={}, chain_id={}",
         cfg.x402.rpc_url,
-        cfg.x402.chain_id,
-        cfg.x402.pay_to
+        cfg.x402.chain_id
     );
     tracing::info!(
-        "stripe config: key={}...",
-        cfg.stripe.secret_key.chars().take(10).collect::<String>()
+        "direct service targets: stripe={}, atxp={}, cdp={}",
+        cfg.stripe_service_url,
+        cfg.atxp_service_url,
+        cfg.cdp_service_url
     );
-    tracing::info!("atxp config: coordinator={}", cfg.atxp.coordinator_url);
     tracing::warn!(
-        "strict live mode enabled: all five protocols are required and must resolve to real adapters"
+        "direct integration mode enabled: only rails with real direct integrations are registered"
     );
 
-    // Initialize wallet service with master seed for per-agent key derivation
-    let wallet_master_seed =
-        std::env::var("WALLET_MASTER_SEED").expect("WALLET_MASTER_SEED must be set");
-    let wallet_service = crate::core::wallet::create_wallet_service(&wallet_master_seed);
-    tracing::info!("wallet service initialized with master seed");
+    let wallet_service = crate::core::wallet::create_wallet_service();
+    tracing::info!("wallet service initialized");
 
-    let mut protocol_map: HashMap<String, Box<dyn ProtocolAdapter>> = HashMap::new();
-    protocol_map.insert(
-        "x402".into(),
-        Box::new(protocols::x402::X402Adapter::new(cfg.clone())),
-    );
+    let runtime_catalog = protocols::catalog::build_runtime_catalog(&cfg).await;
+    let protocol_map = runtime_catalog.protocols;
+    let protocol_capabilities = runtime_catalog.capabilities;
 
-    let acp_adapter = protocols::remote::RemoteAdapter::new("acp", &cfg.remote_adapters.acp_url)
-        .await
-        .expect("failed to initialize ACP remote adapter");
-    protocol_map.insert("acp".into(), Box::new(acp_adapter));
-
-    let mpp_adapter = protocols::remote::RemoteAdapter::new("mpp", &cfg.remote_adapters.mpp_url)
-        .await
-        .expect("failed to initialize MPP remote adapter");
-    protocol_map.insert("mpp".into(), Box::new(mpp_adapter));
-
-    let ap2_adapter = protocols::remote::RemoteAdapter::new("ap2", &cfg.remote_adapters.ap2_url)
-        .await
-        .expect("failed to initialize AP2 remote adapter");
-    protocol_map.insert("ap2".into(), Box::new(ap2_adapter));
-
-    let atxp_adapter = protocols::remote::RemoteAdapter::new("atxp", &cfg.remote_adapters.atxp_url)
-        .await
-        .expect("failed to initialize ATXP remote adapter");
-    protocol_map.insert("atxp".into(), Box::new(atxp_adapter));
+    if let Some(atxp_status) = protocol_capabilities.iter().find(|status| status.protocol == "atxp") {
+        if !atxp_status.runtime_ready {
+            tracing::warn!(
+                "ATXP service not runtime-ready at {}; skipping atxp registration ({})",
+                cfg.atxp_service_url,
+                atxp_status.reason
+            );
+        }
+    }
+    if let Some(ap2_status) = protocol_capabilities.iter().find(|status| status.protocol == "ap2") {
+        if !ap2_status.runtime_ready {
+            tracing::warn!(
+                "AP2 service not runtime-ready at {}; skipping ap2 registration ({})",
+                cfg.ap2_service_url,
+                ap2_status.reason
+            );
+        }
+    }
 
     tracing::info!(
         "initialized {} protocol adapters: {:?}",
         protocol_map.len(),
         protocol_map.keys().collect::<Vec<_>>()
     );
-    assert_eq!(
-        protocol_map.len(),
-        5,
-        "strict live mode requires acp, ap2, atxp, mpp, and x402 to all initialize"
-    );
 
     let state = Arc::new(AppState {
         catalog: Arc::new(catalog),
         sessions: Mutex::new(HashMap::new()),
         protocols: protocol_map,
+        protocol_capabilities,
         store: Mutex::new(store),
         wallet_service,
     });
@@ -222,6 +213,7 @@ async fn main() {
     let app = Router::new()
         // Product catalog
         .route("/products", get(routes::products::list_products))
+        .route("/capabilities", get(routes::capabilities::get_capabilities))
         // Checkout sessions
         .route("/checkout_sessions", post(routes::checkout::create_session))
         .route(
@@ -236,11 +228,13 @@ async fn main() {
             "/checkout_sessions/{id}/cancel",
             post(routes::checkout::cancel_session),
         )
+        // Direct payment execution for non-checkout stablecoin flows
+        .route("/payments/execute", post(routes::payments::execute_payment))
         // Wallet management
         .route("/wallets", get(routes::wallet::list_wallets))
         .route("/wallets/balance", get(routes::wallet::total_balance))
         .route(
-            "/wallets/{agent_id}/{protocol}",
+            "/wallets/{owner_kind}/{owner_id}/{protocol}",
             get(routes::wallet::get_wallet),
         )
         .route("/wallets", post(routes::wallet::create_wallet))

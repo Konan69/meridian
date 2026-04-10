@@ -1,7 +1,11 @@
-import pytest
+import pytest_asyncio
 from sim.commerce import CommerceClient
 
 
-@pytest.fixture
-def client():
-    return CommerceClient("http://localhost:4080")
+@pytest_asyncio.fixture
+async def client():
+    client = CommerceClient("http://localhost:4080")
+    try:
+        yield client
+    finally:
+        await client.close()

@@ -229,15 +229,16 @@ pub struct TransactionRecord {
 // x402 signs per-request, etc. No shared payment types needed here.
 
 // ---------------------------------------------------------------------------
-// Agent Wallet (protocol-agnostic)
+// Actor Wallet (protocol-agnostic)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentWallet {
-    pub agent_id: String,
+pub struct ActorWallet {
+    pub owner_kind: String,
+    pub owner_id: String,
     pub balance: Cents,
     pub protocol: String,
-    /// For ACP: card details. For x402: USDC wallet address. For AP2: VDC credentials.
+    /// For x402 this carries provider-managed wallet metadata.
     pub credentials: serde_json::Value,
 }
 
@@ -275,4 +276,12 @@ pub struct ProtocolMetrics {
     pub avg_authorization_ms: f64,
     pub micropayment_count: u64,
     pub refund_count: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProtocolCapability {
+    pub protocol: String,
+    pub runtime_ready: bool,
+    pub integration: String,
+    pub reason: String,
 }

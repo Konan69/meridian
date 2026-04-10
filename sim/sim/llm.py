@@ -101,14 +101,14 @@ class LLMDecisionEngine:
         protocols: list[str],
         rng,
     ) -> dict:
-        """Make a purchase decision. Falls back to rule-based on failure."""
+        """Make a purchase decision through the configured LLM."""
         async with self.semaphore:
             try:
                 return await self._call_llm(agent, product, protocols)
             except Exception as e:
                 self.failed_requests += 1
                 logger.debug(f"LLM failed for {agent['name']}: {e}")
-                return self._rule_based_fallback(agent, product, protocols, rng)
+                raise
 
     async def _call_llm(self, agent: dict, product: dict, protocols: list[str]) -> dict:
         self.total_requests += 1
@@ -159,33 +159,12 @@ class LLMDecisionEngine:
 
         return result
 
-    def _rule_based_fallback(
-        self, agent: dict, product: dict, protocols: list[str], rng
-    ) -> dict:
-        """Rule-based decision matching AgentProfile.wants_to_buy() logic."""
-        price = product.get("price", 0)
-        remaining = agent.get("remaining_budget", 0)
-
-        if price > remaining:
-            return {"buy": False, "protocol": "", "reasoning": "over budget"}
-
-        price_sensitivity = agent.get("price_sensitivity", 0.5)
-        if price_sensitivity > 0.7 and price > agent.get("budget", remaining) * 0.3:
-            if rng.random() > price_sensitivity:
-                return {
-                    "buy": False,
-                    "protocol": "",
-                    "reasoning": "price too sensitive",
-                }
-
-        buy_prob = 0.5 + (agent.get("risk_tolerance", 0.5) - 0.5) * 0.3
-        buy = rng.random() < buy_prob
-        proto = rng.choice(protocols) if protocols else "acp"
-        return {"buy": buy, "protocol": proto, "reasoning": "rule-based fallback"}
-
     def stats(self) -> dict:
         return {
             "total_requests": self.total_requests,
             "total_tokens": self.total_tokens,
             "failed_requests": self.failed_requests,
         }
+
+    def usage_summary(self) -> dict:
+        return self.stats()

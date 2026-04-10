@@ -1,24 +1,6 @@
-//! ATXP — Agent-to-Agent Transfer Protocol with mandate constraint engine.
-//!
-//! ## Real Integration Status
-//!
-//! **Constraint Engine**: REAL - the mandate validation logic is genuinely implemented.
-//! **Network Settlement**: TODO - no public testnet found for ATXP.
-//!
-//! To implement real settlement:
-//! 1. Contact Circuit & Chisel for testnet access
-//! 2. Implement their settlement API when available
-//! 3. Set ATXP_COORDINATOR_URL environment variable
-//!
-//! For now, mandate constraint enforcement is real (amount, merchant allowlist, expiry, etc.)
-//! but settlement is recorded locally without on-chain confirmation.
-
 use async_trait::async_trait;
-use k256::ecdsa::{SigningKey, signature::Signer};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::time::Instant;
 use uuid::Uuid;
 
 use super::{
@@ -27,139 +9,163 @@ use super::{
 };
 use crate::config::Config;
 use crate::core::error::{EngineError, Result};
-use crate::core::types::{AgentWallet, Cents, ProtocolMetrics, SpendingConstraints};
+use crate::core::types::{ActorWallet, Cents, ProtocolMetrics, SpendingConstraints};
 
+#[derive(Debug, Clone)]
 pub struct AtxpAdapter {
     metrics: MetricsTracker,
-    config: crate::config::AtxpConfig,
-    mandates: Mutex<HashMap<String, MandateRecord>>,
-    signing_key: SigningKey,
     http_client: reqwest::Client,
-}
-
-struct MandateRecord {
-    _max_amount: Cents,
-    remaining: Cents,
-    _currency: String,
-    allowed_merchants: Option<Vec<String>>,
-    _allowed_categories: Option<Vec<String>>,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    payment_count: u32,
-    _max_nesting_depth: u32,
-    _constraint_hash: String,
-    revoked: bool,
+    service_url: String,
 }
 
 #[derive(Debug, Serialize)]
-struct CoordinatorSettleRequest {
-    mandate_id: String,
-    amount: i64,
+#[serde(rename_all = "camelCase")]
+struct AtxpAuthorizeRequest {
+    actor_id: String,
     merchant: String,
-    tx_hash: String,
-    signature: String,
+    amount_usd: f64,
+    memo: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct CoordinatorSettleResponse {
-    settled: bool,
-    coordinator_tx_id: String,
+#[serde(rename_all = "camelCase")]
+struct AtxpAuthorizeResponse {
+    ok: bool,
+    protocol: String,
+    credential: String,
+    actor_id: String,
+    merchant: String,
+    amount_usd: f64,
+    destination: String,
+    shared_account: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtxpHealthResponse {
+    status: String,
+    service: String,
+    payer_mode: Option<String>,
+    supports_direct_settle: Option<bool>,
+    runtime_ready_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AtxpHealthStatus {
+    pub runtime_ready: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtxpDirectTransferRequest {
+    merchant: String,
+    amount_usd: f64,
+    memo: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtxpDirectTransferResponse {
+    ok: bool,
+    merchant: String,
+    amount_usd: f64,
+    tx_hash: String,
+    settled_amount: serde_json::Value,
 }
 
 impl AtxpAdapter {
     pub fn new(config: Config) -> Self {
         Self {
             metrics: MetricsTracker::new(),
-            config: config.atxp,
-            mandates: Mutex::new(HashMap::new()),
-            signing_key: SigningKey::random(&mut rand::thread_rng()),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(45))
                 .build()
                 .unwrap_or_default(),
+            service_url: config.atxp_service_url,
         }
     }
 
-    fn wallet_address(&self) -> String {
-        let verifying_key = self.signing_key.verifying_key();
-        let pub_key = verifying_key.to_encoded_point(false);
-        let hash = Sha256::digest(&pub_key.as_bytes()[1..]);
-        let last_20 = &hash[hash.len() - 20..];
-        format!("0x{}", hex::encode(last_20))
-    }
-
-    fn validate_mandate(
-        mandate: &MandateRecord,
-        amount: Cents,
-        merchant: &str,
-    ) -> std::result::Result<(), String> {
-        if mandate.revoked {
-            return Err("mandate revoked".into());
-        }
-        if amount > mandate.remaining {
-            return Err(format!(
-                "amount {} exceeds mandate remaining {}",
-                amount, mandate.remaining
-            ));
-        }
-        if chrono::Utc::now() > mandate.expires_at {
-            return Err("mandate expired".into());
-        }
-        if let Some(merchants) = &mandate.allowed_merchants {
-            if !merchants.is_empty() && !merchants.iter().any(|m| m == merchant || m == "*") {
-                return Err(format!("merchant {} not in mandate allowlist", merchant));
-            }
-        }
-        Ok(())
-    }
-
-    async fn settle_on_coordinator(
-        &self,
-        mandate_id: &str,
-        amount: Cents,
-        merchant: &str,
-        tx_hash: &str,
-    ) -> Result<String> {
-        // TODO: Real ATXP coordinator settlement
-        // When Circuit & Chisel provide testnet access, implement:
-        // 1. Sign the settlement request
-        // 2. POST to self.config.coordinator_url
-        // 3. Return coordinator's transaction ID
-
-        if self.config.coordinator_url == "https://circuit.cloud/atxp" {
-            tracing::warn!("ATXP: Using simulated settlement (no coordinator testnet)");
-            return Ok(format!("atxp_sim_{}", Uuid::new_v4().simple()));
-        }
-
-        let payload = CoordinatorSettleRequest {
-            mandate_id: mandate_id.to_string(),
-            amount: amount as i64,
-            merchant: merchant.to_string(),
-            tx_hash: tx_hash.to_string(),
-            signature: "".to_string(), // TODO: add real signature
-        };
-
-        let resp = self
-            .http_client
-            .post(&self.config.coordinator_url)
-            .json(&payload)
+    pub async fn health_status(config: &Config) -> AtxpHealthStatus {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        let response = match client
+            .get(format!("{}/health", config.atxp_service_url.trim_end_matches('/')))
             .send()
             .await
-            .map_err(|e| {
-                EngineError::ExternalService(format!("ATXP coordinator request failed: {}", e))
-            })?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return AtxpHealthStatus {
+                    runtime_ready: false,
+                    reason: format!("ATXP service unreachable: {}", error),
+                }
+            }
+        };
 
-        if !resp.status().is_success() {
+        if !response.status().is_success() {
+            return AtxpHealthStatus {
+                runtime_ready: false,
+                reason: format!("ATXP service health returned {}", response.status()),
+            };
+        }
+
+        let body: AtxpHealthResponse = match response.json().await {
+            Ok(body) => body,
+            Err(error) => {
+                return AtxpHealthStatus {
+                    runtime_ready: false,
+                    reason: format!("ATXP service health parse failed: {}", error),
+                }
+            }
+        };
+
+        let runtime_ready = body.status == "ok"
+            && body.service == "meridian-atxp"
+            && body.supports_direct_settle.unwrap_or(false);
+        let payer_mode = body.payer_mode.unwrap_or_else(|| "unknown".into());
+        let reason = body.runtime_ready_reason.unwrap_or_else(|| {
+            if runtime_ready {
+                format!("ATXP direct-settle path ready via payer mode '{}'", payer_mode)
+            } else {
+                format!("ATXP service healthy but payer mode '{}' does not support direct settle", payer_mode)
+            }
+        });
+
+        AtxpHealthStatus { runtime_ready, reason }
+    }
+
+    fn cents_to_usd(amount: Cents) -> f64 {
+        amount as f64 / 100.0
+    }
+
+    async fn authorize_request(&self, body: &AtxpAuthorizeRequest) -> Result<AtxpAuthorizeResponse> {
+        let response = self
+            .http_client
+            .post(format!(
+                "{}/atxp/authorize",
+                self.service_url.trim_end_matches('/')
+            ))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| EngineError::ExternalService(format!("atxp authorize request failed: {}", e)))?;
+
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap_or_default();
+        if !status.is_success() {
             return Err(EngineError::ExternalService(format!(
-                "ATXP coordinator error: {}",
-                resp.status()
+                "atxp authorize returned {}: {}",
+                status,
+                String::from_utf8_lossy(&bytes)
             )));
         }
 
-        let settle_resp: CoordinatorSettleResponse = resp.json().await.map_err(|e| {
-            EngineError::ExternalService(format!("failed to parse coordinator response: {}", e))
-        })?;
-
-        Ok(settle_resp.coordinator_tx_id)
+        serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("atxp authorize parse failed: {}", e))
+        })
     }
 }
 
@@ -171,104 +177,112 @@ impl ProtocolAdapter for AtxpAdapter {
 
     async fn authorize(
         &self,
-        _wallet: &AgentWallet,
+        wallet: &ActorWallet,
         constraints: &SpendingConstraints,
     ) -> Result<AuthToken> {
-        let start = std::time::Instant::now();
-        let mandate_id = format!("mandate_{}", Uuid::new_v4().simple());
+        let merchant = constraints
+            .merchants
+            .as_ref()
+            .and_then(|merchants| merchants.first())
+            .cloned()
+            .unwrap_or_else(|| "meridian-atxp-merchant".to_string());
+        let memo = format!("meridian-atxp:{}:{}", wallet.owner_id, merchant);
 
-        let mut hasher = Sha256::new();
-        hasher.update(b"atxp:mandate:v1:");
-        hasher.update(constraints.max_amount.to_le_bytes());
-        hasher.update(constraints.currency.as_bytes());
-        hasher.update(constraints.expires_at.to_rfc3339().as_bytes());
-        if let Some(merchants) = &constraints.merchants {
-            for m in merchants {
-                hasher.update(m.as_bytes());
-            }
+        let started = Instant::now();
+        let response = self
+            .authorize_request(&AtxpAuthorizeRequest {
+                actor_id: wallet.owner_id.clone(),
+                merchant: merchant.clone(),
+                amount_usd: Self::cents_to_usd(constraints.max_amount),
+                memo: memo.clone(),
+            })
+            .await?;
+        self.metrics
+            .record_auth(started.elapsed().as_micros().min(u64::MAX as u128) as u64);
+
+        if !response.ok {
+            return Err(EngineError::ProtocolError(
+                "atxp authorize returned ok=false".into(),
+            ));
         }
-        if let Some(cats) = &constraints.categories {
-            for c in cats {
-                hasher.update(c.as_bytes());
-            }
-        }
-        let constraint_hash = format!("{:x}", hasher.finalize());
 
-        self.mandates.lock().unwrap().insert(
-            mandate_id.clone(),
-            MandateRecord {
-                _max_amount: constraints.max_amount,
-                remaining: constraints.max_amount,
-                _currency: constraints.currency.clone(),
-                allowed_merchants: constraints.merchants.clone(),
-                _allowed_categories: constraints.categories.clone(),
-                expires_at: constraints.expires_at,
-                payment_count: 0,
-                _max_nesting_depth: 3,
-                _constraint_hash: constraint_hash.clone(),
-                revoked: false,
-            },
-        );
-
-        let token = AuthToken {
-            token_id: mandate_id,
-            protocol: "atxp".into(),
+        Ok(AuthToken {
+            token_id: format!("atxp_auth_{}", Uuid::new_v4().simple()),
+            protocol: response.protocol,
             max_amount: constraints.max_amount,
             currency: constraints.currency.clone(),
             expires_at: constraints.expires_at,
             protocol_data: serde_json::json!({
-                "mandate_type": "delegated",
-                "constraint_hash": constraint_hash,
-                "allow_nested": true,
-                "max_nesting_depth": 3,
-                "revocable": true,
-                "wallet_address": self.wallet_address(),
-                "coordinator_url": self.config.coordinator_url,
+                "actor_id": response.actor_id,
+                "merchant": response.merchant,
+                "amount_usd": response.amount_usd,
+                "memo": memo,
+                "credential": response.credential,
+                "destination": response.destination,
+                "shared_account": response.shared_account,
             }),
-        };
-
-        let auth_us = start.elapsed().as_micros() as u64;
-        self.metrics.record_auth(auth_us);
-        Ok(token)
+        })
     }
 
     async fn pay(&self, token: &AuthToken, amount: Cents, merchant: &str) -> Result<PaymentResult> {
-        let start = std::time::Instant::now();
+        let credential = token
+            .protocol_data
+            .get("credential")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| EngineError::ProtocolError("atxp auth token missing credential".into()))?;
+        let memo = token
+            .protocol_data
+            .get("memo")
+            .and_then(|value| value.as_str())
+            .unwrap_or("meridian-atxp");
 
-        {
-            let mandates = self.mandates.lock().unwrap();
-            let mandate = mandates
-                .get(&token.token_id)
-                .ok_or_else(|| EngineError::PaymentDeclined("mandate not found".into()))?;
+        let started = Instant::now();
+        let response = self
+            .http_client
+            .post(format!(
+                "{}/atxp/direct-transfer",
+                self.service_url.trim_end_matches('/')
+            ))
+            .header("x-atxp-payment", credential)
+            .json(&AtxpDirectTransferRequest {
+                merchant: merchant.to_string(),
+                amount_usd: Self::cents_to_usd(amount),
+                memo: memo.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|e| EngineError::ExternalService(format!("atxp direct-transfer request failed: {}", e)))?;
 
-            if let Err(e) = Self::validate_mandate(mandate, amount, merchant) {
-                return Err(EngineError::PaymentDeclined(e));
-            }
+        let status = response.status();
+        let bytes = response.bytes().await.unwrap_or_default();
+        if !status.is_success() {
+            let exec_us = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            self.metrics.record_failure(exec_us);
+            return Err(EngineError::ExternalService(format!(
+                "atxp direct-transfer returned {}: {}",
+                status,
+                String::from_utf8_lossy(&bytes)
+            )));
         }
 
-        {
-            let mut mandates = self.mandates.lock().unwrap();
-            let mandate = mandates.get_mut(&token.token_id).unwrap();
-            mandate.remaining -= amount;
-            mandate.payment_count += 1;
-        }
+        let body: AtxpDirectTransferResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("atxp direct-transfer parse failed: {}", e))
+        })?;
+        let exec_us = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
 
-        let mut tx_hasher = Sha256::new();
-        tx_hasher.update(token.token_id.as_bytes());
-        tx_hasher.update(amount.to_le_bytes());
-        tx_hasher.update(merchant.as_bytes());
-        tx_hasher.update(chrono::Utc::now().to_rfc3339().as_bytes());
-        let tx_hash = format!("{:x}", tx_hasher.finalize());
+        if !body.ok {
+            self.metrics.record_failure(exec_us);
+            return Err(EngineError::ProtocolError(
+                "atxp direct-transfer returned ok=false".into(),
+            ));
+        }
 
         let fee = self.fee_for(amount);
-        let coordinator_tx_id = self
-            .settle_on_coordinator(&token.token_id, amount, merchant, &tx_hash)
-            .await?;
+        self.metrics
+            .record_success(amount, fee, exec_us, self.supports_micropayments() && amount < 100);
 
-        let exec_us = start.elapsed().as_micros() as u64;
-
-        let payment = PaymentResult {
-            payment_id: coordinator_tx_id,
+        Ok(PaymentResult {
+            payment_id: body.tx_hash.clone(),
             protocol: "atxp".into(),
             amount,
             currency: token.currency.clone(),
@@ -276,18 +290,14 @@ impl ProtocolAdapter for AtxpAdapter {
             execution_us: exec_us,
             fee,
             protocol_data: serde_json::json!({
-                "merchant": merchant,
-                "mandate_id": token.token_id,
-                "tx_hash": tx_hash,
-                "mandate_remaining": self.mandates.lock().unwrap()
-                    .get(&token.token_id).map(|m| m.remaining).unwrap_or(0),
-                "wallet_address": self.wallet_address(),
+                "merchant": body.merchant,
+                "amount_usd": body.amount_usd,
+                "tx_hash": body.tx_hash,
+                "settled_amount": body.settled_amount,
+                "destination": token.protocol_data.get("destination").cloned().unwrap_or(serde_json::Value::Null),
+                "shared_account": token.protocol_data.get("shared_account").cloned().unwrap_or(serde_json::Value::Bool(false)),
             }),
-        };
-
-        self.metrics
-            .record_success(payment.amount, payment.fee, exec_us, amount < 100);
-        Ok(payment)
+        })
     }
 
     async fn settle(&self, payment: &PaymentResult) -> Result<SettlementResult> {
@@ -300,38 +310,24 @@ impl ProtocolAdapter for AtxpAdapter {
         })
     }
 
-    async fn refund(&self, payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
-        let start = std::time::Instant::now();
-        self.metrics
-            .refund_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let mandate_id = payment.protocol_data["mandate_id"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        if let Some(mandate) = self.mandates.lock().unwrap().get_mut(&mandate_id) {
-            mandate.remaining += payment.amount;
-        }
-
-        Ok(RefundResult {
-            refund_id: format!("atxp_rf_{}", Uuid::new_v4().simple()),
-            original_payment_id: payment.payment_id.clone(),
-            amount: payment.amount,
-            success: true,
-            execution_us: start.elapsed().as_micros() as u64,
-        })
+    async fn refund(&self, _payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
+        Err(EngineError::ProtocolError(
+            "atxp refunds are not implemented in Meridian yet".into(),
+        ))
     }
 
     fn metrics(&self) -> ProtocolMetrics {
         self.metrics.to_metrics("atxp")
     }
+
     fn fee_for(&self, amount: Cents) -> Cents {
         std::cmp::max(amount * 5 / 1000, 1)
     }
+
     fn supports_micropayments(&self) -> bool {
         true
     }
+
     fn autonomy_level(&self) -> f64 {
         0.9
     }

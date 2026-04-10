@@ -12,11 +12,24 @@
 		failed_transactions: number;
 	}
 
-	interface Props {
-		metrics: ProtoMetric[];
+	interface ProtocolEcosystem {
+		merchant_count: number;
+		network_effect: number;
+		congestion: number;
+		operator_margin_cents: number;
+		reliability?: number;
+		route_mix?: Record<string, number>;
 	}
 
-	let { metrics }: Props = $props();
+	interface Props {
+		metrics: ProtoMetric[];
+		ecosystem?: Record<string, ProtocolEcosystem>;
+		routeUsage?: Record<string, number>;
+		floatSummary?: Record<string, number>;
+		railPnlHistory?: Record<string, number[]>;
+	}
+
+	let { metrics, ecosystem = {}, routeUsage = {}, floatSummary = {}, railPnlHistory = {} }: Props = $props();
 
 	function color(protocol: string): string {
 		return PROTOCOL_COLORS[protocol.toLowerCase()] ?? '#6b7280';
@@ -58,6 +71,33 @@
 			rate: m.total_transactions > 0 ? (m.successful_transactions / m.total_transactions) * 100 : 0,
 		})).sort((a, b) => b.rate - a.rate)
 	);
+
+	let marginData = $derived(
+		metrics.map(m => ({
+			protocol: m.protocol,
+			margin_cents: ecosystem[m.protocol]?.operator_margin_cents ?? 0,
+		})).sort((a, b) => b.margin_cents - a.margin_cents)
+	);
+	let marginAbsMax = $derived(Math.max(...marginData.map(m => Math.abs(m.margin_cents)), 1));
+
+	let adoptionData = $derived(
+		metrics.map(m => ({
+			protocol: m.protocol,
+			merchant_count: ecosystem[m.protocol]?.merchant_count ?? 0,
+			network_effect: ecosystem[m.protocol]?.network_effect ?? 0,
+			congestion: ecosystem[m.protocol]?.congestion ?? 0,
+		})).sort((a, b) => b.network_effect - a.network_effect)
+	);
+
+	let floatData = $derived(
+		Object.entries(floatSummary).sort(([, a], [, b]) => b - a)
+	);
+	let floatMax = $derived(Math.max(...floatData.map(([, amount]) => amount), 1));
+
+	let routeData = $derived(
+		Object.entries(routeUsage).sort(([, a], [, b]) => b - a).slice(0, 8)
+	);
+	let routeMax = $derived(Math.max(...routeData.map(([, count]) => count), 1));
 
 	const barHeight = 28;
 	const labelWidth = 110;
@@ -173,6 +213,95 @@
 				<rect x={labelWidth} y={y} width={Math.max(barW, 2)} height={barHeight} rx="3" fill={color(m.protocol)} opacity="0.85" />
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{m.rate.toFixed(1)}%
+				</text>
+			{/each}
+		</svg>
+	</div>
+
+	<!-- 5. Rail P&L -->
+	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(marginData.length)}" role="img" aria-label="Rail PnL bar chart" style="width:100%; height:auto;">
+			<title>Rail PnL</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Rail P&amp;L</text>
+			{#each marginData as m, i}
+				{@const y = chartPadding.top + i * (barHeight + 8)}
+				{@const width = (Math.abs(m.margin_cents) / marginAbsMax) * ((chartWidth - labelWidth - chartPadding.right) * 0.9)}
+				{@const positive = m.margin_cents >= 0}
+				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
+				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
+					{m.protocol.toUpperCase()}
+				</text>
+				<line x1={labelWidth + 90} y1={y - 2} x2={labelWidth + 90} y2={y + barHeight + 2} stroke="var(--bd)" stroke-width="1" />
+				<rect
+					x={positive ? labelWidth + 90 : labelWidth + 90 - width}
+					y={y}
+					width={Math.max(width, 2)}
+					height={barHeight}
+					rx="3"
+					fill={positive ? 'var(--x402)' : 'var(--ap2)'}
+					opacity="0.85"
+				/>
+				<text x={labelWidth + 100 + (positive ? width : 0)} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
+					{fmtDollars(m.margin_cents)}
+				</text>
+			{/each}
+		</svg>
+	</div>
+
+	<!-- 6. Adoption / Pressure -->
+	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(adoptionData.length)}" role="img" aria-label="Rail adoption and pressure chart" style="width:100%; height:auto;">
+			<title>Adoption &amp; Pressure</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Adoption &amp; Pressure</text>
+			{#each adoptionData as m, i}
+				{@const y = chartPadding.top + i * (barHeight + 12)}
+				{@const adoptionW = m.network_effect * (chartWidth - labelWidth - chartPadding.right)}
+				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
+				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
+					{m.protocol.toUpperCase()}
+				</text>
+				<rect x={labelWidth} y={y} width={chartWidth - labelWidth - chartPadding.right} height={10} rx="3" fill="var(--bg-0)" opacity="0.5" />
+				<rect x={labelWidth} y={y} width={Math.max(adoptionW, 2)} height={10} rx="3" fill={color(m.protocol)} opacity="0.85" />
+				<rect x={labelWidth} y={y + 16} width={(chartWidth - labelWidth - chartPadding.right) * Math.min(m.congestion, 1)} height={8} rx="3" fill="var(--ap2)" opacity="0.75" />
+				<text x={labelWidth + adoptionW + 6} y={y + 9} fill="var(--tx-2)" font-size="10" font-family="'Berkeley Mono', var(--mono), monospace">
+					NE {m.network_effect.toFixed(2)}
+				</text>
+				<text x={labelWidth + (chartWidth - labelWidth - chartPadding.right) * Math.min(m.congestion, 1) + 6} y={y + 23} fill="var(--tx-3)" font-size="10" font-family="'Berkeley Mono', var(--mono), monospace">
+					CG {m.congestion.toFixed(2)} · {m.merchant_count} merchants
+				</text>
+			{/each}
+		</svg>
+	</div>
+
+	<!-- 7. Stablecoin Float -->
+	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(floatData.length)}" role="img" aria-label="Stablecoin float by domain chart" style="width:100%; height:auto;">
+			<title>Stablecoin Float</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Stablecoin Float</text>
+			{#each floatData as [domain, amount], i}
+				{@const y = chartPadding.top + i * (barHeight + 8)}
+				{@const barW = floatMax > 0 ? (amount / floatMax) * (chartWidth - labelWidth - chartPadding.right) : 0}
+				<text x="0" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="10" font-family="var(--mono)">{domain}</text>
+				<rect x={labelWidth} y={y} width={Math.max(barW, 2)} height={barHeight} rx="3" fill="var(--x402)" opacity="0.85" />
+				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
+					{fmtDollars(amount)}
+				</text>
+			{/each}
+		</svg>
+	</div>
+
+	<!-- 8. Route Pressure -->
+	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
+		<svg viewBox="0 0 {chartWidth} {svgHeight(routeData.length)}" role="img" aria-label="Route usage chart" style="width:100%; height:auto;">
+			<title>Route Usage</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Route Usage</text>
+			{#each routeData as [route, count], i}
+				{@const y = chartPadding.top + i * (barHeight + 8)}
+				{@const barW = routeMax > 0 ? (count / routeMax) * (chartWidth - labelWidth - chartPadding.right) : 0}
+				<text x="0" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="10" font-family="var(--mono)">{route}</text>
+				<rect x={labelWidth} y={y} width={Math.max(barW, 2)} height={barHeight} rx="3" fill="var(--mpp)" opacity="0.85" />
+				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
+					{count}
 				</text>
 			{/each}
 		</svg>

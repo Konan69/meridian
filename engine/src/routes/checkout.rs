@@ -45,6 +45,7 @@ pub struct CompleteSessionRequest {
     #[allow(dead_code)]
     pub payment_token: String,
     pub protocol: Option<String>,
+    pub merchant: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +263,7 @@ pub async fn complete_session(
     Json(req): Json<CompleteSessionRequest>,
 ) -> Result<Json<CheckoutSession>> {
     // Extract what we need from the session, then drop the lock before async
-    let (total, protocol_name, currency) = {
+    let (total, protocol_name, currency, merchant_name) = {
         let sessions = state.sessions.lock().unwrap();
         let session = sessions
             .get(&id)
@@ -291,8 +292,12 @@ pub async fn complete_session(
             .clone()
             .unwrap_or_else(|| session.protocol.clone());
         let currency = session.currency.clone();
+        let merchant = req
+            .merchant
+            .clone()
+            .unwrap_or_else(|| "meridian_merchant".to_string());
 
-        (total, protocol, currency)
+        (total, protocol, currency, merchant)
     }; // lock dropped here
 
     // Get protocol adapter and run FULL protocol flow: authorize → pay
@@ -314,15 +319,13 @@ pub async fn complete_session(
     // No treasury auto-topups or synthetic balances in strict live mode.
     let wallet = state
         .wallet_service
-        .to_agent_wallet(&agent_id, &protocol_name)
+        .to_actor_wallet("agent", &agent_id, &protocol_name)
         .map_err(|e| EngineError::PaymentDeclined(format!("wallet error: {}", e)))?;
 
     let constraints = crate::core::types::SpendingConstraints {
         max_amount: total,
         currency: currency.clone(),
-        merchants: Some(vec![std::env::var("X402_PAY_TO").map_err(|_| {
-            EngineError::InvalidRequest("X402_PAY_TO must be set".into())
-        })?]),
+        merchants: Some(vec![merchant_name.clone()]),
         categories: None,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         requires_confirmation: false,
@@ -331,12 +334,13 @@ pub async fn complete_session(
 
     // 3. Pay — validation and settlement happen on the real rail. Any insufficient-funds
     // failure must come from the rail itself, not an internal shadow balance.
-    let pay_to = auth_token
+    let settlement_target = auth_token
         .protocol_data
         .get("pay_to")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| EngineError::ProtocolError("missing x402 pay_to address".into()))?;
-    let payment = adapter.pay(&auth_token, total, pay_to).await?;
+        .unwrap_or(&merchant_name)
+        .to_string();
+    let payment = adapter.pay(&auth_token, total, &settlement_target).await?;
 
     // Re-acquire lock and finalize
     let mut sessions = state.sessions.lock().unwrap();
@@ -361,6 +365,7 @@ pub async fn complete_session(
             "fee_cents": payment.fee,
             "execution_us": payment.execution_us,
             "status": payment.status,
+            "merchant": merchant_name,
         })
         .to_string(),
     });

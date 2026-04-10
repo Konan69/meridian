@@ -11,16 +11,18 @@ use crate::core::wallet::WalletInfo;
 
 #[derive(Serialize)]
 pub struct WalletResponse {
-    pub agent_id: String,
+    pub owner_kind: String,
+    pub owner_id: String,
     pub protocol: String,
     pub balance: u64,
-    pub address: String,
+    pub address: Option<String>,
 }
 
 impl From<WalletInfo> for WalletResponse {
     fn from(w: WalletInfo) -> Self {
         Self {
-            agent_id: w.agent_id,
+            owner_kind: w.owner_kind,
+            owner_id: w.owner_id,
             protocol: w.protocol,
             balance: w.balance,
             address: w.address,
@@ -30,7 +32,8 @@ impl From<WalletInfo> for WalletResponse {
 
 #[derive(Deserialize)]
 pub struct CreateWalletRequest {
-    pub agent_id: String,
+    pub owner_kind: String,
+    pub owner_id: String,
     pub protocol: String,
     #[serde(default = "default_balance")]
     pub initial_balance: u64,
@@ -47,16 +50,16 @@ pub async fn create_wallet(
     let wallet =
         state
             .wallet_service
-            .create_wallet(&req.agent_id, &req.protocol, req.initial_balance)?;
+            .create_wallet(&req.owner_kind, &req.owner_id, &req.protocol, req.initial_balance)?;
 
     Ok(Json(WalletResponse::from(wallet)))
 }
 
 pub async fn get_wallet(
     State(state): State<Arc<AppState>>,
-    Path((agent_id, protocol)): Path<(String, String)>,
+    Path((owner_kind, owner_id, protocol)): Path<(String, String, String)>,
 ) -> Result<Json<WalletResponse>> {
-    let wallet = state.wallet_service.get_wallet(&agent_id, &protocol)?;
+    let wallet = state.wallet_service.get_wallet(&owner_kind, &owner_id, &protocol)?;
     Ok(Json(WalletResponse::from(wallet)))
 }
 

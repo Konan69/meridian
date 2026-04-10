@@ -1,5 +1,7 @@
 """Core types for the Meridian simulation layer."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -16,9 +18,33 @@ class Protocol(str, Enum):
 class AgentRole(str, Enum):
     BUYER = "buyer"
     MERCHANT = "merchant"
+    OPERATOR = "operator"
 
 
-# Protocol fee formulas (mirrors Rust engine, for client-side estimation)
+class BalanceDomain(str, Enum):
+    BASE_USDC = "base_usdc"
+    SOLANA_USDC = "solana_usdc"
+    TEMPO_USD = "tempo_usd"
+    STRIPE_INTERNAL_USD = "stripe_internal_usd"
+    GATEWAY_UNIFIED_USDC = "gateway_unified_usdc"
+
+
+class SettlementPrimitive(str, Enum):
+    DIRECT_SAME_DOMAIN = "direct_same_domain"
+    BATCHED_NANOPAYMENT = "batched_nanopayment"
+    TEMPO_SESSION = "tempo_session"
+    STRIPE_INTERNAL_CHECKOUT = "stripe_internal_checkout"
+    GATEWAY_UNIFIED = "gateway_unified"
+    CCTP_TRANSFER = "cctp_transfer"
+    LIFI_ROUTED = "lifi_routed"
+
+
+class WorkloadType(str, Enum):
+    API_MICRO = "api_micro"
+    CONSUMER_CHECKOUT = "consumer_checkout"
+    TREASURY_REBALANCE = "treasury_rebalance"
+
+
 PROTOCOL_FEE_FORMULAS = {
     Protocol.ACP: lambda amount: (amount * 29 // 1000) + 30,
     Protocol.AP2: lambda amount: (amount * 25 // 1000) + 20,
@@ -27,7 +53,6 @@ PROTOCOL_FEE_FORMULAS = {
     Protocol.ATXP: lambda amount: max(amount * 5 // 1000, 1),
 }
 
-# Protocol characteristics for intelligent selection
 PROTOCOL_TRAITS = {
     Protocol.ACP: {
         "supports_micropay": False,
@@ -61,7 +86,61 @@ PROTOCOL_TRAITS = {
     },
 }
 
-# US states for address diversity
+PROTOCOL_FIXED_COST_CENTS = {
+    Protocol.ACP: 35_000,
+    Protocol.AP2: 28_000,
+    Protocol.X402: 8_000,
+    Protocol.MPP: 14_000,
+    Protocol.ATXP: 10_000,
+}
+
+PROTOCOL_CAPACITY_PER_ROUND = {
+    Protocol.ACP: 18,
+    Protocol.AP2: 15,
+    Protocol.X402: 55,
+    Protocol.MPP: 42,
+    Protocol.ATXP: 48,
+}
+
+PROTOCOL_PRIMITIVE_SUPPORT = {
+    Protocol.X402: {
+        SettlementPrimitive.DIRECT_SAME_DOMAIN,
+        SettlementPrimitive.BATCHED_NANOPAYMENT,
+    },
+    Protocol.MPP: {
+        SettlementPrimitive.TEMPO_SESSION,
+        SettlementPrimitive.STRIPE_INTERNAL_CHECKOUT,
+    },
+    Protocol.ACP: {
+        SettlementPrimitive.STRIPE_INTERNAL_CHECKOUT,
+    },
+    Protocol.AP2: {
+        SettlementPrimitive.DIRECT_SAME_DOMAIN,
+        SettlementPrimitive.CCTP_TRANSFER,
+        SettlementPrimitive.LIFI_ROUTED,
+    },
+    Protocol.ATXP: {
+        SettlementPrimitive.DIRECT_SAME_DOMAIN,
+        SettlementPrimitive.LIFI_ROUTED,
+    },
+}
+
+PROTOCOL_PREFERRED_WORKLOADS = {
+    Protocol.X402: {WorkloadType.API_MICRO, WorkloadType.CONSUMER_CHECKOUT},
+    Protocol.MPP: {WorkloadType.API_MICRO, WorkloadType.CONSUMER_CHECKOUT},
+    Protocol.ACP: {WorkloadType.CONSUMER_CHECKOUT},
+    Protocol.AP2: {WorkloadType.CONSUMER_CHECKOUT, WorkloadType.TREASURY_REBALANCE},
+    Protocol.ATXP: {WorkloadType.API_MICRO, WorkloadType.TREASURY_REBALANCE},
+}
+
+DOMAIN_LABELS = {
+    BalanceDomain.BASE_USDC: "Base USDC",
+    BalanceDomain.SOLANA_USDC: "Solana USDC",
+    BalanceDomain.TEMPO_USD: "Tempo USD",
+    BalanceDomain.STRIPE_INTERNAL_USD: "Stripe Internal USD",
+    BalanceDomain.GATEWAY_UNIFIED_USDC: "Gateway Unified USDC",
+}
+
 US_STATES = [
     ("CA", "San Francisco", "94105"),
     ("NY", "New York", "10001"),
@@ -77,18 +156,88 @@ US_STATES = [
 
 
 @dataclass
+class StableBalanceBucket:
+    owner_kind: AgentRole
+    owner_id: str
+    domain: BalanceDomain
+    asset: str = "USDC"
+    available_cents: int = 0
+    reserved_cents: int = 0
+    pending_in_cents: int = 0
+    pending_out_cents: int = 0
+
+
+@dataclass
+class TreasuryPolicy:
+    preferred_settlement_domain: BalanceDomain
+    accepted_settlement_domains: list[BalanceDomain]
+    rebalance_threshold_cents: int
+    rebalance_target_mix: dict[str, float]
+    working_capital_cents: int
+
+
+@dataclass
+class SettlementReservation:
+    reservation_id: str
+    owner_kind: AgentRole
+    owner_id: str
+    source_domain: BalanceDomain
+    amount_cents: int
+    reserved_total_cents: int
+    protocol: Protocol
+    workload_type: WorkloadType
+    route_id: str
+    primitive: SettlementPrimitive
+    round_num: int
+
+
+@dataclass
+class RouteSpec:
+    route_id: str
+    source_domain: BalanceDomain
+    target_domain: BalanceDomain
+    primitive: SettlementPrimitive
+    supported_protocols: list[Protocol]
+    fee_bps: int
+    fixed_fee_cents: int
+    latency_ms: int
+    capacity_cents_per_round: int
+    base_fail_prob: float
+
+
+@dataclass
+class RouteExecutionRecord:
+    route_id: str
+    protocol: Protocol
+    primitive: SettlementPrimitive
+    source_domain: BalanceDomain
+    target_domain: BalanceDomain
+    amount_cents: int
+    route_fee_cents: int
+    protocol_fee_cents: int
+    latency_ms: float
+    success: bool
+    workload_type: WorkloadType
+    reservation_id: str
+    fail_reason: Optional[str] = None
+
+
+@dataclass
 class AgentProfile:
     agent_id: str
     name: str
     role: AgentRole
-    budget: int  # cents
+    budget: int
     price_sensitivity: float
     brand_loyalty: float
     preferred_categories: list[str] = field(default_factory=list)
     risk_tolerance: float = 0.5
     protocol_preference: Optional[Protocol] = None
     spent: int = 0
-    state_idx: int = 0  # index into US_STATES for address diversity
+    state_idx: int = 0
+    checkout_patience: float = 0.5
+    social_influence: float = 0.5
+    protocol_trust: dict[str, float] = field(default_factory=dict)
 
     @property
     def remaining_budget(self) -> int:
@@ -107,54 +256,63 @@ class AgentProfile:
         }
 
     def wants_to_buy(self, price: int, category: str, rng) -> bool:
-        """Rule-based purchase decision using the simulation's seeded RNG."""
         if price > self.remaining_budget:
             return False
 
-        # Price sensitivity: high-sensitivity agents reject expensive items
         if self.price_sensitivity > 0.7 and price > self.budget * 0.3:
             return rng.random() > self.price_sensitivity
 
-        # Category preference: loyal agents reject off-category products
         if self.preferred_categories and category not in self.preferred_categories:
             if rng.random() < self.brand_loyalty:
                 return False
 
-        # Base buy probability from risk tolerance
         buy_probability = 0.5 + (self.risk_tolerance - 0.5) * 0.3
         return rng.random() < buy_probability
 
-    def pick_protocol(self, amount: int, protocols: list, rng) -> str:
-        """Intelligently select protocol based on transaction characteristics."""
-        # If agent has a preference and it's available, use it (70% of the time)
-        if self.protocol_preference and self.protocol_preference in protocols:
-            if rng.random() < 0.7:
-                return self.protocol_preference.value
 
-        # Micropayment: prefer protocols that support them
-        if amount < 100:  # < $1.00
-            micro_protos = [
-                p for p in protocols if PROTOCOL_TRAITS[p]["supports_micropay"]
-            ]
-            if micro_protos:
-                return rng.choice(micro_protos).value
+@dataclass
+class MerchantProfile:
+    merchant_id: str
+    name: str
+    category: str
+    product_ids: list[str]
+    accepted_protocols: list[Protocol]
+    reputation: float
+    scale_bias: float
+    preferred_settlement_domain: BalanceDomain
+    accepted_settlement_domains: list[BalanceDomain]
+    rebalance_threshold_cents: int
+    rebalance_target_mix: dict[str, float]
+    working_capital_cents: int
 
-        # Price-sensitive agents prefer low-fee protocols
-        if self.price_sensitivity > 0.7:
-            # Sort by estimated fee, pick from cheapest 2
-            sorted_protos = sorted(
-                protocols, key=lambda p: PROTOCOL_FEE_FORMULAS[p](amount)
-            )
-            return rng.choice(sorted_protos[:2]).value
+    @property
+    def treasury_policy(self) -> TreasuryPolicy:
+        return TreasuryPolicy(
+            preferred_settlement_domain=self.preferred_settlement_domain,
+            accepted_settlement_domains=self.accepted_settlement_domains,
+            rebalance_threshold_cents=self.rebalance_threshold_cents,
+            rebalance_target_mix=self.rebalance_target_mix,
+            working_capital_cents=self.working_capital_cents,
+        )
 
-        # High-value purchases: prefer consumer-protected protocols (ACP, AP2)
-        if amount > 10000:  # > $100
-            safe_protos = [p for p in protocols if p in (Protocol.ACP, Protocol.AP2)]
-            if safe_protos and rng.random() < 0.6:
-                return rng.choice(safe_protos).value
 
-        # Default: random
-        return rng.choice(protocols).value
+@dataclass
+class ProtocolEcosystemState:
+    protocol: Protocol
+    merchant_count: int = 0
+    attempted_transactions: int = 0
+    successful_transactions: int = 0
+    failed_transactions: int = 0
+    gross_volume_cents: int = 0
+    fee_revenue_cents: int = 0
+    infrastructure_cost_cents: int = 0
+    operator_margin_cents: int = 0
+    network_effect: float = 0.0
+    congestion: float = 0.0
+    reliability: float = 0.98
+    scale_pressure: float = 0.0
+    observed_settlement_ms: float = 0.0
+    route_mix: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -167,6 +325,16 @@ class SimulationConfig:
     agent_budget_range: tuple[int, int] = (5000, 50000)
     use_llm: bool = False
     llm_model: str = "minimax-m2.5"
+    merchants_per_category: int = 3
+    max_active_ratio: float = 0.45
+    stable_universe: str = "usdc_centric"
+    flow_mix: dict[WorkloadType | str, float] = field(
+        default_factory=lambda: {
+            WorkloadType.API_MICRO: 0.55,
+            WorkloadType.CONSUMER_CHECKOUT: 0.30,
+            WorkloadType.TREASURY_REBALANCE: 0.15,
+        }
+    )
 
     def __post_init__(self):
         if self.agent_budget_range[0] > self.agent_budget_range[1]:
@@ -174,6 +342,14 @@ class SimulationConfig:
                 self.agent_budget_range[1],
                 self.agent_budget_range[0],
             )
+
+        normalized: dict[WorkloadType, float] = {}
+        for key, value in self.flow_mix.items():
+            normalized[WorkloadType(key)] = float(value)
+        total = sum(normalized.values()) or 1.0
+        self.flow_mix = {
+            workload: value / total for workload, value in normalized.items()
+        }
 
 
 @dataclass
@@ -183,24 +359,40 @@ class TransactionRecord:
     protocol: str
     product_id: str
     product_name: str
-    amount: int  # cents
-    fee: int  # cents
+    amount: int
+    fee: int
     settlement_ms: float
     success: bool
     session_id: Optional[str] = None
     order_id: Optional[str] = None
     error: Optional[str] = None
+    merchant_id: Optional[str] = None
+    merchant_name: Optional[str] = None
+    ecosystem_pressure: float = 0.0
+    workload_type: Optional[str] = None
+    source_domain: Optional[str] = None
+    target_domain: Optional[str] = None
+    primitive: Optional[str] = None
+    route_id: Optional[str] = None
+    margin_delta_cents: int = 0
 
 
 @dataclass
 class RoundSummary:
     round_num: int
     transactions: list[TransactionRecord] = field(default_factory=list)
+    route_executions: list[RouteExecutionRecord] = field(default_factory=list)
     total_volume: int = 0
     total_fees: int = 0
     success_count: int = 0
     fail_count: int = 0
     active_agents: int = 0
+    protocol_attempts: dict[str, int] = field(default_factory=dict)
+    merchant_sales: dict[str, int] = field(default_factory=dict)
+    ecosystem: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
+    route_usage: dict[str, int] = field(default_factory=dict)
+    balance_summary: dict[str, int] = field(default_factory=dict)
+    treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -211,3 +403,8 @@ class SimulationResult:
     total_transactions: int = 0
     total_volume: int = 0
     duration_seconds: float = 0.0
+    ecosystem_summary: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
+    route_usage_summary: dict[str, int] = field(default_factory=dict)
+    float_summary: dict[str, int] = field(default_factory=dict)
+    treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
+    rail_pnl_history: dict[str, list[int]] = field(default_factory=dict)

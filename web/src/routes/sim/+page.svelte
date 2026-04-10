@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	const COLORS: Record<string, string> = {
 		acp: 'var(--acp)', ap2: 'var(--ap2)', x402: 'var(--x402)',
 		mpp: 'var(--mpp)', atxp: 'var(--atxp)'
@@ -10,16 +11,33 @@
 
 	interface SimEvent { type: string; [k: string]: unknown; }
 	interface PM { protocol: string; total_transactions: number; successful_transactions: number; failed_transactions: number; total_volume_cents: number; total_fees_cents: number; avg_settlement_ms: number; micropayment_count: number; }
+	interface EcosystemState { merchant_count: number; network_effect: number; congestion: number; operator_margin_cents: number; }
+	interface FloatSummary { [domain: string]: number; }
+	interface Capabilities { supported_protocols: string[]; protocol_statuses?: { protocol: string; runtime_ready: boolean; integration: string; reason: string }[]; }
 
 	let events = $state<SimEvent[]>([]);
 	let running = $state(false);
 	let complete = $state(false);
 	let metrics = $state<PM[]>([]);
+	let ecosystem = $state<Record<string, EcosystemState>>({});
 	let numAgents = $state(50);
 	let numRounds = $state(10);
 	let totalTxns = $state(0);
 	let totalVol = $state(0);
 	let elapsed = $state('');
+	let routeUsage = $state<Record<string, number>>({});
+	let floatSummary = $state<FloatSummary>({});
+	let supportedProtocols = $state<string[]>([]);
+
+	onMount(async () => {
+		const res = await fetch('http://localhost:4080/capabilities');
+		if (!res.ok) throw new Error(`Capabilities request failed: ${res.status}`);
+		const caps = await res.json() as Capabilities;
+		if (!Array.isArray(caps.supported_protocols) || caps.supported_protocols.length === 0) {
+			throw new Error('Engine reported no supported protocols');
+		}
+		supportedProtocols = caps.supported_protocols;
+	});
 
 	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
@@ -30,9 +48,25 @@
 	async function run() {
 		events = []; running = true; complete = false; metrics = [];
 		try {
+			if (supportedProtocols.length === 0) {
+				const capsRes = await fetch('http://localhost:4080/capabilities');
+				if (!capsRes.ok) throw new Error(`Capabilities request failed: ${capsRes.status}`);
+				const caps = await capsRes.json() as Capabilities;
+				if (!Array.isArray(caps.supported_protocols) || caps.supported_protocols.length === 0) {
+					throw new Error('Engine reported no supported protocols');
+				}
+				supportedProtocols = caps.supported_protocols;
+			}
 			const res = await fetch('/api/simulate', {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ agents: numAgents, rounds: numRounds })
+				body: JSON.stringify({
+					agents: numAgents,
+					rounds: numRounds,
+					protocols: supportedProtocols,
+					merchantsPerCategory: 3,
+					flowMix: { api_micro: 0.55, consumer_checkout: 0.30, treasury_rebalance: 0.15 },
+					stableUniverse: 'usdc_centric',
+				})
 			});
 			const reader = res.body?.getReader();
 			const dec = new TextDecoder();
@@ -55,6 +89,9 @@
 							totalVol = ev.total_volume_cents as number;
 							metrics = Object.values(ev.protocol_summaries as Record<string, PM>)
 								.sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
+							ecosystem = (ev.ecosystem_summary as Record<string, EcosystemState>) ?? {};
+							routeUsage = (ev.route_usage_summary as Record<string, number>) ?? {};
+							floatSummary = (ev.float_summary as FloatSummary) ?? {};
 						}
 					} catch {}
 				}
@@ -69,7 +106,7 @@
 	<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
 		<div>
 			<h1 style="font-size:22px; font-weight:600; letter-spacing:-0.03em;">Simulation</h1>
-			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Flat round-robin protocol distribution for fair comparison</p>
+			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Agent-driven stablecoin economy with live rails, float fragmentation, route pressure, and rail P&amp;L</p>
 		</div>
 		<div style="display:flex; align-items:center; gap:14px;">
 			<label style="display:flex; flex-direction:column; gap:2px;">
@@ -147,6 +184,73 @@
 							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{ms(p.avg_settlement_ms)}</td>
 							<td style="padding:10px 8px; text-align:right; font-family:var(--mono); color:{p.failed_transactions > 0 ? 'var(--ap2)' : 'var(--tx-3)'};">{p.failed_transactions}</td>
 							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{p.micropayment_count}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- Rail P&L -->
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; padding:20px; margin-bottom:20px;">
+			<h2 style="font-size:14px; font-weight:600; margin-bottom:14px;">Rail Economics</h2>
+			<table style="width:100%; border-collapse:collapse; font-size:12px;">
+				<thead>
+					<tr style="border-bottom:1px solid var(--bd); color:var(--tx-3); text-align:left;">
+						<th style="padding:8px 12px; font-weight:600;">Protocol</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Margin</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Merchants</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Net Effect</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Congestion</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each metrics as p}
+						{@const eco = ecosystem[p.protocol]}
+						<tr style="border-bottom:1px solid var(--bg-3);">
+							<td style="padding:10px 12px;">
+								<span style="display:flex; align-items:center; gap:6px;">
+									<span style="width:8px; height:8px; border-radius:50%; background:{COLORS[p.protocol]};"></span>
+									<span style="font-family:var(--mono); font-weight:700; color:{COLORS[p.protocol]};">{p.protocol.toUpperCase()}</span>
+								</span>
+							</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono); color:{(eco?.operator_margin_cents ?? 0) >= 0 ? 'var(--x402)' : 'var(--ap2)'};">
+								{fmt(eco?.operator_margin_cents ?? 0)}
+							</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{eco?.merchant_count ?? 0}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{(eco?.network_effect ?? 0).toFixed(2)}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{(eco?.congestion ?? 0).toFixed(2)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; padding:20px; margin-bottom:20px;">
+			<h2 style="font-size:14px; font-weight:600; margin-bottom:14px;">Stablecoin Float</h2>
+			<div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px;">
+				{#each Object.entries(floatSummary) as [domain, amount]}
+					<div style="background:var(--bg-2); border-radius:4px; padding:12px;">
+						<div style="font-family:var(--mono); font-size:10px; color:var(--tx-3); margin-bottom:4px;">{domain}</div>
+						<div style="font-family:var(--mono); font-size:16px; font-weight:700;">{fmt(amount)}</div>
+					</div>
+				{/each}
+			</div>
+		</div>
+
+		<div style="background:var(--bg-1); border:1px solid var(--bd); border-radius:6px; padding:20px; margin-bottom:20px;">
+			<h2 style="font-size:14px; font-weight:600; margin-bottom:14px;">Route Usage</h2>
+			<table style="width:100%; border-collapse:collapse; font-size:12px;">
+				<thead>
+					<tr style="border-bottom:1px solid var(--bd); color:var(--tx-3); text-align:left;">
+						<th style="padding:8px 12px; font-weight:600;">Route</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Usage</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each Object.entries(routeUsage).sort(([, a], [, b]) => b - a) as [route, count]}
+						<tr style="border-bottom:1px solid var(--bg-3);">
+							<td style="padding:10px 12px; font-family:var(--mono);">{route}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{count}</td>
 						</tr>
 					{/each}
 				</tbody>

@@ -1,0 +1,35 @@
+{
+  "name": "meridian-atxp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "probe": "tsx src/probeClient.ts",
+    "probe:direct": "ATXP_PROBE_MODE=direct-atxp tsx src/probeClient.ts",
+    "recover": "tsx src/recover.ts"
+  },
+  "dependencies": {
+    "@atxp/base": "^0.10.13",
+    "@atxp/client": "^0.10.7",
+    "@atxp/common": "^0.10.7",
+    "@atxp/polygon": "^0.10.13",
+    "@atxp/server": "^0.10.7",
+    "@atxp/worldchain": "^0.10.13",
+    "@hono/node-server": "^1.19.4",
+    "@modelcontextprotocol/sdk": "^1.18.1",
+    "bignumber.js": "^9.1.2",
+    "dotenv": "^17.2.3",
+    "hono": "^4.9.7",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "oxfmt": "^0.43.0",
+    "oxlint": "^1.58.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

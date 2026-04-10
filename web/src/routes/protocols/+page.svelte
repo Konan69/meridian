@@ -8,12 +8,52 @@
 	}
 
 	const ENGINE = 'http://localhost:4080';
-	const META: Record<string, { color: string; desc: string; stack: string; fee: string }> = {
-		acp: { color:'var(--acp)', desc:'Shared Payment Tokens scoped to merchant/amount/time. Settlement via card networks.', stack:'OpenAI + Stripe', fee:'2.9% + 30¢' },
-		ap2: { color:'var(--ap2)', desc:'Verifiable Digital Credentials with Intent/Cart Mandates. Double ECDSA signing.', stack:'Google', fee:'2.5% + 20¢' },
-		x402: { color:'var(--x402)', desc:'HTTP 402 stateless payments. USDC on-chain via facilitator. ECDSA sign+verify per tx.', stack:'Coinbase', fee:'0.1%' },
-		mpp: { color:'var(--mpp)', desc:'Session-based streaming micropayments. Bridges crypto and fiat. ECDSA receipt signing.', stack:'Stripe + Tempo', fee:'1.5% + 5¢' },
-		atxp: { color:'var(--atxp)', desc:'Mandate engine with constraint validation. Multi-use budgets. Agent-to-agent nesting.', stack:'Circuit & Chisel', fee:'0.5%' },
+	const META: Record<string, { color: string; desc: string; stack: string; fee: string; primitives: string; domains: string; workloads: string }> = {
+		acp: {
+			color:'var(--acp)',
+			desc:'Checkout orchestration rail. Stablecoin value is routed into a Stripe-internal settlement sink for structured commerce.',
+			stack:'OpenAI + Stripe',
+			fee:'2.9% + 30¢',
+			primitives:'stripe_internal_checkout',
+			domains:'stripe_internal_usd',
+			workloads:'consumer checkout'
+		},
+		ap2: {
+			color:'var(--ap2)',
+			desc:'Delegated authorization rail. Best when agent trust and cross-domain flexibility matter more than raw speed.',
+			stack:'Google',
+			fee:'2.5% + 20¢',
+			primitives:'direct_same_domain, cctp_transfer, lifi_routed',
+			domains:'base_usdc, solana_usdc, gateway_unified_usdc',
+			workloads:'consumer checkout, treasury rebalance'
+		},
+		x402: {
+			color:'var(--x402)',
+			desc:'Direct stablecoin machine-payment rail. Strongest for same-domain USDC and batched nanopayment execution.',
+			stack:'Coinbase',
+			fee:'0.1%',
+			primitives:'direct_same_domain, batched_nanopayment',
+			domains:'base_usdc, solana_usdc, gateway_unified_usdc',
+			workloads:'api micro, consumer checkout'
+		},
+		mpp: {
+			color:'var(--mpp)',
+			desc:'Session-based machine rail. Works either as Tempo-native streaming spend or a Stripe-internal checkout sink.',
+			stack:'Stripe + Tempo',
+			fee:'1.5% + 5¢',
+			primitives:'tempo_session, stripe_internal_checkout',
+			domains:'tempo_usd, stripe_internal_usd',
+			workloads:'api micro, consumer checkout'
+		},
+		atxp: {
+			color:'var(--atxp)',
+			desc:'Wallet and mandate rail. Useful for agent-to-agent movement and treasury-style stablecoin routing.',
+			stack:'Circuit & Chisel',
+			fee:'0.5%',
+			primitives:'direct_same_domain, lifi_routed',
+			domains:'base_usdc, solana_usdc, gateway_unified_usdc',
+			workloads:'api micro, treasury rebalance'
+		},
 	};
 
 	let protos = $state<PM[]>([]);
@@ -63,6 +103,20 @@
 				</div>
 
 				<p style="font-size:13px; color:var(--tx-2); margin-bottom:16px; line-height:1.5;">{m?.desc}</p>
+				<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:16px; font-size:11px;">
+					<div style="background:var(--bg-2); border-radius:4px; padding:10px;">
+						<div style="font-size:9px; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Primitives</div>
+						<div style="font-family:var(--mono); color:var(--tx-2);">{m?.primitives}</div>
+					</div>
+					<div style="background:var(--bg-2); border-radius:4px; padding:10px;">
+						<div style="font-size:9px; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Domains</div>
+						<div style="font-family:var(--mono); color:var(--tx-2);">{m?.domains}</div>
+					</div>
+					<div style="background:var(--bg-2); border-radius:4px; padding:10px;">
+						<div style="font-size:9px; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Best Workloads</div>
+						<div style="font-family:var(--mono); color:var(--tx-2);">{m?.workloads}</div>
+					</div>
+				</div>
 
 				<div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin-bottom:16px;">
 					{#each [

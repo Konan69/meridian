@@ -20,7 +20,7 @@
 		name: string;
 		type: string;
 		color: string;
-		properties?: Record<string, string>;
+		properties?: Record<string, unknown>;
 	}
 
 	interface SimLink extends SimulationLinkDatum<SimNode> {

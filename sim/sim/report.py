@@ -31,8 +31,12 @@ class ReportGenerator:
         """Return a list of report sections as {title, content, status} dicts."""
         sections: list[dict] = []
         sections.append(self._executive_summary())
+        sections.append(self._ecosystem_summary())
+        sections.append(self._float_summary())
         sections.extend(self._per_protocol_sections())
         sections.append(self._comparative_ranking())
+        sections.append(self._economics_ranking())
+        sections.append(self._route_summary())
         sections.append(self._agent_behavior())
         sections.append(self._micropayment_analysis())
         sections.append(self._recommendations())
@@ -60,6 +64,7 @@ class ReportGenerator:
         lines = [
             f"Agents: {r.config.num_agents}",
             f"Rounds: {r.config.num_rounds}",
+            f"Merchants: {sum(state.merchant_count for state in r.ecosystem_summary.values())}",
             f"Protocols tested: {', '.join(p.value.upper() for p in r.config.protocols)}",
             f"Duration: {r.duration_seconds:.1f}s",
             "",
@@ -69,6 +74,31 @@ class ReportGenerator:
             f"Overall success rate: {_pct(success, total)}",
         ]
         return {"title": "Executive Summary", "content": "\n".join(lines), "status": "ok"}
+
+    def _ecosystem_summary(self) -> dict:
+        if not self.result.ecosystem_summary:
+            return {"title": "Ecosystem Dynamics", "content": "No ecosystem data available.", "status": "empty"}
+
+        lines = ["Rail adoption and scaling state:"]
+        for proto_name in _PROTO_ORDER:
+            state = self.result.ecosystem_summary.get(proto_name)
+            if not state:
+                continue
+            lines.append(
+                f"  {proto_name.upper()}: merchants={state.merchant_count}, "
+                f"network_effect={state.network_effect:.2f}, reliability={state.reliability:.2%}, "
+                f"congestion={state.congestion:.2f}, scale_pressure={state.scale_pressure:.2f}"
+            )
+        return {"title": "Ecosystem Dynamics", "content": "\n".join(lines), "status": "ok"}
+
+    def _float_summary(self) -> dict:
+        if not self.result.float_summary:
+            return {"title": "Stablecoin Float", "content": "No float data available.", "status": "empty"}
+
+        lines = ["Stablecoin float by domain:"]
+        for domain, amount in sorted(self.result.float_summary.items(), key=lambda item: item[1], reverse=True):
+            lines.append(f"  {domain}: {_cents_to_dollars(amount)}")
+        return {"title": "Stablecoin Float", "content": "\n".join(lines), "status": "ok"}
 
     def _per_protocol_sections(self) -> list[dict]:
         sections = []
@@ -145,6 +175,45 @@ class ReportGenerator:
             *[f"  {i+1}. {p.upper()} ({_pct(_get(p, 'successful_transactions'), _get(p, 'total_transactions'))})" for i, p in enumerate(by_reliability)],
         ]
         return {"title": "Comparative Ranking", "content": "\n".join(lines), "status": "ok"}
+
+    def _economics_ranking(self) -> dict:
+        if not self.result.ecosystem_summary:
+            return {"title": "Protocol Economics", "content": "No economics data available.", "status": "empty"}
+
+        states = [
+            (name, self.result.ecosystem_summary[name])
+            for name in _PROTO_ORDER
+            if name in self.result.ecosystem_summary
+        ]
+        by_margin = sorted(states, key=lambda item: item[1].operator_margin_cents, reverse=True)
+        by_scale = sorted(states, key=lambda item: item[1].network_effect, reverse=True)
+
+        lines = ["Best unit economics:"]
+        for idx, (name, state) in enumerate(by_margin, start=1):
+            lines.append(
+                f"  {idx}. {name.upper()} "
+                f"(margin={_cents_to_dollars(state.operator_margin_cents)}, "
+                f"volume={_cents_to_dollars(state.gross_volume_cents)})"
+            )
+
+        lines.append("")
+        lines.append("Best ecosystem pull:")
+        for idx, (name, state) in enumerate(by_scale, start=1):
+            lines.append(
+                f"  {idx}. {name.upper()} "
+                f"(network_effect={state.network_effect:.2f}, merchants={state.merchant_count})"
+            )
+
+        return {"title": "Protocol Economics", "content": "\n".join(lines), "status": "ok"}
+
+    def _route_summary(self) -> dict:
+        if not self.result.route_usage_summary:
+            return {"title": "Route Usage", "content": "No route usage data available.", "status": "empty"}
+
+        lines = ["Most used settlement routes:"]
+        for route, count in sorted(self.result.route_usage_summary.items(), key=lambda item: item[1], reverse=True):
+            lines.append(f"  {route}: {count}")
+        return {"title": "Route Usage", "content": "\n".join(lines), "status": "ok"}
 
     def _agent_behavior(self) -> dict:
         top_spenders = sorted(self.agents, key=lambda a: a.spent, reverse=True)[:10]
@@ -292,6 +361,16 @@ class ReportGenerator:
             f"Mission-critical commerce: {rel_best.upper()} — highest success rate "
             f"({_pct(_get(rel_best, 'successful_transactions'), _get(rel_best, 'total_transactions'))})."
         )
+
+        if self.result.ecosystem_summary:
+            eco_best = max(
+                self.result.ecosystem_summary.items(),
+                key=lambda item: item[1].operator_margin_cents,
+            )
+            recs.append(
+                f"Ecosystem operator economics: {eco_best[0].upper()} — strongest simulated "
+                f"margin at {_cents_to_dollars(eco_best[1].operator_margin_cents)}."
+            )
 
         # Caution flags
         cautions: list[str] = []

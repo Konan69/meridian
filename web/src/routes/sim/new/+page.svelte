@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { simState, type SimStep } from '$lib/stores/simulation.svelte';
+	import type { BalanceSnapshot, ProtoMetrics, ProtocolEcosystem } from '$lib/stores/simulation.svelte';
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import GraphPanel from '$lib/components/GraphPanel.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
@@ -10,17 +12,67 @@
 	import { generateDemoGraph } from '$lib/components/graphDemo';
 
 	const ENGINE = 'http://localhost:4080';
+	type CapabilityStatus = {
+		protocol: string;
+		runtime_ready: boolean;
+		integration: string;
+		reason: string;
+	};
 
 	let chatLoading = $state(false);
+	let supportedProtocols = $state<string[]>([]);
+	let capabilityStatuses = $state<CapabilityStatus[]>([]);
+
+	onMount(async () => {
+		await loadCapabilities();
+	});
+
+	async function loadCapabilities() {
+		const res = await fetch(`${ENGINE}/capabilities`);
+		if (!res.ok) {
+			throw new Error(`Capabilities request failed: ${res.status}`);
+		}
+		const data = await res.json();
+		if (!Array.isArray(data.supported_protocols)) {
+			throw new Error('Capabilities response missing supported_protocols');
+		}
+		supportedProtocols = data.supported_protocols;
+		capabilityStatuses = Array.isArray(data.protocol_statuses) ? data.protocol_statuses : [];
+		simState.config = {
+			...simState.config,
+			protocols: supportedProtocols,
+		};
+	}
 
 	function buildChatContext(): string {
 		const m = simState.metrics;
+		const capabilityLines = capabilityStatuses.map((status) =>
+			`  ${status.protocol.toUpperCase()}: ${status.runtime_ready ? 'live' : 'not live'} · ${status.integration} · ${status.reason}`
+		);
+		const ecosystemLines = Object.entries(simState.ecosystem).map(([protocol, state]) =>
+			`  ${protocol.toUpperCase()}: merchants ${state.merchant_count}, network effect ${state.network_effect.toFixed(2)}, congestion ${state.congestion.toFixed(2)}, operator margin ${fmt(state.operator_margin_cents)}`
+		);
+		const floatLines = Object.entries(simState.floatSummary).map(([domain, amount]) =>
+			`  ${domain}: ${fmt(amount)}`
+		);
+		const routeLines = Object.entries(simState.routeUsage)
+			.sort(([, a], [, b]) => b - a)
+			.map(([route, count]) => `  ${route}: ${count}`);
 		const lines = [
 			`Simulation: ${simState.totalTxns} transactions, volume ${fmt(simState.totalVolume)}, duration ${simState.elapsed}, ${simState.config.num_agents} agents, ${simState.config.num_rounds} rounds.`,
+			`Engine-supported protocols: ${supportedProtocols.map((protocol) => protocol.toUpperCase()).join(', ')}.`,
+			'Protocol readiness:',
+			...capabilityLines,
 			'Protocol metrics:',
 			...m.map(p =>
 				`  ${p.protocol.toUpperCase()}: ${p.successful_transactions}/${p.total_transactions} txns, volume ${fmt(p.total_volume_cents)}, fees ${fmt(p.total_fees_cents)} (${p.total_volume_cents > 0 ? ((p.total_fees_cents / p.total_volume_cents) * 100).toFixed(2) : 0}%), avg settlement ${ms(p.avg_settlement_ms)}, micropayments ${p.micropayment_count}`
 			),
+			'Ecosystem state:',
+			...ecosystemLines,
+			'Stablecoin float:',
+			...floatLines,
+			'Route usage:',
+			...routeLines,
 		];
 		return lines.join('\n');
 	}
@@ -30,11 +82,18 @@
 		chatLoading = true;
 
 		try {
+			if (supportedProtocols.length === 0) {
+				await loadCapabilities();
+			}
 			const apiMessages = simState.chatMessages.map(m => ({ role: m.role, content: m.content }));
 			const res = await fetch('/api/chat', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ messages: apiMessages, context: buildChatContext() }),
+				body: JSON.stringify({
+					messages: apiMessages,
+					context: buildChatContext(),
+					supportedProtocols,
+				}),
 			});
 
 			if (!res.ok) {
@@ -82,9 +141,24 @@
 
 	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
+	function topEntries<T>(record: Record<string, T>, limit = 6) {
+		return Object.entries(record).slice(0, limit);
+	}
+
+	type PurchaseLike = {
+		agent?: unknown;
+		merchant?: unknown;
+		protocol?: unknown;
+		amount_cents?: unknown;
+	};
 
 	// View mode for split panel (MiroFish pattern)
 	let viewMode = $state<'graph' | 'split' | 'workbench'>('split');
+	const viewModes = [
+		{ key: 'graph', label: 'Graph' },
+		{ key: 'split', label: 'Split' },
+		{ key: 'workbench', label: 'Workbench' },
+	] as const;
 
 	function goToStep(step: SimStep) {
 		simState.step = step;
@@ -112,8 +186,17 @@
 	async function generateAgents() {
 		simState.addLog(`Generating ${simState.config.num_agents} agent profiles...`);
 		try {
-			const res = await fetch(`${ENGINE}/products`);
-			const products = await res.json();
+			if (supportedProtocols.length === 0) {
+				await loadCapabilities();
+			}
+			if (supportedProtocols.length === 0) {
+				throw new Error('Engine reported no supported protocols');
+			}
+			const productsRes = await fetch(`${ENGINE}/products`);
+			if (!productsRes.ok) {
+				throw new Error(`Products request failed: ${productsRes.status}`);
+			}
+			await productsRes.json();
 			// Create agent profiles locally (mirrors Python sim/sim/agents.py)
 			const agents = [];
 			const states = [
@@ -124,7 +207,6 @@
 				{ s: 'GA', c: 'Atlanta' }, { s: 'OR', c: 'Portland' },
 			];
 			const categories = ['footwear', 'electronics', 'food', 'digital', 'hardware'];
-			const protocols = ['acp', 'x402', 'ap2', 'mpp', 'atxp'];
 			const names = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank', 'Grace', 'Hank', 'Iris', 'Jake', 'Kate', 'Leo', 'Maya', 'Nick', 'Olga'];
 
 			for (let i = 0; i < simState.config.num_agents; i++) {
@@ -138,7 +220,7 @@
 					brand_loyalty: 0.1 + Math.random() * 0.7,
 					risk_tolerance: 0.2 + Math.random() * 0.6,
 					preferred_categories: categories.sort(() => Math.random() - 0.5).slice(0, 1 + Math.floor(Math.random() * 2)),
-					protocol_preference: Math.random() < 0.3 ? protocols[Math.floor(Math.random() * protocols.length)] : null,
+					protocol_preference: Math.random() < 0.3 ? supportedProtocols[Math.floor(Math.random() * supportedProtocols.length)] : null,
 					state: st.s,
 					city: st.c,
 				});
@@ -166,12 +248,22 @@
 		simState.addLog('Starting simulation...');
 
 		try {
+			if (supportedProtocols.length === 0) {
+				await loadCapabilities();
+			}
+			if (simState.config.protocols.length === 0) {
+				throw new Error('No engine-supported protocols available for simulation');
+			}
 			const res = await fetch('/api/simulate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					agents: simState.config.num_agents,
 					rounds: simState.config.num_rounds,
+					protocols: simState.config.protocols,
+					merchantsPerCategory: simState.config.merchantsPerCategory,
+					flowMix: simState.config.flowMix,
+					stableUniverse: simState.config.stableUniverse,
 				}),
 			});
 
@@ -198,17 +290,48 @@
 							simState.elapsed = `${ev.duration_seconds}s`;
 							simState.totalTxns = ev.total_transactions;
 							simState.totalVolume = ev.total_volume_cents;
-							simState.metrics = Object.values(ev.protocol_summaries as Record<string, unknown>)
-								.sort((a: any, b: any) => a.avg_settlement_ms - b.avg_settlement_ms) as any[];
+							simState.metrics = Object.values(
+								(ev.protocol_summaries as Record<string, ProtoMetrics>) ?? {}
+							).sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
+							simState.ecosystem = (ev.ecosystem_summary as Record<string, ProtocolEcosystem>) ?? {};
+							simState.balances = (ev.balances as BalanceSnapshot[]) ?? [];
+							simState.routeUsage = (ev.route_usage_summary as Record<string, number>) ?? {};
+							simState.floatSummary = (ev.float_summary as Record<string, number>) ?? {};
+							simState.treasuryDistribution = (ev.treasury_distribution as Record<string, Record<string, number>>) ?? {};
+							simState.railPnlHistory = (ev.rail_pnl_history as Record<string, number[]>) ?? {};
 
 							// Add transaction edges to graph
-							const txEdges = simState.purchases.slice(0, 20).map((p: any) => ({
-								source: p.agent,
-								target: `merchant_${(p.protocol as string)}`,
-								label: `${p.protocol} ${fmt(p.amount_cents)}`,
-							}));
-							const merchantNodes = simState.config.protocols.map(p => ({
-								id: `merchant_${p}`, name: `${p.toUpperCase()} Merchant`, type: 'Merchant',
+							const txEdges = simState.purchases
+								.slice(0, 20)
+								.flatMap((purchase) => {
+									const p = purchase as PurchaseLike;
+									if (
+										typeof p.agent !== 'string' ||
+										typeof p.protocol !== 'string' ||
+										typeof p.amount_cents !== 'number'
+									) {
+										return [];
+									}
+									const target =
+										typeof p.merchant === 'string'
+											? p.merchant
+											: `merchant_${p.protocol}`;
+									return [{
+										source: p.agent,
+										target,
+										label: `${p.protocol} ${fmt(p.amount_cents)}`,
+									}];
+								});
+							const merchantNodes = Array.from(
+								new Set(
+									simState.purchases
+										.map((p) => p.merchant)
+										.filter((merchant): merchant is string => Boolean(merchant))
+								)
+							).map((merchant) => ({
+								id: merchant,
+								name: merchant,
+								type: 'Merchant',
 							}));
 							simState.graphNodes = [...simState.graphNodes, ...merchantNodes];
 							simState.graphEdges = [...simState.graphEdges, ...txEdges];
@@ -229,7 +352,22 @@
 		simState.reportSections = [
 			{
 				title: 'Executive Summary',
-				content: `Simulation completed with ${simState.totalTxns} transactions across 5 protocols. Total volume: ${fmt(simState.totalVolume)}. Duration: ${simState.elapsed}.`,
+				content: `Simulation completed with ${simState.totalTxns} transactions across ${simState.metrics.length} live protocols. Total volume: ${fmt(simState.totalVolume)}. Duration: ${simState.elapsed}.`,
+				status: 'complete',
+			},
+			{
+				title: 'Ecosystem Dynamics',
+				content: Object.entries(simState.ecosystem).map(([protocol, state]) =>
+					`${protocol.toUpperCase()}: ${state.merchant_count} merchants, network effect ${state.network_effect.toFixed(2)}, congestion ${state.congestion.toFixed(2)}, operator margin ${fmt(state.operator_margin_cents)}`
+				).join('\n'),
+				status: 'complete',
+			},
+			{
+				title: 'Stablecoin Float',
+				content: Object.entries(simState.floatSummary)
+					.sort(([, a], [, b]) => b - a)
+					.map(([domain, amount]) => `${domain}: ${fmt(amount)}`)
+					.join('\n'),
 				status: 'complete',
 			},
 			...m.map(p => ({
@@ -240,6 +378,22 @@
 			{
 				title: 'Comparative Analysis',
 				content: `Fastest protocol: ${m[0]?.protocol.toUpperCase()} at ${ms(m[0]?.avg_settlement_ms || 0)}. Cheapest: ${m.sort((a, b) => (a.total_volume_cents > 0 ? a.total_fees_cents / a.total_volume_cents : 99) - (b.total_volume_cents > 0 ? b.total_fees_cents / b.total_volume_cents : 99))[0]?.protocol.toUpperCase()}.`,
+				status: 'complete',
+			},
+			{
+				title: 'Rail P&L',
+				content: Object.entries(simState.ecosystem)
+					.sort(([, a], [, b]) => b.operator_margin_cents - a.operator_margin_cents)
+					.map(([protocol, state]) => `${protocol.toUpperCase()}: margin ${fmt(state.operator_margin_cents)}`)
+					.join('\n'),
+				status: 'complete',
+			},
+			{
+				title: 'Route Usage',
+				content: Object.entries(simState.routeUsage)
+					.sort(([, a], [, b]) => b - a)
+					.map(([route, count]) => `${route}: ${count}`)
+					.join('\n'),
 				status: 'complete',
 			},
 		];
@@ -261,13 +415,9 @@
 
 		<!-- View mode switcher (MiroFish pattern) -->
 		<div role="group" aria-label="View mode selector" style="display:flex; gap:2px; background:var(--bg-2); padding:3px; border-radius:6px;">
-			{#each [
-				{ key: 'graph', label: 'Graph' },
-				{ key: 'split', label: 'Split' },
-				{ key: 'workbench', label: 'Workbench' },
-			] as mode}
+			{#each viewModes as mode}
 				<button
-					onclick={() => viewMode = mode.key as any}
+					onclick={() => viewMode = mode.key}
 					aria-pressed={viewMode === mode.key}
 					style="
 						font-size:11px; font-weight:600; padding:8px 16px; border:none;
@@ -445,6 +595,27 @@
 									{/each}
 								</div>
 
+								<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Stablecoin Float</div>
+										{#each Object.entries(simState.floatSummary).sort(([, a], [, b]) => b - a).slice(0, 5) as [domain, amount]}
+											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
+												<span>{domain}</span>
+												<span>{fmt(amount)}</span>
+											</div>
+										{/each}
+									</div>
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Top Routes</div>
+										{#each Object.entries(simState.routeUsage).sort(([, a], [, b]) => b - a).slice(0, 5) as [route, count]}
+											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
+												<span>{route}</span>
+												<span>{count}</span>
+											</div>
+										{/each}
+									</div>
+								</div>
+
 								<button onclick={generateReport} style="
 									padding:10px 24px; border:none; border-radius:4px;
 									background:var(--acp); color:#fff; font-weight:600; font-size:13px;
@@ -497,9 +668,49 @@
 
 							{#if simState.metrics.length > 0}
 								<div style="margin-bottom:12px;">
-									<MarketCharts metrics={simState.metrics} />
+									<MarketCharts
+										metrics={simState.metrics}
+										ecosystem={simState.ecosystem}
+										routeUsage={simState.routeUsage}
+										floatSummary={simState.floatSummary}
+										railPnlHistory={simState.railPnlHistory}
+									/>
 								</div>
 							{/if}
+
+							<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+								<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:12px; max-height:220px; overflow:auto;">
+									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Treasury Distribution</div>
+									{#each topEntries(simState.treasuryDistribution, 6) as [merchantId, dist]}
+										<div style="padding:6px 0; border-bottom:1px solid var(--bg-3);">
+											<div style="font-family:var(--mono); font-size:11px; margin-bottom:4px;">{merchantId}</div>
+											{#each Object.entries(dist) as [domain, amount]}
+												<div style="display:flex; justify-content:space-between; font-family:var(--mono); font-size:10px; color:var(--tx-2);">
+													<span>{domain}</span>
+													<span>{fmt(amount)}</span>
+												</div>
+											{/each}
+										</div>
+									{/each}
+								</div>
+								<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:12px; max-height:220px; overflow:auto;">
+									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Balance Snapshots</div>
+									{#each simState.balances.slice(0, 10) as bucket}
+										<div style="padding:6px 0; border-bottom:1px solid var(--bg-3); font-family:var(--mono); font-size:10px;">
+											<div>{bucket.owner_kind}:{bucket.owner_id}</div>
+											<div style="color:var(--tx-2);">{bucket.domain}</div>
+											<div style="display:flex; justify-content:space-between;">
+												<span>avail</span>
+												<span>{fmt(bucket.available_cents)}</span>
+											</div>
+											<div style="display:flex; justify-content:space-between; color:var(--tx-3);">
+												<span>reserved/pending</span>
+												<span>{fmt(bucket.reserved_cents + bucket.pending_in_cents + bucket.pending_out_cents)}</span>
+											</div>
+										</div>
+									{/each}
+								</div>
+							</div>
 
 							<div style="flex:1; min-height:0;">
 								<ChatPanel

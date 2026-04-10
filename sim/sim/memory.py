@@ -64,6 +64,29 @@ class MemoryUpdater:
         if len(self.buffer) >= self.BATCH_SIZE:
             await self.flush()
 
+    async def record_market_snapshot(
+        self,
+        protocol: str,
+        round_num: int,
+        merchant_count: int,
+        volume_cents: int,
+        margin_cents: int,
+        reliability: float,
+        congestion: float,
+    ):
+        self.buffer.append({
+            "kind": "market",
+            "protocol": protocol,
+            "round_num": round_num,
+            "merchant_count": merchant_count,
+            "volume_cents": volume_cents,
+            "margin_cents": margin_cents,
+            "reliability": reliability,
+            "congestion": congestion,
+        })
+        if len(self.buffer) >= self.BATCH_SIZE:
+            await self.flush()
+
     async def flush(self):
         """Flush all buffered events to the graph as episodes."""
         if not self.buffer:
@@ -78,6 +101,8 @@ class MemoryUpdater:
                     await self.graph.record_transaction(event)
                 elif event["kind"] == "failure":
                     await self.graph.record_transaction(event)
+                elif event["kind"] == "market":
+                    await self.graph.record_market_snapshot(event)
             except Exception as exc:
                 logger.warning(
                     "Memory flush failed for %s/%s: %s",

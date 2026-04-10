@@ -12,11 +12,29 @@ sim/sim/__pycache__/
 web/node_modules/
 web/.svelte-kit/
 web/build/
+services/**/node_modules/
+services/**/dist/
 
 # OS
 .DS_Store
 *.swp
 
+# Local env
+.env
+.env.*
+!.env.example
+services/atxp/.extract-client-creds.mjs
+services/atxp/.recover-test.mjs
+services/atxp/.withdraw-oneoff.mjs
+
 # Data
 *.db
 *.sqlite
+sim/test_kuzu_db
+services/**/.logs/
+services/**/.venv/
+
+# Local agent notes
+findings.md
+progress.md
+task_plan.md

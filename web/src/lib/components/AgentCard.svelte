@@ -1,24 +1,21 @@
-<script>
+<script lang="ts">
   import ProtocolBadge from './ProtocolBadge.svelte';
-  import { AVATAR_COLORS, getAvatarColor } from '$lib/constants';
+  import { getAvatarColor } from '$lib/constants';
 
-  /**
-   * @type {{
-   *   agent: {
-   *     agent_id: string,
-   *     name: string,
-   *     budget: number,
-   *     spent: number,
-   *     price_sensitivity: number,
-   *     brand_loyalty: number,
-   *     risk_tolerance: number,
-   *     preferred_categories: string[],
-   *     protocol_preference?: string,
-   *     state: string,
-   *   }
-   * }}
-   */
-  let { agent } = $props();
+  interface AgentCardAgent {
+    agent_id: string;
+    name: string;
+    budget: number;
+    spent: number;
+    price_sensitivity: number;
+    brand_loyalty: number;
+    risk_tolerance: number;
+    preferred_categories: string[];
+    protocol_preference?: string | null;
+    state: string;
+  }
+
+  let { agent }: { agent: AgentCardAgent } = $props();
 
   let color = $derived(getAvatarColor(agent?.name ?? ''));
 
@@ -26,12 +23,12 @@
   let spentPct = $derived(agent?.budget > 0 ? Math.min((agent.spent / agent.budget) * 100, 100) : 0);
 
   let budgetLabel = $derived(() => {
-    const fmt = (v) =>
+    const fmt = (v: number) =>
       (v / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     return `${fmt(agent?.spent ?? 0)} / ${fmt(agent?.budget ?? 0)}`;
   });
 
-  const paramDefs = [
+  const paramDefs: Array<{ key: keyof Pick<AgentCardAgent, 'price_sensitivity' | 'brand_loyalty' | 'risk_tolerance'>; label: string }> = [
     { key: 'price_sensitivity', label: 'Price Sens.' },
     { key: 'brand_loyalty', label: 'Brand Loyalty' },
     { key: 'risk_tolerance', label: 'Risk Tol.' },
@@ -41,7 +38,7 @@
 <div class="agent-card">
   <!-- Header -->
   <div class="card-header">
-    <div class="avatar" style:background={color()}>
+    <div class="avatar" style:background={color}>
       {letter}
     </div>
     <div class="header-text">
@@ -57,7 +54,7 @@
   <div class="budget-section">
     <div class="budget-label-row">
       <span class="budget-label">BUDGET</span>
-      <span class="budget-value">{budgetLabel()}</span>
+      <span class="budget-value">{budgetLabel}</span>
     </div>
     <div class="budget-track">
       <div

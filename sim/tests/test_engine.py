@@ -1,5 +1,6 @@
 """Integration tests -- requires the Rust engine running on :4080."""
 import asyncio
+import uuid
 import pytest
 
 from sim.commerce import CommerceClient
@@ -22,6 +23,24 @@ async def _engine_available(client: CommerceClient) -> bool:
         return False
 
 
+async def _supported_protocols(client: CommerceClient) -> list[str]:
+    caps = await client.get_capabilities()
+    return caps.get("supported_protocols", [])
+
+
+async def _wait_for_engine(client: CommerceClient, timeout_s: float = 45.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        if await _engine_available(client):
+            return True
+        await asyncio.sleep(1)
+    return False
+
+
+def _unique_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
 def _skip_if_offline(healthy: bool):
     if not healthy:
         pytest.skip("Engine not running")
@@ -34,10 +53,9 @@ def _skip_if_offline(healthy: bool):
 @pytest.mark.asyncio
 async def test_engine_health(client: CommerceClient):
     """Verify engine responds at /health."""
-    healthy = await _engine_available(client)
+    healthy = await _wait_for_engine(client)
     _skip_if_offline(healthy)
     assert healthy is True
-    await client.close()
 
 
 # ------------------------------------------------------------------
@@ -47,7 +65,7 @@ async def test_engine_health(client: CommerceClient):
 @pytest.mark.asyncio
 async def test_products_endpoint(client: CommerceClient):
     """Verify /products returns 6 products with correct schema."""
-    healthy = await _engine_available(client)
+    healthy = await _wait_for_engine(client)
     _skip_if_offline(healthy)
 
     products = await client.get_products()
@@ -61,106 +79,206 @@ async def test_products_endpoint(client: CommerceClient):
         assert isinstance(product["base_price"], int)
         assert product["base_price"] > 0
 
-    await client.close()
-
-
 # ------------------------------------------------------------------
-# c. Checkout flow
+# c. Live x402 checkout + metrics
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_checkout_flow(client: CommerceClient):
-    """Create session, update with address, complete with ACP protocol.
+async def test_live_x402_checkout_and_metrics(client: CommerceClient):
+    """Run a full live x402 checkout and verify settlement side effects.
 
-    Verify session status transitions through the checkout lifecycle.
+    This is the strongest engine-facing test:
+    - waits for engine readiness
+    - uses a unique agent so wallet creation/funding is isolated
+    - checks checkout completion
+    - checks payment_result message
+    - checks metrics increment
+    - checks transaction persistence
     """
-    healthy = await _engine_available(client)
+    healthy = await _wait_for_engine(client)
     _skip_if_offline(healthy)
 
-    products = await client.get_products()
-    product = products[0]
+    supported = await _supported_protocols(client)
+    if "x402" not in supported:
+        pytest.skip(f"x402 not supported by engine: {supported}")
 
-    # 1. Create checkout session
+    metrics_before = await client.get_metrics()
+    before_x402 = next(
+        (p for p in metrics_before.get("protocols", []) if p.get("protocol") == "x402"),
+        {"total_transactions": 0, "successful_transactions": 0},
+    )
+
+    products = await client.get_products()
+    product = next(
+        p for p in products
+        if p.get("id") == "prod_data_report"
+        or (not p.get("requires_shipping", True) and p.get("base_price", 0) <= 500)
+    )
+
+    agent_id = _unique_id("live_x402_agent")
+    merchant_id = _unique_id("live_x402_merchant")
     checkout = await client.create_checkout(
         items=[{"id": product["id"], "quantity": 1}],
-        protocol="acp",
-        agent_id="test_agent_checkout",
+        protocol="x402",
+        agent_id=agent_id,
     )
     assert "id" in checkout, f"Checkout creation failed: {checkout}"
-    session_id = checkout["id"]
-    assert checkout.get("status") in ("open", "pending", None) or "status" in checkout
 
-    # 2. Update with shipping address
-    update_result = await client.update_checkout(
-        session_id=session_id,
-        fulfillment_address={
-            "name": "Test Agent",
-            "line_one": "100 Market St",
-            "city": "San Francisco",
-            "state": "CA",
-            "country": "US",
-            "postal_code": "94105",
-        },
-        selected_fulfillment_option_id="ship_standard",
-    )
-    assert "id" in update_result
-
-    # 3. Complete checkout
     result = await client.complete_checkout(
-        session_id=session_id,
-        payment_token="token_acp_test_checkout",
-        protocol="acp",
+        session_id=checkout["id"],
+        payment_token=f"token_x402_{agent_id}",
+        protocol="x402",
+        merchant=merchant_id,
     )
-    assert result.get("status") == "completed", (
-        f"Checkout did not complete: {result}"
+    assert result.get("status") == "completed", f"x402 checkout failed: {result}"
+
+    payment_messages = [m for m in result.get("messages", []) if m.get("type") == "payment_result"]
+    assert payment_messages, f"Missing payment_result message: {result}"
+    assert any('"status":"settled"' in m.get("content", "") for m in payment_messages), (
+        f"Payment message did not report settlement: {payment_messages}"
     )
 
-    # Verify totals exist
-    totals = result.get("totals", [])
-    assert len(totals) > 0, "No totals in completed checkout"
+    metrics_after = await client.get_metrics()
+    after_x402 = next(
+        (p for p in metrics_after.get("protocols", []) if p.get("protocol") == "x402"),
+        None,
+    )
+    assert after_x402 is not None, f"Missing x402 metrics after checkout: {metrics_after}"
+    assert after_x402["total_transactions"] >= before_x402.get("total_transactions", 0) + 1
+    assert after_x402["successful_transactions"] >= before_x402.get("successful_transactions", 0) + 1
 
-    await client.close()
+    transactions = await client.get_transactions()
+    assert any(tx.get("session_id") == checkout["id"] for tx in transactions), (
+        f"Missing persisted transaction for session {checkout['id']}"
+    )
 
 
 # ------------------------------------------------------------------
-# d. All protocols
+# d. Live ATXP direct payment
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_live_atxp_direct_payment(client: CommerceClient):
+    """Run a real low-value ATXP payment through the engine direct-payment path."""
+    healthy = await _wait_for_engine(client)
+    _skip_if_offline(healthy)
+
+    supported = await _supported_protocols(client)
+    if "atxp" not in supported:
+        pytest.skip(f"atxp not supported by engine: {supported}")
+
+    record = await client.execute_payment(
+        actor_id=_unique_id("atxp_exec"),
+        protocol="atxp",
+        amount_cents=1,
+        merchant=_unique_id("atxp_merchant"),
+        round_num=0,
+        workload_type="atxp_direct_probe",
+    )
+    assert record.success, f"ATXP direct payment failed: {record.error}"
+    assert record.protocol == "atxp"
+    assert record.amount == 1
+    assert record.fee >= 1
+
+
+# ------------------------------------------------------------------
+# e. Live AP2 direct payment
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_live_ap2_direct_payment(client: CommerceClient):
+    """Run a real AP2 mandate/receipt flow through the engine direct-payment path."""
+    healthy = await _wait_for_engine(client)
+    _skip_if_offline(healthy)
+
+    supported = await _supported_protocols(client)
+    if "ap2" not in supported:
+        pytest.skip(f"ap2 not supported by engine: {supported}")
+
+    record = await client.execute_payment(
+        actor_id=_unique_id("ap2_exec"),
+        protocol="ap2",
+        amount_cents=125,
+        merchant=_unique_id("ap2_merchant"),
+        round_num=0,
+        workload_type="ap2_direct_probe",
+    )
+    assert record.success, f"AP2 direct payment failed: {record.error}"
+    assert record.protocol == "ap2"
+    assert record.amount == 125
+    assert record.fee >= 20
+
+
+# ------------------------------------------------------------------
+# f. Live MPP direct payment
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_live_mpp_direct_payment(client: CommerceClient):
+    """Run a real MPP payment through the engine direct-payment path."""
+    healthy = await _wait_for_engine(client)
+    _skip_if_offline(healthy)
+
+    supported = await _supported_protocols(client)
+    if "mpp" not in supported:
+        pytest.skip(f"mpp not supported by engine: {supported}")
+
+    record = await client.execute_payment(
+        actor_id=_unique_id("mpp_exec"),
+        protocol="mpp",
+        amount_cents=1,
+        merchant=_unique_id("mpp_merchant"),
+        round_num=0,
+        workload_type="mpp_direct_probe",
+    )
+    assert record.success, f"MPP direct payment failed: {record.error}"
+    assert record.protocol == "mpp"
+    assert record.amount == 1
+    assert record.fee >= 1
+
+
+# ------------------------------------------------------------------
+# g. All protocols
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_all_protocols(client: CommerceClient):
-    """Complete one checkout through each of the 5 protocols. Verify all succeed."""
-    healthy = await _engine_available(client)
+    """Complete one checkout through each supported engine protocol."""
+    healthy = await _wait_for_engine(client)
     _skip_if_offline(healthy)
 
     products = await client.get_products()
     # Use a digital product (no shipping required) so checkout completes without address
     product = next(p for p in products if not p.get("requires_shipping", True))
 
-    for protocol in ALL_PROTOCOLS:
+    supported = await _supported_protocols(client)
+    assert supported, "Engine reported no supported protocols"
+
+    for protocol_name in supported:
         record = await client.full_purchase(
-            agent_id=f"test_agent_{protocol.value}",
+            agent_id=_unique_id(f"test_agent_{protocol_name}"),
             product_id=product["id"],
             quantity=1,
-            protocol=protocol.value,
+            protocol=protocol_name,
             round_num=0,
             product_name=product.get("name", ""),
             needs_shipping=False,
+            merchant_id=_unique_id(f"merchant_{protocol_name}"),
+            merchant_name=f"{protocol_name}_merchant",
         )
         assert record.success, (
-            f"[{protocol.value}] Checkout failed: {record.error}"
+            f"[{protocol_name}] Checkout failed: {record.error}"
         )
-
-    await client.close()
 
 
 # ------------------------------------------------------------------
-# e. Metrics after transactions
+# h. Metrics after transactions
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_metrics_after_transactions(client: CommerceClient):
-    """Run 5 transactions (one per protocol), verify /metrics shows correct counts."""
-    healthy = await _engine_available(client)
+    """Run one transaction per supported protocol, verify /metrics shows correct counts."""
+    healthy = await _wait_for_engine(client)
     _skip_if_offline(healthy)
 
     # Snapshot metrics before
@@ -174,18 +292,23 @@ async def test_metrics_after_transactions(client: CommerceClient):
     product = next(p for p in products if not p.get("requires_shipping", True))
 
     # Run one transaction per protocol
-    for protocol in ALL_PROTOCOLS:
+    supported = await _supported_protocols(client)
+    assert supported, "Engine reported no supported protocols"
+
+    for protocol_name in supported:
         record = await client.full_purchase(
-            agent_id=f"metrics_agent_{protocol.value}",
+            agent_id=_unique_id(f"metrics_agent_{protocol_name}"),
             product_id=product["id"],
             quantity=1,
-            protocol=protocol.value,
+            protocol=protocol_name,
             round_num=1,
             product_name=product.get("name", ""),
             needs_shipping=False,
+            merchant_id=_unique_id(f"metrics_merchant_{protocol_name}"),
+            merchant_name=f"metrics_{protocol_name}_merchant",
         )
         assert record.success, (
-            f"[{protocol.value}] Transaction failed: {record.error}"
+            f"[{protocol_name}] Transaction failed: {record.error}"
         )
 
     # Snapshot metrics after
@@ -195,67 +318,48 @@ async def test_metrics_after_transactions(client: CommerceClient):
         after_counts[p["protocol"]] = p.get("total_transactions", 0)
 
     # Each protocol should have at least 1 more transaction
-    for protocol in ALL_PROTOCOLS:
-        name = protocol.value
+    for name in supported:
         before = before_counts.get(name, 0)
         after = after_counts.get(name, 0)
         assert after >= before + 1, (
             f"[{name}] Expected at least {before + 1} transactions, got {after}"
         )
-
-    await client.close()
-
-
 # ------------------------------------------------------------------
-# f. Flat distribution (round-robin)
+# i. Ecosystem outputs
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_flat_distribution():
-    """Run a 10-agent 3-round sim, verify each protocol gets roughly equal transactions."""
+async def test_ecosystem_outputs():
+    """Run a small sim and verify ecosystem summaries are populated."""
     client = CommerceClient(ENGINE_URL)
-    healthy = await _engine_available(client)
+    healthy = await _wait_for_engine(client)
     await client.close()
     _skip_if_offline(healthy)
 
     config = SimulationConfig(
-        num_agents=20,
-        num_rounds=5,
-        protocols=list(Protocol),
+        num_agents=12,
+        num_rounds=3,
+        protocols=[Protocol.X402],
         engine_url=ENGINE_URL,
         seed=42,
-        agent_budget_range=(50000, 100000),  # high budgets so agents always buy
+        agent_budget_range=(20000, 90000),
     )
     engine = SimulationEngine(config)
     result = await engine.run()
 
-    # Collect per-protocol transaction counts
-    proto_counts: dict[str, int] = {}
-    for rd in result.rounds:
-        for tx in rd.transactions:
-            if tx.success:
-                proto_counts[tx.protocol] = proto_counts.get(tx.protocol, 0) + 1
+    assert result.ecosystem_summary, "Missing ecosystem summary"
+    assert result.route_usage_summary is not None
+    assert result.float_summary, "Missing float summary"
+    assert result.treasury_distribution is not None
+    assert result.rail_pnl_history, "Missing rail PnL history"
 
-    total_success = sum(proto_counts.values())
-    if total_success == 0:
-        pytest.skip("No successful transactions to evaluate distribution")
-
-    num_protocols = len(ALL_PROTOCOLS)
-    expected_per_proto = total_success / num_protocols
-
-    # Each protocol should get at least some share -- allow generous tolerance
-    # (at least 1 transaction per protocol if there are enough total)
-    if total_success >= num_protocols:
-        for protocol in ALL_PROTOCOLS:
-            count = proto_counts.get(protocol.value, 0)
-            assert count >= 1, (
-                f"[{protocol.value}] got 0 transactions out of {total_success} -- "
-                f"round-robin distribution broken. Counts: {proto_counts}"
-            )
+    for protocol in config.protocols:
+        assert protocol.value in result.ecosystem_summary
+        assert protocol.value in result.rail_pnl_history
 
 
 # ------------------------------------------------------------------
-# g. Agent generation diversity
+# j. Agent generation diversity
 # ------------------------------------------------------------------
 
 def test_agent_generation():
@@ -295,7 +399,7 @@ def test_agent_generation():
 
 
 # ------------------------------------------------------------------
-# h. Scenarios validation
+# k. Scenarios validation
 # ------------------------------------------------------------------
 
 def test_scenarios():
@@ -340,7 +444,7 @@ def test_scenarios():
 
 
 # ------------------------------------------------------------------
-# i. Report generation
+# l. Report generation
 # ------------------------------------------------------------------
 
 @pytest.mark.asyncio

@@ -1,9 +1,11 @@
 # Meridian
 
 Agentic commerce simulation platform. Runs thousands of AI agents through
-realistic commerce scenarios across competing payment protocols while using
-strict live integrations only. Meridian now requires all five protocol rails
-to be present at boot and fails closed if any protocol is missing.
+realistic commerce scenarios across payment protocols while using direct live
+integrations only. Meridian models a USDC-centric stablecoin economy with
+fragmented balance buckets, route-level settlement behavior, merchant treasury
+preferences, and rail P&L. Today, the engine only registers rails with real
+direct implementations and exposes the rest with explicit capability reasons.
 
 ## Protocols Compared
 
@@ -20,75 +22,107 @@ to be present at boot and fails closed if any protocol is missing.
 ```
 SvelteKit (:5173) → Rust Engine (:4080) ← Python Simulation
    frontend            commerce            agent orchestration
-   dark theme           5 live protocols    50-1000 agents
+   dark theme           capability-driven   50-1000 agents
    D3 graphs            axum + serde        rule-based decisions
    live streaming        SQLite              async concurrent
 ```
 
-## Strict Live Mode
+## Direct Integration Mode
 
-Meridian no longer boots in a partial or simulated protocol state.
+Meridian no longer boots against placeholder adapter URLs.
 
-- All five protocols are mandatory: `acp`, `ap2`, `atxp`, `mpp`, `x402`
 - `x402` runs natively inside the engine
-- `acp`, `ap2`, `atxp`, and `mpp` must be provided as real external adapter
-  services
+- other rails should only be added when they have a real direct integration path
 - Creating a checkout session requires an explicit `protocol`
-- If any adapter is missing or fails capability checks, engine startup fails
+- the simulator discovers the actually supported rails from the engine
+
+### Direct Service Work In Progress
+
+Meridian now contains direct service landing zones for real protocol-owned
+paths instead of the old fake localhost adapter contract:
+
+- `services/cdp/` — Coinbase Server Wallet v2 path for x402 buyer and merchant wallets
+- `services/atxp/` — official `@atxp/*` SDK path
+- `services/stripe/` — official Stripe + `mppx` path
+- `services/ap2/` — Meridian-owned AP2 service built on official AP2 types
+
+These are Meridian-owned integration surfaces and are the intended path
+forward for adding rails back honestly.
+
+## Stablecoin Economy Model
+
+Meridian is now agent-driven and economy-first:
+
+- agents choose workloads before rails
+- buyers hold fragmented stablecoin balances
+- merchants have preferred settlement domains and treasury rebalance logic
+- route classes apply cost, latency, capacity, and failure pressure
+- named rails wrap a smaller set of settlement primitives
+
+### V1 Balance Domains
+
+- `base_usdc`
+- `solana_usdc`
+- `tempo_usd`
+- `stripe_internal_usd`
+- `gateway_unified_usdc`
+
+### V1 Workload Mix
+
+- `api_micro`
+- `consumer_checkout`
+- `treasury_rebalance`
+
+### V1 Settlement Primitives
+
+- `direct_same_domain`
+- `batched_nanopayment`
+- `tempo_session`
+- `stripe_internal_checkout`
+- `gateway_unified`
+- `cctp_transfer`
+- `lifi_routed`
 
 ### Required Environment Variables
 
 ```bash
-export WALLET_MASTER_SEED=...
 export MERIDIAN_PUBLIC_BASE_URL=http://localhost:4080
+export CDP_SERVICE_URL=http://localhost:3030
 
 export X402_RPC_URL=...
-export X402_MASTER_SEED=...
-export X402_PAY_TO=0x...
-
-export STRIPE_SECRET_KEY=...
-export AP2_RPC_URL=...
-export AP2_MASTER_SEED=...
-export ATXP_COORDINATOR_URL=...
-
-export ACP_ADAPTER_URL=http://localhost:9001
-export MPP_ADAPTER_URL=http://localhost:9002
-export AP2_ADAPTER_URL=http://localhost:9003
-export ATXP_ADAPTER_URL=http://localhost:9004
+export CDP_API_KEY_ID=...
+export CDP_API_KEY_SECRET=...
+export CDP_WALLET_SECRET=...
 ```
 
-### Remote Adapter Contract
-
-Each non-`x402` protocol adapter must expose:
-
-- `GET /capabilities`
-- `POST /authorize`
-- `POST /pay`
-- `POST /settle`
-- `POST /refund`
+`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, and `CDP_WALLET_SECRET` must come from
+Coinbase Server Wallet v2. Embedded Wallet credentials are the wrong product
+for Meridian's backend-owned x402 flow.
 
 ## Quick Start
 
 ```bash
 # Prerequisites: Rust, Node.js 20+, Python 3.11, uv
 
-# 0. Export the required env vars for all five protocols
+# 0. Configure .env with real service credentials
 
-# 1. Build and start the commerce engine
-cd engine && cargo run -- --port 4080
+# 1. Start the full local stack in dependency order
+./run.sh
 
-# 2. In another terminal, start the frontend
-cd web && npm install && npm run dev
+# 2. In another terminal, inspect actual runtime capabilities
+curl http://localhost:4080/capabilities
 
 # 3. In another terminal, run a simulation
-cd sim && uv venv --python 3.11 && uv pip install aiohttp
-.venv/bin/python -m sim.engine
+cd sim && .venv/bin/python -m sim.engine
 ```
 
 Or use the run script:
 ```bash
 ./run.sh
 ```
+
+`run.sh` starts `cdp`, `stripe`, `atxp`, `ap2`, the engine, and the frontend in
+dependency order.
 
 ## Simulation Output
 
@@ -122,7 +156,7 @@ meridian/
 ├── engine/          # Rust commerce engine
 │   ├── src/
 │   │   ├── core/        # types, pricing, errors
-│   │   ├── protocols/   # x402 native + remote ACP/AP2/ATXP/MPP adapters
+│   │   ├── protocols/   # x402 native protocol integrations
 │   │   └── routes/      # HTTP endpoints
 │   └── Cargo.toml
 ├── sim/             # Python simulation layer
@@ -135,6 +169,7 @@ meridian/
 ├── web/             # SvelteKit frontend
 │   ├── src/routes/      # Pages and API endpoints
 │   └── package.json
+├── services/        # Direct provider-owned integration services
 └── CLAUDE.md        # Design context
 ```
 

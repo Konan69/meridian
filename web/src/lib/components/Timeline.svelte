@@ -1,24 +1,27 @@
-<script>
+<script lang="ts">
   import ProtocolBadge from './ProtocolBadge.svelte';
-  import { AVATAR_COLORS, getAvatarColor } from '$lib/constants';
+  import { getAvatarColor } from '$lib/constants';
 
-  /**
-   * @type {{
-   *   events: Array<{
-   *     type: string,
-   *     agent: string,
-   *     product: string,
-   *     protocol: string,
-   *     amount_cents: number,
-   *     fee_cents: number,
-   *     round: number,
-   *     timestamp?: string
-   *   }>
-   * }}
-   */
-  let { events = [] } = $props();
+  interface TimelineEvent {
+    type: string;
+    agent?: string;
+    product?: string;
+    protocol?: string;
+    amount_cents?: number;
+    fee_cents?: number;
+    round?: number;
+    timestamp?: string;
+    merchant?: string;
+    source_domain?: string;
+    target_domain?: string;
+    primitive?: string;
+    route_id?: string;
+    workload_type?: string;
+  }
 
-  let feedEl = $state(null);
+  let { events = [] }: { events: TimelineEvent[] } = $props();
+
+  let feedEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
     const _len = events.length;
@@ -31,7 +34,7 @@
     }
   });
 
-  function formatAmount(cents) {
+  function formatAmount(cents?: number) {
     if (cents == null) return '--';
     return (cents / 100).toLocaleString('en-US', {
       style: 'currency',
@@ -39,12 +42,12 @@
     });
   }
 
-  function formatFee(cents) {
+  function formatFee(cents?: number) {
     if (cents == null || cents === 0) return '';
     return `fee ${formatAmount(cents)}`;
   }
 
-  function formatTime(ts) {
+  function formatTime(ts?: string) {
     if (!ts) return '';
     try {
       const d = new Date(ts);
@@ -61,8 +64,9 @@
     FAILED:    { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444', border: 'rgba(239,68,68,0.3)' },
   };
 
-  function badgeStyle(type) {
-    const s = typeBadgeStyles[type?.toUpperCase()] ?? { bg: 'rgba(255,255,255,0.06)', color: 'var(--tx-2, #aaa)', border: 'var(--bd, #333)' };
+  function badgeStyle(type?: string) {
+    const key = type?.toUpperCase() as keyof typeof typeBadgeStyles | undefined;
+    const s = (key ? typeBadgeStyles[key] : undefined) ?? { bg: 'rgba(255,255,255,0.06)', color: 'var(--tx-2, #aaa)', border: 'var(--bd, #333)' };
     return `background:${s.bg}; color:${s.color}; border:1px solid ${s.border}`;
   }
 </script>
@@ -77,13 +81,13 @@
           <div class="event-card" style="animation-delay: {Math.min(idx * 30, 300)}ms">
         <div class="card-header">
           <div class="agent-info">
-            <div class="avatar" style:background={getAvatarColor(evt.agent)}>
+            <div class="avatar" style:background={getAvatarColor(evt.agent ?? 'agent')}>
               {evt.agent ? evt.agent[0].toUpperCase() : 'A'}
             </div>
             <span class="agent-name">{evt.agent ?? 'Unknown'}</span>
           </div>
           <div class="header-badges">
-            <ProtocolBadge protocol={evt.protocol} />
+            <ProtocolBadge protocol={evt.protocol ?? 'acp'} />
             <span class="type-badge" style={badgeStyle(evt.type)}>
               {evt.type?.toUpperCase() ?? 'EVENT'}
             </span>
@@ -97,6 +101,17 @@
             <span class="fee">{formatFee(evt.fee_cents)}</span>
           {/if}
         </div>
+
+        {#if evt.merchant || evt.source_domain || evt.target_domain || evt.primitive || evt.route_id || evt.workload_type}
+          <div class="card-meta">
+            {#if evt.merchant}<span>merchant: {evt.merchant}</span>{/if}
+            {#if evt.source_domain}<span>from: {evt.source_domain}</span>{/if}
+            {#if evt.target_domain}<span>to: {evt.target_domain}</span>{/if}
+            {#if evt.primitive}<span>mode: {evt.primitive}</span>{/if}
+            {#if evt.route_id}<span>route: {evt.route_id}</span>{/if}
+            {#if evt.workload_type}<span>flow: {evt.workload_type}</span>{/if}
+          </div>
+        {/if}
 
         <div class="card-footer">
           <span class="round-tag">R{evt.round ?? '-'}</span>
@@ -275,6 +290,16 @@
   .fee {
     font-family: var(--mono, monospace);
     font-size: 11px;
+    color: var(--tx-3, #666);
+  }
+
+  .card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 10px;
+    padding: 0 0 8px 34px;
+    font-family: var(--mono, monospace);
+    font-size: 10px;
     color: var(--tx-3, #666);
   }
 

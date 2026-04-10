@@ -1,8 +1,7 @@
-<script>
-  /** @type {{ logs: Array<{ time: string, message: string, level?: string }> }} */
-  let { logs = [] } = $props();
+<script lang="ts">
+  let { logs = [] }: { logs: Array<{ time: string; message: string; level?: string }> } = $props();
 
-  let logContainer = $state(null);
+  let logContainer = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
     // Track logs length to auto-scroll on new entries
@@ -17,7 +16,7 @@
     }
   });
 
-  function levelColor(level) {
+  function levelColor(level?: string) {
     if (!level) return 'var(--tx-2, #aaa)';
     switch (level.toLowerCase()) {
       case 'error': return '#ef4444';

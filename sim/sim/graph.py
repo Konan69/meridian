@@ -170,6 +170,27 @@ class CommerceGraphBuilder:
             group_id=f"round_{rn}",
         )
 
+    async def record_market_snapshot(self, snapshot: dict):
+        protocol = snapshot.get("protocol", "unknown")
+        round_num = snapshot.get("round_num", 0)
+        volume_dollars = snapshot.get("volume_cents", 0) / 100
+        margin_dollars = snapshot.get("margin_cents", 0) / 100
+        reliability = snapshot.get("reliability", 0.0)
+        congestion = snapshot.get("congestion", 0.0)
+        merchant_count = snapshot.get("merchant_count", 0)
+        body = (
+            f"By round {round_num}, protocol {protocol.upper()} had merchant adoption "
+            f"of {merchant_count}, cumulative volume ${volume_dollars:.2f}, "
+            f"operator margin ${margin_dollars:.2f}, reliability {reliability:.2%}, "
+            f"and congestion {congestion:.2f}."
+        )
+        await self._add_episode(
+            name=f"market_{protocol}_{round_num}",
+            body=body,
+            source="protocol_market_dynamics",
+            group_id=f"round_{round_num}",
+        )
+
     # ------------------------------------------------------------------
     # Search / query
     # ------------------------------------------------------------------

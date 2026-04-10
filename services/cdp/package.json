@@ -1,0 +1,25 @@
+{
+  "name": "meridian-cdp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.46.1",
+    "bs58": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.13.0",
+    "oxfmt": "^0.43.0",
+    "oxlint": "^1.58.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

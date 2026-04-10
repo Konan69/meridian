@@ -1,17 +1,14 @@
-pub mod acp;
 pub mod ap2;
 pub mod atxp;
+pub mod catalog;
 pub mod mpp;
-pub mod remote;
 pub mod x402;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-
 use crate::core::error::Result;
-use crate::core::types::{AgentWallet, Cents, ProtocolMetrics, SpendingConstraints};
+use crate::core::types::{ActorWallet, Cents, ProtocolMetrics, SpendingConstraints};
 
 // ---------------------------------------------------------------------------
 // Auth token — returned by authorize(), consumed by pay()
@@ -170,17 +167,6 @@ impl MetricsTracker {
     }
 }
 
-/// Measure execution time of a closure in microseconds
-pub fn timed_us<F, R>(f: F) -> (R, u64)
-where
-    F: FnOnce() -> R,
-{
-    let start = Instant::now();
-    let result = f();
-    let elapsed = start.elapsed().as_micros() as u64;
-    (result, elapsed)
-}
-
 // ---------------------------------------------------------------------------
 // The trait
 // ---------------------------------------------------------------------------
@@ -190,7 +176,7 @@ pub trait ProtocolAdapter: Send + Sync {
     fn name(&self) -> &str;
     async fn authorize(
         &self,
-        wallet: &AgentWallet,
+        wallet: &ActorWallet,
         constraints: &SpendingConstraints,
     ) -> Result<AuthToken>;
     async fn pay(&self, token: &AuthToken, amount: Cents, merchant: &str) -> Result<PaymentResult>;

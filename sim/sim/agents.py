@@ -57,6 +57,9 @@ def generate_agents(
             risk_tolerance=max(0.0, min(1.0, persona["risk_tolerance"] + rng.gauss(0, 0.05))),
             protocol_preference=protocol_pref,
             state_idx=i,  # distribute across US states
+            checkout_patience=max(0.0, min(1.0, 0.5 + rng.gauss(0, 0.2))),
+            social_influence=max(0.0, min(1.0, 0.5 + rng.gauss(0, 0.2))),
+            protocol_trust={p.value: 0.6 for p in Protocol},
         ))
 
     return agents
