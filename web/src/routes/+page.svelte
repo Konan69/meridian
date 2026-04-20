@@ -22,6 +22,9 @@
 		available_quantity: number;
 		requires_shipping: boolean;
 	}
+	interface Capabilities {
+		supported_protocols: string[];
+	}
 
 	const ENGINE = 'http://localhost:4080';
 	const COLORS: Record<string, string> = {
@@ -33,6 +36,7 @@
 	let products = $state<Product[]>([]);
 	let online = $state(false);
 	let loading = $state(true);
+	let liveProtocolCount = $state(0);
 
 	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
@@ -40,15 +44,18 @@
 
 	async function refresh() {
 		try {
-			const [h, m, p] = await Promise.all([
+			const [h, m, p, c] = await Promise.all([
 				fetch(`${ENGINE}/health`),
 				fetch(`${ENGINE}/metrics`),
-				fetch(`${ENGINE}/products`)
+				fetch(`${ENGINE}/products`),
+				fetch(`${ENGINE}/capabilities`)
 			]);
 			online = h.ok;
 			protos = ((await m.json()) as { protocols: Proto[] }).protocols
 				.sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
 			products = await p.json();
+			const caps = await c.json() as Capabilities;
+			liveProtocolCount = Array.isArray(caps.supported_protocols) ? caps.supported_protocols.length : protos.length;
 		} catch { online = false; }
 		loading = false;
 	}
@@ -61,7 +68,7 @@
 	<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:28px;">
 		<div>
 			<h1 style="font-size:22px; font-weight:600; letter-spacing:-0.03em;">Protocol Comparison</h1>
-			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Real-time metrics across 5 agentic commerce protocols</p>
+			<p style="font-size:13px; color:var(--tx-3); margin-top:4px;">Real-time metrics across {liveProtocolCount || protos.length} live agentic commerce protocol{(liveProtocolCount || protos.length) === 1 ? '' : 's'}</p>
 		</div>
 		<div style="display:flex; align-items:center; gap:8px;">
 			<span

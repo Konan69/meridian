@@ -1,7 +1,7 @@
 import { ATXPAccount, type Account } from "@atxp/common";
-import { PolygonServerAccount } from "@atxp/polygon";
 import { BaseSepoliaAccount } from "./baseSepoliaAccount.js";
 import { CdpBaseSepoliaAccount } from "./cdpBaseSepoliaAccount.js";
+import { PolygonAmoyAccount } from "./polygonAmoyAccount.js";
 
 export type PayerMode = "atxp" | "base" | "polygon" | "cdp-base";
 
@@ -53,7 +53,7 @@ export function createPayerAccountFromEnvForActor(actorId?: string): Account {
         requireEnv("ATXP_BASE_PRIVATE_KEY"),
       );
     case "polygon":
-      return new PolygonServerAccount(
+      return new PolygonAmoyAccount(
         requireEnv("ATXP_POLYGON_RPC_URL"),
         requireEnv("ATXP_POLYGON_PRIVATE_KEY"),
         process.env.ATXP_POLYGON_CHAIN_ID

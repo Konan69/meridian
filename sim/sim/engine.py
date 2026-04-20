@@ -96,6 +96,7 @@ class SimulationEngine:
         ]
         if not self.active_protocols:
             raise RuntimeError("No directly integrated protocols are available from the engine")
+        self.config.protocols = list(self.active_protocols)
         self.protocol_state = {
             proto.value: ProtocolEcosystemState(
                 protocol=proto,
@@ -132,7 +133,10 @@ class SimulationEngine:
             },
         )
 
-        if os.environ.get("OPENCODE_API_KEY"):
+        if os.environ.get("MERIDIAN_ENABLE_GRAPH") == "1":
+            api_key = os.environ.get("OPENCODE_GO_API_KEY") or os.environ.get("OPENCODE_API_KEY")
+            if not api_key:
+                raise RuntimeError("MERIDIAN_ENABLE_GRAPH=1 requires OPENCODE_GO_API_KEY or OPENCODE_API_KEY")
             try:
                 self.graph = CommerceGraphBuilder()
                 await self.graph.initialize()
@@ -140,6 +144,40 @@ class SimulationEngine:
                 self._emit("graph_enabled", {"db_path": self.graph.db_path})
             except Exception as exc:
                 raise RuntimeError(f"Knowledge graph init failed: {exc}") from exc
+
+    def _build_protocol_summaries(self) -> dict[str, dict]:
+        summaries: dict[str, dict] = {}
+        transactions = [
+            tx
+            for round_summary in self.result.rounds
+            for tx in round_summary.transactions
+        ]
+
+        for protocol in self.active_protocols:
+            protocol_txs = [tx for tx in transactions if tx.protocol == protocol.value]
+            successful = [tx for tx in protocol_txs if tx.success]
+            failed = [tx for tx in protocol_txs if not tx.success]
+            settlement_values = [tx.settlement_ms for tx in successful]
+            state = self.protocol_state.get(protocol.value)
+
+            summaries[protocol.value] = {
+                "protocol": protocol.value,
+                "total_transactions": len(protocol_txs),
+                "successful_transactions": len(successful),
+                "failed_transactions": len(failed),
+                "total_volume_cents": sum(tx.amount for tx in successful),
+                "total_fees_cents": sum(tx.fee for tx in successful),
+                "avg_settlement_ms": round(
+                    sum(settlement_values) / len(settlement_values), 3
+                )
+                if settlement_values
+                else round(state.observed_settlement_ms, 3) if state else 0.0,
+                "avg_authorization_ms": 0.0,
+                "micropayment_count": sum(1 for tx in successful if tx.amount < 100),
+                "refund_count": 0,
+            }
+
+        return summaries
 
     def _settlement_domains_for_protocols(
         self, protocols: list[Protocol]
@@ -941,10 +979,7 @@ class SimulationEngine:
             self.result.total_volume += summary.total_volume
 
         self.result.duration_seconds = time.time() - start_time
-        metrics = await self.client.get_metrics()
-        self.result.protocol_summaries = {
-            entry["protocol"]: entry for entry in metrics.get("protocols", [])
-        }
+        self.result.protocol_summaries = self._build_protocol_summaries()
         self.result.ecosystem_summary = {
             protocol: ProtocolEcosystemState(**state.__dict__)
             for protocol, state in self.protocol_state.items()

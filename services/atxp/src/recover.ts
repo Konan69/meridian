@@ -91,7 +91,7 @@ async function main() {
   const funding = payerMode === "atxp" ? safeCli(["fund", "--amount", "10"], cliEnv) : null;
 
   const authorizeDestination =
-    payerMode === "atxp" ? payeeAccountId : Array.isArray(payeeSources) && payeeSources.length > 0
+    Array.isArray(payeeSources) && payeeSources.length > 0
       ? payeeSources.find((source: { chain?: string }) => source.chain === "base")?.address ?? payeeSources[0].address
       : null;
 

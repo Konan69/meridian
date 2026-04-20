@@ -2,6 +2,7 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
+import { atxpClient, getPolygonUSDCAddress } from "@atxp/client";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -25,15 +26,18 @@ import {
 } from "@atxp/server";
 import {
   ATXPAccount,
-  AccountIdDestination,
   MemoryOAuthDb,
   OAuthResourceClient,
+  extractNetworkFromAccountId,
+  paymentRequiredError,
   type AccountId,
   type PaymentDestination,
   type Source,
   type AuthorizationServerUrl,
   type PaymentProtocol,
 } from "@atxp/common";
+import { createPublicClient, erc20Abi, formatEther, formatUnits, http } from "viem";
+import { polygonAmoy } from "viem/chains";
 import { z } from "zod";
 import { createPayerAccountFromEnvForActor, getPayerModeFromEnv } from "./payerAccount.js";
 
@@ -44,27 +48,29 @@ type AppBindings = {
   };
 };
 
+type RuntimeMode = "unsupported" | "direct_settle" | "mcp_execute";
+
 function runtimeReadyForPayerMode(payerMode: string): {
-  supportsDirectSettle: boolean;
+  runtimeMode: RuntimeMode;
   reason: string;
 } {
   if (payerMode === "atxp") {
     return {
-      supportsDirectSettle: true,
+      runtimeMode: "direct_settle",
       reason: "ATXP payer mode supports Meridian's direct verify/settle runtime path",
     };
   }
 
-  if (payerMode === "base" || payerMode === "polygon") {
+  if (payerMode === "polygon") {
     return {
-      supportsDirectSettle: false,
-      reason: `${payerMode} payer mode uses raw onchain transaction credentials and is not direct-settle-ready in Meridian`,
+      runtimeMode: "mcp_execute",
+      reason: "Polygon Amoy payer mode uses the official ATXP MCP payment-request flow",
     };
   }
 
   return {
-    supportsDirectSettle: false,
-    reason: "cdp-base is Meridian-owned CDP glue and is not direct-settle-ready in Meridian runtime",
+    runtimeMode: "unsupported",
+    reason: `${payerMode} is not runtime-ready for Meridian`,
   };
 }
 
@@ -87,6 +93,118 @@ function parseAtxpConnectionString(connectionString: string): {
     throw new Error("ATXP connection string must include connection_token and account_id");
   }
   return { token, accountId };
+}
+
+type RuntimeProbeStatus = {
+  checkedAt: number;
+  runtimeReady: boolean;
+  runtimeMode: RuntimeMode;
+  reason: string;
+};
+
+const RUNTIME_PROBE_TTL_MS = 60_000;
+let runtimeProbeCache: RuntimeProbeStatus | null = null;
+
+async function probeRuntimeReadiness(destination: string): Promise<{
+  runtimeReady: boolean;
+  runtimeMode: RuntimeMode;
+  reason: string;
+}> {
+  const payerMode = getPayerModeFromEnv();
+  const payerModeStatus = runtimeReadyForPayerMode(payerMode);
+  if (payerModeStatus.runtimeMode === "unsupported") {
+    return {
+      runtimeReady: false,
+      ...payerModeStatus,
+    };
+  }
+
+  if (payerModeStatus.runtimeMode === "mcp_execute") {
+    const payer = createPayerAccountFromEnvForActor("__meridian_runtime_probe");
+    const sources = await payer.getSources();
+    const source = sources.find((entry) => entry.chain === "polygon_amoy") ?? sources[0];
+    if (!source) {
+      return {
+        runtimeReady: false,
+        runtimeMode: "mcp_execute",
+        reason: "Polygon Amoy payer wallet has no usable source address",
+      };
+    }
+
+    const rpcUrl = ensureEnv("ATXP_POLYGON_RPC_URL");
+    const client = createPublicClient({
+      chain: polygonAmoy,
+      transport: http(rpcUrl),
+    });
+    try {
+      const [polBalance, usdcBalance] = await Promise.all([
+        client.getBalance({ address: source.address as `0x${string}` }),
+        client.readContract({
+          address: getPolygonUSDCAddress(80002) as `0x${string}`,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [source.address as `0x${string}`],
+        }),
+      ]);
+      const hasPol = polBalance > 0n;
+      const hasUsdc = usdcBalance > 0n;
+      if (hasPol && hasUsdc) {
+        return {
+          runtimeReady: true,
+          runtimeMode: "mcp_execute",
+          reason: `Polygon Amoy payer wallet funded with ${formatEther(polBalance)} POL and ${formatUnits(usdcBalance, 6)} USDC`,
+        };
+      }
+      const missing = [
+        hasPol ? null : "POL gas",
+        hasUsdc ? null : "USDC",
+      ].filter(Boolean).join(" and ");
+      return {
+        runtimeReady: false,
+        runtimeMode: "mcp_execute",
+        reason: `Polygon Amoy payer wallet needs ${missing}`,
+      };
+    } catch (error) {
+      return {
+        runtimeReady: false,
+        runtimeMode: "mcp_execute",
+        reason: `Polygon Amoy readiness check failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  try {
+    const payer = createPayerAccountFromEnvForActor("__meridian_runtime_probe");
+    await payer.authorize({
+      protocols: ["atxp"],
+      amount: new BigNumber(0.01),
+      destination,
+      memo: "meridian-runtime-probe",
+    });
+    return {
+      runtimeReady: true,
+      ...payerModeStatus,
+    };
+  } catch (error) {
+    return {
+      runtimeReady: false,
+      runtimeMode: "direct_settle",
+      reason: `ATXP authorize probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+async function getRuntimeProbeStatus(destination: string): Promise<RuntimeProbeStatus> {
+  if (runtimeProbeCache && Date.now() - runtimeProbeCache.checkedAt < RUNTIME_PROBE_TTL_MS) {
+    return runtimeProbeCache;
+  }
+
+  const probe = await probeRuntimeReadiness(destination);
+  runtimeProbeCache = {
+    checkedAt: Date.now(),
+    ...probe,
+  };
+  return runtimeProbeCache;
 }
 
 class MeridianOAuthResourceClient extends OAuthResourceClient {
@@ -120,6 +238,11 @@ function createMcpServer(
   runWithPaymentContext: <T>(fn: () => Promise<T>) => Promise<T> = async <T>(
     fn: () => Promise<T>,
   ) => await fn(),
+  requestPayment: (amountUsd: number) => Promise<void> = async (amountUsd: number) => {
+    await runWithPaymentContext(async () => {
+      await requirePayment({ price: new BigNumber(amountUsd) });
+    });
+  },
 ): McpServer {
   const server = new McpServer(
     {
@@ -160,16 +283,14 @@ function createMcpServer(
           amountUsd,
         }),
       );
-      await runWithPaymentContext(async () => {
-        console.log(
-          "[atxp-tool] inside payment context",
-          JSON.stringify({
-            hasConfig: Boolean(getATXPConfig()),
-            accountId: atxpAccountId(),
-          }),
-        );
-        await requirePayment({ price: BigNumber(amountUsd) });
-      });
+      console.log(
+        "[atxp-tool] inside payment context",
+        JSON.stringify({
+          hasConfig: Boolean(getATXPConfig()),
+          accountId: atxpAccountId(),
+        }),
+      );
+      await requestPayment(amountUsd);
       return {
         content: [
           {
@@ -194,6 +315,44 @@ async function materializeResponse(response: Response): Promise<Response> {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
+  });
+}
+
+async function createPaymentRequirement(
+  config: ReturnType<typeof buildServerConfig>,
+  sourceAccountId: AccountId,
+  amountUsd: number,
+): Promise<string> {
+  const destinationAccountId = await config.destination.getAccountId();
+  const destinationSources = await config.destination.getSources();
+  const sourceNetwork = extractNetworkFromAccountId(sourceAccountId);
+  const destinationSource =
+    destinationSources.find((source) => source.chain === sourceNetwork) ??
+    (sourceNetwork === "polygon_amoy"
+      ? destinationSources.find((source) => source.chain === "polygon")
+      : null) ??
+    (sourceNetwork === "base_sepolia"
+      ? destinationSources.find((source) => source.chain === "base")
+      : null) ??
+    (sourceNetwork === "world_sepolia"
+      ? destinationSources.find((source) => source.chain === "world")
+      : null) ??
+    destinationSources[0];
+  if (!destinationSource) {
+    throw new Error("No destination source available for ATXP payment request");
+  }
+  const options = [{
+    network: sourceNetwork === "polygon_amoy" ? "polygon" : sourceNetwork,
+    currency: config.currency,
+    address: destinationSource.address,
+    amount: new BigNumber(amountUsd),
+  }];
+
+  return await config.paymentServer.createPaymentRequest({
+    options,
+    sourceAccountId,
+    destinationAccountId,
+    payeeName: config.payeeName,
   });
 }
 
@@ -242,6 +401,13 @@ type DirectAtxpRequest = {
   memo?: string;
 };
 
+type ExecuteAtxpRequest = {
+  actorId: string;
+  merchant: string;
+  amountUsd: number;
+  memo?: string;
+};
+
 type AuthorizeAtxpRequest = {
   actorId: string;
   merchant: string;
@@ -254,14 +420,23 @@ async function main() {
   const payeeAccount = new ATXPAccount(atxpConnectionString);
   const { accountId, token } = parseAtxpConnectionString(atxpConnectionString);
   const payeeSources = await payeeAccount.getSources();
+  const payerMode = getPayerModeFromEnv();
   const baseSource =
     payeeSources.find((source: Source) => source.chain === "base") ?? payeeSources[0];
   if (!baseSource) {
     throw new Error("ATXP payee account has no usable sources");
   }
+  const polygonSource =
+    payeeSources.find((source: Source) => source.chain === "polygon") ?? baseSource;
+  const activePayeeSource = payerMode === "polygon" ? polygonSource : baseSource;
+  const activePayeeAccountId =
+    payerMode === "polygon"
+      ? (`polygon:${activePayeeSource.address}` as AccountId)
+      : (`base:${activePayeeSource.address}` as AccountId);
+  const payeeAddress = activePayeeSource.address;
   const destination: PaymentDestination = new StaticDestination(
-    `base:${baseSource.address}` as AccountId,
-    [baseSource],
+    activePayeeAccountId,
+    [activePayeeSource],
   );
   const authServer: AuthorizationServerUrl =
     (process.env.ATXP_SERVER as AuthorizationServerUrl | undefined) ?? "https://auth.atxp.ai";
@@ -304,19 +479,22 @@ async function main() {
     }),
   );
 
-  app.get("/health", (c) =>
-    c.json((() => {
+  app.get("/health", async (c) =>
+    c.json(await (async () => {
       const payerMode = getPayerModeFromEnv();
-      const runtime = runtimeReadyForPayerMode(payerMode);
+      const runtime = await getRuntimeProbeStatus(payeeAddress);
       return {
-      status: "ok",
-      service: "meridian-atxp",
-      authServer,
-      payerMode,
-      supportsDirectSettle: runtime.supportsDirectSettle,
-      runtimeReadyReason: runtime.reason,
-      timestamp: new Date().toISOString(),
-    }; })()),
+        status: "ok",
+        service: "meridian-atxp",
+        authServer,
+        payerMode,
+        runtimeReady: runtime.runtimeReady,
+        runtimeMode: runtime.runtimeMode,
+        supportsDirectSettle: runtime.runtimeMode === "direct_settle" && runtime.runtimeReady,
+        runtimeReadyReason: runtime.reason,
+        timestamp: new Date().toISOString(),
+      };
+    })()),
   );
 
   app.post("/atxp/authorize", async (c) => {
@@ -327,8 +505,7 @@ async function main() {
       }
 
       const payerMode = getPayerModeFromEnv();
-      const authorizeDestination =
-        payerMode === "atxp" ? accountId : baseSource.address;
+      const authorizeDestination = payeeAddress;
       const payerAccount = createPayerAccountFromEnvForActor(body.actorId);
       const authorizeResult = await payerAccount.authorize({
         protocols: ["atxp"],
@@ -345,7 +522,7 @@ async function main() {
         merchant: body.merchant,
         amountUsd: body.amountUsd,
         destination: authorizeDestination,
-        sharedAccount: payerMode !== "cdp-base",
+        sharedAccount: payerMode === "atxp",
       });
     } catch (error) {
       return c.json(
@@ -389,6 +566,192 @@ async function main() {
         amountUsd: body.amountUsd,
         txHash: settled.txHash,
         settledAmount: settled.settledAmount,
+      });
+    } catch (error) {
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        500,
+      );
+    }
+  });
+
+  app.post("/atxp/execute", async (c) => {
+    try {
+      const body = (await c.req.json()) as Partial<ExecuteAtxpRequest>;
+      if (!body.actorId || !body.merchant || typeof body.amountUsd !== "number") {
+        return c.json({ error: "actorId, merchant, and amountUsd are required" }, 400);
+      }
+
+      const payerMode = getPayerModeFromEnv();
+      if (payerMode === "polygon") {
+        const authorizationServer = await (config.oAuthClient as unknown as {
+          authorizationServerFromUrl: (url: URL) => Promise<Record<string, unknown>>;
+          getClientCredentials: (authorizationServer: Record<string, unknown>) => Promise<unknown>;
+        }).authorizationServerFromUrl(new URL(authServer));
+        await (config.oAuthClient as unknown as {
+          getClientCredentials: (authorizationServer: Record<string, unknown>) => Promise<unknown>;
+        }).getClientCredentials(authorizationServer);
+
+        const account = createPayerAccountFromEnvForActor(body.actorId);
+        const accountId = await account.getAccountId();
+        const payerSources = await account.getSources();
+        const payerAddress = payerSources[0]?.address;
+        const paymentId = await createPaymentRequirement(config, accountId, body.amountUsd);
+        const paymentMaker = account.paymentMakers[0];
+        if (!paymentMaker) {
+          return c.json({ error: "No Polygon payment maker configured" }, 500);
+        }
+
+        const paymentResult = await paymentMaker.makePayment(
+          [
+            {
+              chain: "polygon",
+              currency: "USDC",
+              address: payeeAddress,
+              amount: new BigNumber(body.amountUsd),
+            },
+          ],
+          body.memo ?? `meridian-atxp:${body.actorId}:${body.merchant}`,
+          paymentId,
+        );
+        if (!paymentResult) {
+          return c.json({ error: "Polygon payment maker returned no result" }, 502);
+        }
+
+        const candidateAccountIds = Array.from(
+          new Set(
+            [
+              accountId,
+              payerAddress ?? null,
+              payerAddress ? `polygon:${payerAddress}` : null,
+              payerAddress ? `polygon_amoy:${payerAddress}` : null,
+            ].filter((value): value is string => Boolean(value)),
+          ),
+        );
+
+        let lastSettleError = "ATXP payment completion failed";
+        let settled = false;
+        for (const candidateAccountId of candidateAccountIds) {
+          const jwt = await paymentMaker.generateJWT({
+            paymentRequestId: paymentId,
+            codeChallenge: "",
+            accountId: candidateAccountId as AccountId,
+          });
+          const settlePayload = {
+            transactionId: paymentResult.transactionId,
+            chain: "polygon",
+            currency: paymentResult.currency,
+            accountId: candidateAccountId,
+            account_id: candidateAccountId,
+            sourceAccountId: candidateAccountId,
+            source_account_id: candidateAccountId,
+          };
+          console.log("[atxp-execute] settle payload", JSON.stringify(settlePayload));
+          const settleResponse = await fetch(`${authServer}/payment-request/${paymentId}`, {
+            method: "PUT",
+            headers: {
+              authorization: `Bearer ${jwt}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(settlePayload),
+          });
+          const settleBody = await settleResponse.text();
+          if (settleResponse.ok) {
+            settled = true;
+            break;
+          }
+          lastSettleError = `ATXP: payment to ${authServer}/payment-request/${paymentId} failed: HTTP ${settleResponse.status} ${settleBody}`;
+        }
+
+        if (!settled) {
+          return c.json(
+            {
+              error: lastSettleError,
+            },
+            500,
+          );
+        }
+
+        return c.json({
+          ok: true,
+          protocol: "atxp",
+          payerMode,
+          merchant: body.merchant,
+          amountUsd: body.amountUsd,
+          paymentEvents: [
+            {
+              transactionHash: paymentResult.transactionId,
+              network: paymentResult.chain,
+            },
+          ],
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `ATXP payment confirmed for ${body.merchant}. Amount: ${body.amountUsd.toFixed(2)} USD.${body.memo ? ` Memo: ${body.memo}` : ""}`,
+              },
+            ],
+          },
+        });
+      }
+
+      const paymentEvents: Array<Record<string, unknown>> = [];
+      const paymentFailures: string[] = [];
+      const authFailures: string[] = [];
+      const client = await atxpClient({
+        mcpServer: `http://localhost:${port}/mcp`,
+        account: createPayerAccountFromEnvForActor(body.actorId),
+        approvePayment: async () => true,
+        onPayment: async (data) => {
+          paymentEvents.push(data as Record<string, unknown>);
+        },
+        onPaymentFailure: async (context) => {
+          paymentFailures.push(
+            context.error instanceof Error ? context.error.message : String(context.error),
+          );
+        },
+        onAuthorizeFailure: async ({ error }) => {
+          authFailures.push(error instanceof Error ? error.message : String(error));
+        },
+      });
+
+      const result = await client.callTool({
+        name: "stablecoin_transfer",
+        arguments: {
+          merchant: body.merchant,
+          amountUsd: body.amountUsd,
+          memo: body.memo,
+        },
+      });
+
+      if ("isError" in result && result.isError) {
+        const contentText = Array.isArray(result.content)
+          ? result.content
+              .map((item) => ("text" in item ? String(item.text) : JSON.stringify(item)))
+              .join("\n")
+          : "ATXP MCP execute failed";
+        return c.json(
+          {
+            error: contentText,
+            payerMode,
+            paymentEvents,
+            paymentFailures,
+            authFailures,
+          },
+          502,
+        );
+      }
+
+      return c.json({
+        ok: true,
+        protocol: "atxp",
+        payerMode,
+        merchant: body.merchant,
+        amountUsd: body.amountUsd,
+        paymentEvents,
+        result,
       });
     } catch (error) {
       return c.json(
@@ -484,6 +847,26 @@ async function main() {
         );
       }
 
+      if (
+        c.req.method === "POST" &&
+        typeof parsedBody === "object" &&
+        parsedBody !== null &&
+        "method" in parsedBody &&
+        parsedBody.method === "tools/list"
+      ) {
+        const transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        const server = createMcpServer();
+        await server.connect(transport);
+        return materializeResponse(
+          await transport.handleRequest(c.req.raw, {
+            parsedBody,
+          }),
+        );
+      }
+
       const tokenCheck = await checkTokenWebApi(config, resource, c.req.raw);
       const challenge = sendOAuthChallengeWebApi(tokenCheck);
       if (challenge) {
@@ -506,11 +889,34 @@ async function main() {
         return result as T;
       };
 
+      const sourceAccountId = (
+        (tokenCheck.data as { account_id?: string; sub?: string } | null)?.account_id ??
+        (getPayerModeFromEnv() === "polygon" && tokenCheck.data?.sub
+          ? `polygon:${tokenCheck.data.sub}`
+          : tokenCheck.data?.sub)
+      ) as AccountId | undefined;
+      console.log(
+        "[atxp-route] token data",
+        JSON.stringify({
+          tokenData: tokenCheck.data,
+          sourceAccountId,
+        }),
+      );
+      const requestPayment = async (amountUsd: number): Promise<void> => {
+        if (!sourceAccountId) {
+          throw new Error("No source account id available for ATXP payment request");
+        }
+        await runWithPaymentContext(async () => {
+          const paymentId = await createPaymentRequirement(config, sourceAccountId, amountUsd);
+          throw paymentRequiredError(config.server, paymentId, new BigNumber(amountUsd));
+        });
+      };
+
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
       });
-      const server = createMcpServer(runWithPaymentContext);
+      const server = createMcpServer(runWithPaymentContext, requestPayment);
       await server.connect(transport);
 
       let response: Response | undefined;

@@ -74,20 +74,20 @@ fn default_catalog() -> Vec<Product> {
             image_url: None,
         },
         Product {
-            id: "prod_api_credits".into(),
-            name: "API Credits Pack (1000)".into(),
-            description: "1000 API credits for data access".into(),
-            base_price: 500, // $5.00
+            id: "prod_data_report".into(),
+            name: "Market Analysis Report Q1 2026".into(),
+            description: "Comprehensive market analysis with AI-generated insights".into(),
+            base_price: 50, // $0.50 — micropayment test product
             category: "digital".into(),
             available_quantity: 999999,
             requires_shipping: false,
             image_url: None,
         },
         Product {
-            id: "prod_data_report".into(),
-            name: "Market Analysis Report Q1 2026".into(),
-            description: "Comprehensive market analysis with AI-generated insights".into(),
-            base_price: 50, // $0.50 — micropayment test product
+            id: "prod_api_credits".into(),
+            name: "API Credits Pack (1000)".into(),
+            description: "1000 API credits for data access".into(),
+            base_price: 500, // $5.00
             category: "digital".into(),
             available_quantity: 999999,
             requires_shipping: false,

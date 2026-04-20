@@ -18,13 +18,22 @@
 		integration: string;
 		reason: string;
 	};
+	type ChatStatus = {
+		enabled: boolean;
+		provider: string;
+		model: string;
+		baseURL: string;
+		reason?: string;
+	};
 
 	let chatLoading = $state(false);
 	let supportedProtocols = $state<string[]>([]);
 	let capabilityStatuses = $state<CapabilityStatus[]>([]);
+	let chatStatus = $state<ChatStatus | null>(null);
+	let chatAvailable = $derived(Boolean(chatStatus?.enabled));
 
 	onMount(async () => {
-		await loadCapabilities();
+		await Promise.all([loadCapabilities(), loadChatStatus()]);
 	});
 
 	async function loadCapabilities() {
@@ -42,6 +51,31 @@
 			...simState.config,
 			protocols: supportedProtocols,
 		};
+	}
+
+	async function loadChatStatus() {
+		try {
+			const res = await fetch('/api/chat');
+			if (!res.ok) {
+				chatStatus = {
+					enabled: false,
+					provider: 'opencode-go',
+					model: 'unknown',
+					baseURL: '',
+					reason: `Chat status request failed: ${res.status}`,
+				};
+				return;
+			}
+			chatStatus = await res.json() as ChatStatus;
+		} catch (error) {
+			chatStatus = {
+				enabled: false,
+				provider: 'opencode-go',
+				model: 'unknown',
+				baseURL: '',
+				reason: `Chat status request failed: ${error}`,
+			};
+		}
 	}
 
 	function buildChatContext(): string {
@@ -82,6 +116,17 @@
 		chatLoading = true;
 
 		try {
+			if (!chatStatus) {
+				await loadChatStatus();
+			}
+			if (!chatStatus?.enabled) {
+				simState.chatMessages = [
+					...simState.chatMessages,
+					{ role: 'assistant', content: `Error: ${chatStatus?.reason || 'Chat is unavailable'}` },
+				];
+				chatLoading = false;
+				return;
+			}
 			if (supportedProtocols.length === 0) {
 				await loadCapabilities();
 			}
@@ -96,43 +141,20 @@
 				}),
 			});
 
+			const body = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				const err = await res.json();
-				simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: `Error: ${err.error || 'Request failed'}` }];
+				simState.chatMessages = [
+					...simState.chatMessages,
+					{ role: 'assistant', content: `Error: ${body.error || 'Request failed'}` },
+				];
 				chatLoading = false;
 				return;
 			}
 
-			// Parse SSE stream
-			const reader = res.body?.getReader();
-			const dec = new TextDecoder();
-			let buf = '';
-			let assistantContent = '';
-			simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: '' }];
-
-			while (reader) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				const lines = buf.split('\n');
-				buf = lines.pop() || '';
-
-				for (const line of lines) {
-					if (!line.startsWith('data: ')) continue;
-					const data = line.slice(6).trim();
-					if (data === '[DONE]') break;
-					try {
-						const parsed = JSON.parse(data);
-						const delta = parsed.choices?.[0]?.delta?.content;
-						if (delta) {
-							assistantContent += delta;
-							const msgs = [...simState.chatMessages];
-							msgs[msgs.length - 1] = { role: 'assistant', content: assistantContent };
-							simState.chatMessages = msgs;
-						}
-					} catch { /* skip malformed chunks */ }
-				}
-			}
+			simState.chatMessages = [
+				...simState.chatMessages,
+				{ role: 'assistant', content: typeof body.text === 'string' && body.text.trim() ? body.text : 'No response returned.' },
+			];
 		} catch (e) {
 			simState.chatMessages = [...simState.chatMessages, { role: 'assistant', content: `Connection error: ${e}` }];
 		}
@@ -166,12 +188,23 @@
 
 	// Step 1: Seed data
 	async function loadSeedData() {
-		simState.addLog('Loading seed data and generating ontology...');
-		// Generate demo graph data for now
+		const scenario = simState.seedText.trim();
+		simState.addLog(
+			scenario
+				? 'Captured scenario seed. Using Meridian demo graph scaffold until live graph ingestion is wired.'
+				: 'Loading Meridian demo graph scaffold...',
+		);
 		const demo = generateDemoGraph();
-		simState.graphNodes = demo.nodes;
+		const seedNode = scenario
+			? [{
+				id: 'scenario_seed',
+				name: scenario.slice(0, 72),
+				type: 'Scenario',
+			}]
+			: [];
+		simState.graphNodes = [...seedNode, ...demo.nodes];
 		simState.graphEdges = demo.edges;
-		simState.addLog(`Generated ${demo.nodes.length} entities and ${demo.edges.length} relationships`);
+		simState.addLog(`Loaded ${demo.nodes.length} demo entities and ${demo.edges.length} demo relationships`);
 		simState.step = 'graph';
 	}
 
@@ -401,9 +434,9 @@
 	}
 </script>
 
-<div style="display:flex; flex-direction:column; height:calc(100vh - 56px - 56px);">
+<div class="sim-shell" style="display:flex; flex-direction:column; height:calc(100vh - 56px - 56px);">
 	<!-- Step bar (MiroFish header pattern) -->
-	<div style="
+	<div class="step-bar" style="
 		padding:8px 24px;
 		border-bottom:1px solid var(--bd);
 		background:var(--bg-1);
@@ -431,10 +464,10 @@
 	</div>
 
 	<!-- Main content: split view -->
-	<div style="flex:1; display:flex; overflow:hidden;">
+	<div class="sim-panels" style="flex:1; display:flex; overflow:hidden;">
 		<!-- Left: Graph panel -->
 		{#if viewMode !== 'workbench'}
-			<div style="
+			<div class="graph-pane" style="
 				width:{viewMode === 'graph' ? '100%' : '50%'};
 				border-right:{viewMode === 'split' ? '1px solid var(--bd)' : 'none'};
 				transition:width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -446,7 +479,7 @@
 
 		<!-- Right: Workbench -->
 		{#if viewMode !== 'graph'}
-			<div style="
+			<div class="workbench-pane" style="
 				width:{viewMode === 'workbench' ? '100%' : '50%'};
 				display:flex; flex-direction:column;
 				transition:width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -459,13 +492,13 @@
 						<div>
 							<h2 style="font-size:16px; font-weight:600; margin-bottom:4px;">
 								<span style="font-family:var(--mono); color:var(--acp); margin-right:8px;">01</span>
-								Seed Data
+								Scenario Seed
 							</h2>
-							<p style="font-size:12px; color:var(--tx-3); margin-bottom:20px;">Upload market description or use demo data to build the commerce knowledge graph.</p>
+							<p style="font-size:12px; color:var(--tx-3); margin-bottom:20px;">Describe a market scenario. Meridian currently visualizes it with a demo graph scaffold while live ingestion is offline.</p>
 
 							<textarea
 								bind:value={simState.seedText}
-								placeholder="Describe the market scenario...&#10;&#10;Example: An online marketplace with electronics, fashion, and food vendors. 50 buyer agents with diverse budgets ($50-$500) comparing prices across 5 payment protocols..."
+								placeholder="Describe the market scenario...&#10;&#10;Example: Base-native API buyers, treasury-heavy merchants, and cheap machine-payment routes competing for flow."
 								style="
 									width:100%; min-height:180px; padding:16px;
 									background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
@@ -474,15 +507,15 @@
 								"
 							></textarea>
 
-							<div style="display:flex; gap:10px; margin-top:16px;">
+							<div class="seed-actions" style="display:flex; gap:10px; margin-top:16px;">
 								<button onclick={loadSeedData} style="
 									padding:10px 24px; border:none; border-radius:4px;
 									background:var(--acp); color:#fff; font-weight:600; font-size:13px;
-								">Build Knowledge Graph</button>
+								">{simState.seedText.trim() ? 'Use Seed + Demo Graph' : 'Use Demo Graph Scaffold'}</button>
 								<button onclick={() => { const d = generateDemoGraph(); simState.graphNodes = d.nodes; simState.graphEdges = d.edges; simState.step = 'graph'; }} style="
 									padding:10px 24px; border:1px solid var(--bd); border-radius:4px;
 									background:transparent; color:var(--tx-2); font-weight:600; font-size:13px;
-								">Use Demo Data</button>
+								">Load Pure Demo Graph</button>
 							</div>
 						</div>
 
@@ -652,10 +685,18 @@
 								</div>
 							{/each}
 
-							<button onclick={() => simState.step = 'chat'} style="
+							<button onclick={() => simState.step = 'chat'} disabled={!chatAvailable} style="
 								padding:10px 24px; border:none; border-radius:4px; margin-top:8px;
-								background:var(--acp); color:#fff; font-weight:600; font-size:13px;
-							">Deep Interaction →</button>
+								background:{chatAvailable ? 'var(--acp)' : 'var(--bg-3)'};
+								color:{chatAvailable ? '#fff' : 'var(--tx-3)'};
+								font-weight:600; font-size:13px;
+								cursor:{chatAvailable ? 'pointer' : 'not-allowed'};
+							">{chatAvailable ? 'Deep Interaction →' : 'Chat Unavailable'}</button>
+							{#if !chatAvailable}
+								<p style="font-size:11px; color:var(--tx-3); margin-top:8px;">
+									{chatStatus?.reason || 'Chat provider is unavailable for this workspace.'}
+								</p>
+							{/if}
 						</div>
 
 					{:else if simState.step === 'chat'}
@@ -665,6 +706,16 @@
 								<span style="font-family:var(--mono); color:var(--acp); margin-right:8px;">06</span>
 								Deep Interaction
 							</h2>
+
+							{#if !chatAvailable}
+								<div style="
+									background:var(--bg-2); border:1px solid var(--bd); border-radius:6px;
+									padding:14px; margin-bottom:12px; font-size:12px; color:var(--tx-2);
+								">
+									<div style="font-weight:600; color:var(--tx-1); margin-bottom:6px;">Chat unavailable</div>
+									<div>{chatStatus?.reason || 'The configured provider is unavailable.'}</div>
+								</div>
+							{/if}
 
 							{#if simState.metrics.length > 0}
 								<div style="margin-bottom:12px;">
@@ -716,7 +767,7 @@
 								<ChatPanel
 									messages={simState.chatMessages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))}
 									onSend={handleChatSend}
-									disabled={chatLoading}
+									disabled={chatLoading || !chatAvailable}
 								/>
 							</div>
 						</div>
@@ -745,9 +796,37 @@
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
 	}
+	.seed-actions {
+		flex-wrap: wrap;
+	}
 	@media (max-width: 1100px) {
 		.entity-grid { grid-template-columns: repeat(2, 1fr); }
 		.summary-grid { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 900px) {
+		.sim-shell {
+			height: auto !important;
+			min-height: calc(100vh - 56px - 56px);
+		}
+		.step-bar {
+			flex-wrap: wrap;
+			gap: 12px;
+			padding: 12px 16px !important;
+		}
+		.sim-panels {
+			flex-direction: column;
+			overflow: visible !important;
+		}
+		.graph-pane {
+			width: 100% !important;
+			height: min(40vh, 320px);
+			border-right: none !important;
+			border-bottom: 1px solid var(--bd);
+		}
+		.workbench-pane {
+			width: 100% !important;
+			min-height: 0;
+		}
 	}
 	@media (max-width: 768px) {
 		.agent-grid { grid-template-columns: 1fr; }
@@ -755,5 +834,8 @@
 	@media (max-width: 480px) {
 		.entity-grid { grid-template-columns: 1fr; }
 		.summary-grid { grid-template-columns: 1fr; }
+		.seed-actions button {
+			width: 100%;
+		}
 	}
 </style>

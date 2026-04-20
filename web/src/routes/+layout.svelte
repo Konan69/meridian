@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	let { children } = $props();
 
@@ -9,13 +10,42 @@
 		{ href: '/protocols', label: 'Protocols' },
 	];
 
-	const PROTOS = [
-		{ n: 'ACP', c: 'var(--acp)' },
-		{ n: 'x402', c: 'var(--x402)' },
-		{ n: 'AP2', c: 'var(--ap2)' },
-		{ n: 'MPP', c: 'var(--mpp)' },
-		{ n: 'ATXP', c: 'var(--atxp)' },
-	];
+	type CapabilityStatus = {
+		protocol: string;
+		runtime_ready: boolean;
+		integration: string;
+		reason: string;
+	};
+
+	const COLORS: Record<string, string> = {
+		acp: 'var(--acp)',
+		x402: 'var(--x402)',
+		ap2: 'var(--ap2)',
+		mpp: 'var(--mpp)',
+		atxp: 'var(--atxp)',
+	};
+
+	let protocolStatuses = $state<CapabilityStatus[]>([]);
+
+	async function loadCapabilities() {
+		try {
+			const res = await fetch('http://localhost:4080/capabilities');
+			if (!res.ok) return;
+			const data = await res.json();
+			if (!Array.isArray(data.protocol_statuses)) return;
+			protocolStatuses = data.protocol_statuses.sort((a: CapabilityStatus, b: CapabilityStatus) =>
+				a.protocol.localeCompare(b.protocol),
+			);
+		} catch {
+			protocolStatuses = [];
+		}
+	}
+
+	onMount(() => {
+		loadCapabilities();
+		const interval = setInterval(loadCapabilities, 10000);
+		return () => clearInterval(interval);
+	});
 </script>
 
 <svelte:head><title>Meridian</title></svelte:head>
@@ -69,10 +99,10 @@
 		</nav>
 
 		<div style="display:flex; align-items:center; gap:14px;" role="status" aria-label="Protocol status indicators">
-			{#each PROTOS as p}
-				<div style="display:flex; align-items:center; gap:4px;">
-					<span style="width:6px; height:6px; border-radius:50%; background:{p.c};" aria-hidden="true"></span>
-					<span style="font-family:var(--mono); font-size:10px; font-weight:600; color:var(--tx-3);">{p.n}</span>
+			{#each protocolStatuses as p}
+				<div title={p.reason} style="display:flex; align-items:center; gap:4px; opacity:{p.runtime_ready ? 1 : 0.45};">
+					<span style="width:6px; height:6px; border-radius:50%; background:{COLORS[p.protocol] ?? 'var(--tx-3)'};" aria-hidden="true"></span>
+					<span style="font-family:var(--mono); font-size:10px; font-weight:600; color:{p.runtime_ready ? 'var(--tx-2)' : 'var(--tx-3)'};">{p.protocol.toUpperCase()}</span>
 				</div>
 			{/each}
 		</div>
