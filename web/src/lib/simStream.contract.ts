@@ -3,6 +3,7 @@ import {
   buildRoutePressureRows,
   formatRoutePressureLabel,
 } from './routePressureDisplay';
+import { routeScoreDriverDisplay } from './routeScoreDrivers';
 import {
   normalizeAgentMemoryEvent,
   normalizeAgentMemoryEvents,
@@ -124,6 +125,18 @@ const observabilityEvent = {
 
 const partialObservabilityEvent = {
   type: 'simulation_complete',
+  protocol_summaries: {
+    ap2: {
+      protocol: 'ap2',
+      avg_route_score: '1.4',
+    },
+    cdp: {
+      protocol: 'cdp',
+      avg_route_score: 'NaN',
+      avg_route_pressure_penalty: Infinity,
+      avg_sustainability_bias: '',
+    },
+  },
   ecosystem_summary: {
     ap2: {
       operator_margin_cents: -25,
@@ -279,6 +292,7 @@ simState.worldEvents = observabilityWorldEvents;
 simState.events = [merchantSwitchEvent];
 
 const partialRouteUsage = normalizeNumberRecord(partialObservabilityEvent.route_usage_summary);
+const partialMetrics = normalizeProtocolSummaries(partialObservabilityEvent.protocol_summaries);
 const partialEcosystem = normalizeEcosystemSummary(partialObservabilityEvent.ecosystem_summary);
 const partialRailPnlHistory = normalizeNumberArrayRecord(partialObservabilityEvent.rail_pnl_history);
 const mixedMetrics = normalizeProtocolSummaries(mixedShapeObservabilityEvent.protocol_summaries);
@@ -413,6 +427,11 @@ export const streamNormalizationContract = {
     metricsRouteScore: economyObservabilityState.metrics[0]?.avg_route_score,
     metricsPressureDrag: economyObservabilityState.metrics[0]?.avg_route_pressure_penalty,
     metricsSustainabilityLift: economyObservabilityState.metrics[0]?.avg_sustainability_bias,
+    partialRouteScoreDriverText: routeScoreDriverDisplay('1.4', undefined, undefined)?.text,
+    nonFiniteRouteScoreDriverText: routeScoreDriverDisplay('NaN', Infinity, '')?.text,
+    nonFiniteRouteScoreDriverHasFiniteValue: routeScoreDriverDisplay('NaN', Infinity, '')?.hasFiniteValue,
+    normalizedPartialRouteScore: partialMetrics.find((metric) => metric.protocol === 'ap2')?.avg_route_score,
+    normalizedNonFiniteRouteScore: partialMetrics.find((metric) => metric.protocol === 'cdp')?.avg_route_score,
     nonNegativeRouteLedgerValue: Math.max(0, partialRouteUsage['cdp-base->ap2'] ?? 0),
     nonNegativeRouteMixAttempts: Math.max(0, Math.trunc(partialEcosystem.ap2?.route_mix?.['cdp-base->ap2'] ?? 0)),
     railLossSnapshot: partialRailPnlHistory.ap2?.slice(-1)[0],
@@ -459,6 +478,11 @@ type EconomyObservabilityContract = {
   metricsRouteScore?: unknown;
   metricsPressureDrag?: unknown;
   metricsSustainabilityLift?: unknown;
+  partialRouteScoreDriverText?: unknown;
+  nonFiniteRouteScoreDriverText?: unknown;
+  nonFiniteRouteScoreDriverHasFiniteValue?: unknown;
+  normalizedPartialRouteScore?: unknown;
+  normalizedNonFiniteRouteScore?: unknown;
   nonNegativeRouteLedgerValue: number;
   nonNegativeRouteMixAttempts: number;
   railLossSnapshot?: unknown;
@@ -540,6 +564,21 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.metricsSustainabilityLift !== 0.08) {
     throw new Error('economy observability contract missing sustainability score driver');
+  }
+  if (contract.partialRouteScoreDriverText !== 'score 1.40 · pressure n/a · sustain n/a') {
+    throw new Error('economy observability contract failed partial route score driver display');
+  }
+  if (contract.nonFiniteRouteScoreDriverText !== 'score n/a · pressure n/a · sustain n/a') {
+    throw new Error('economy observability contract failed non-finite route score driver display');
+  }
+  if (contract.nonFiniteRouteScoreDriverHasFiniteValue !== false) {
+    throw new Error('economy observability contract should mark non-finite route score drivers as unavailable');
+  }
+  if (contract.normalizedPartialRouteScore !== 1.4) {
+    throw new Error('economy observability contract failed partial route score normalization');
+  }
+  if (contract.normalizedNonFiniteRouteScore !== 0) {
+    throw new Error('economy observability contract failed non-finite route score normalization');
   }
   if (contract.nonNegativeRouteLedgerValue !== 0) {
     throw new Error('economy observability contract failed reserved principal clamp');

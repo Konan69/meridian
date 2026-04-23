@@ -5,6 +5,7 @@
 		formatRoutePressureLabel,
 		type RoutePressureDisplayRow,
 	} from '$lib/routePressureDisplay';
+	import { routeScoreDriverDisplay, type RouteScoreDriverDisplay } from '$lib/routeScoreDrivers';
 	import type {
 		EconomyWorldEvent,
 		ProtoMetrics,
@@ -49,6 +50,7 @@
 		routeScore: number;
 		pressureDrag: number;
 		sustainabilityLift: number;
+		scoreDrivers: RouteScoreDriverDisplay | null;
 	}
 
 	interface Props {
@@ -171,6 +173,11 @@
 					routeScore: numberFrom(metrics?.avg_route_score) ?? 0,
 					pressureDrag: numberFrom(metrics?.avg_route_pressure_penalty) ?? 0,
 					sustainabilityLift: numberFrom(metrics?.avg_sustainability_bias) ?? 0,
+					scoreDrivers: routeScoreDriverDisplay(
+						metrics?.avg_route_score,
+						metrics?.avg_route_pressure_penalty,
+						metrics?.avg_sustainability_bias,
+					),
 				};
 			})
 			.sort((a, b) => Math.abs(b.marginCents) - Math.abs(a.marginCents) || a.protocol.localeCompare(b.protocol));
@@ -432,8 +439,8 @@
 							{money(row.marginCents)}
 						</strong>
 						<small>{signedMoney(row.deltaCents)} · {row.snapshots || 1} snapshots · {row.routeAttempts} attempts · rel {pct(row.reliability)}</small>
-						{#if row.routeScore !== 0 || row.pressureDrag !== 0 || row.sustainabilityLift !== 0}
-							<small class="score-drivers">score {row.routeScore.toFixed(2)} · pressure {row.pressureDrag.toFixed(2)} · sustain +{row.sustainabilityLift.toFixed(2)}</small>
+						{#if row.scoreDrivers}
+							<small class="score-drivers">{row.scoreDrivers.text}</small>
 						{/if}
 					</div>
 				</div>

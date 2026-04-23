@@ -64,6 +64,40 @@ INHERITED_GATE_GUIDANCE = [
         "preserve_when_combining": True,
     },
 ]
+FOCUSED_GATE_DUPLICATE_VALIDATION = [
+    {
+        "gate_name": "ap2_offline_settlement_semantics",
+        "focused_task_id": "service_offline_ap2",
+        "aggregate_task_id": "service_offline_protocol_tests",
+        "reruns_after_benchmark_profile": True,
+        "cost_is_expected": True,
+        "reason": "The full benchmark already runs AP2 offline protocol tests; this focused gate reruns them after the benchmark to protect inherited settlement semantics.",
+    },
+    {
+        "gate_name": "stripe_mpp_offline_semantics",
+        "focused_task_id": "service_offline_stripe",
+        "aggregate_task_id": "service_offline_protocol_tests",
+        "reruns_after_benchmark_profile": True,
+        "cost_is_expected": True,
+        "reason": "The full benchmark already runs Stripe MPP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited MPP semantics.",
+    },
+    {
+        "gate_name": "atxp_offline_direct_transfer_topup_contract",
+        "focused_task_id": "service_offline_atxp",
+        "aggregate_task_id": "service_offline_protocol_tests",
+        "reruns_after_benchmark_profile": True,
+        "cost_is_expected": True,
+        "reason": "The full benchmark already runs ATXP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited direct-transfer and top-up semantics.",
+    },
+    {
+        "gate_name": "cdp_offline_treasury_transfer_contract",
+        "focused_task_id": "service_offline_cdp",
+        "aggregate_task_id": "service_offline_protocol_tests",
+        "reruns_after_benchmark_profile": True,
+        "cost_is_expected": True,
+        "reason": "The full benchmark already runs CDP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited treasury transfer semantics.",
+    },
+]
 
 if _TRACES_DIR:
     _TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,6 +178,19 @@ def inherited_gate_guidance_metadata() -> dict[str, Any]:
         "default_profile_changed": False,
         "gate_profile_changed": False,
         "gates": INHERITED_GATE_GUIDANCE,
+        "duplicate_validation": focused_gate_duplicate_validation_metadata(),
+    }
+
+
+def focused_gate_duplicate_validation_metadata() -> dict[str, Any]:
+    return {
+        "kind": "focused_gate_duplicate_validation_cost",
+        "source_of_truth": "evo run executes the benchmark profile before inherited focused gates",
+        "benchmark_aggregate_task_id": "service_offline_protocol_tests",
+        "default_profile_changed": False,
+        "gate_profile_changed": False,
+        "entries": FOCUSED_GATE_DUPLICATE_VALIDATION,
+        "note": "Duplicate offline service validation is intentional correctness cost, not stale cache work. Do not remove, skip, merge, or weaken focused gates to save this time.",
     }
 
 
@@ -485,6 +532,12 @@ SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
             "deterministic decimal/native/USDC amount parsing",
             "ERC-20 transfer calldata encoding",
         ],
+        "semantic_surfaces": [
+            "CDP sign-message exact byte preservation and own-field validation",
+            "CDP send-transaction network/value normalization and own-field validation",
+            "CDP sign-typed-data exact key, primaryType, nested own-key, and message own-field semantics",
+            "CDP treasury native and USDC transfer route request/response contracts",
+        ],
     },
     "stripe": {
         "test_files": [
@@ -499,6 +552,11 @@ SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
             "deterministic MPP private key derivation",
             "merchant and amount request normalization",
             "MPP execute request validation",
+        ],
+        "semantic_surfaces": [
+            "Stripe MPP deterministic actor and merchant key derivation",
+            "Stripe MPP authorize payment session URL semantics",
+            "Stripe MPP execute paid-resource URL and settlement response semantics",
         ],
     },
     "atxp": {
@@ -515,6 +573,11 @@ SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
             "direct-transfer raw transaction credential parsing",
             "ATXP credential object parsing and USDC amount rounding",
         ],
+        "semantic_surfaces": [
+            "ATXP cdp-base treasury top-up amount boundary and default planning",
+            "ATXP direct-transfer raw transaction credential parsing",
+            "ATXP direct-transfer own-field request shape and USDC amount boundary contracts",
+        ],
     },
     "ap2": {
         "test_files": [
@@ -527,6 +590,11 @@ SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
             "canonical credential hashing",
             "rounded USD amount comparison",
             "settlement merchant and amount mismatch diagnostics",
+        ],
+        "semantic_surfaces": [
+            "AP2 canonical credential hashing",
+            "AP2 nested mandate actor, merchant, and amount settlement semantics",
+            "AP2 settlement mismatch diagnostics for merchant and amount drift",
         ],
     },
 }
@@ -554,6 +622,7 @@ def service_offline_node_trace_metadata(
             "covered_test_files": coverage["test_files"],
             "covered_helper_files": coverage["helper_files"],
             "coverage_points": coverage["coverage_points"],
+            "semantic_surfaces": coverage["semantic_surfaces"],
             "protects": "Pure protocol helper contracts run without live provider credentials.",
         }
     )
@@ -575,6 +644,7 @@ def service_offline_python_trace_metadata(root: Path) -> dict[str, Any]:
             "covered_test_files": coverage["test_files"],
             "covered_helper_files": coverage["helper_files"],
             "coverage_points": coverage["coverage_points"],
+            "semantic_surfaces": coverage["semantic_surfaces"],
             "protects": "AP2 canonical credential and settlement helper contracts run without live credentials.",
         }
     }
@@ -672,6 +742,7 @@ def service_offline_tests_summary_trace_metadata(
             "note": "This synthetic summary runs no shell command; inspect component traces for offline protocol test logs and dependency cache details.",
         },
         "gate_guidance": inherited_gate_guidance_metadata(),
+        "duplicate_validation": focused_gate_duplicate_validation_metadata(),
     }
 
 
@@ -844,6 +915,7 @@ def check_inherited_gate_guidance_contract(
     checked_paths = ["AGENTS.md", "docs/simulation-architecture.md"]
     required_needles = [
         "benchmark_whole_app.py --list-tasks",
+        "duplicate focused gate validation",
         *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
     ]
     missing_needles = []
@@ -867,6 +939,7 @@ def check_inherited_gate_guidance_contract(
         "source": "INHERITED_GATE_GUIDANCE",
         "checked_paths": checked_paths,
         "required_gate_names": [gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+        "duplicate_validation": focused_gate_duplicate_validation_metadata(),
         "missing_needles": missing_needles,
         "protects": "Gate hygiene docs and list-task metadata keep inherited focused gate names discoverable without source hunting.",
     }
@@ -903,9 +976,14 @@ def static_contract_trace_metadata(
             ],
             "metadata_drift_checks": [
                 {
-                    "kind": "service_offline_coverage_files_exist_and_nonempty",
+                    "kind": "service_offline_coverage_metadata_exists_and_nonempty",
                     "source": "SERVICE_OFFLINE_COVERAGE",
-                    "required_nonempty_fields": ["test_files", "helper_files"],
+                    "required_nonempty_fields": [
+                        "test_files",
+                        "helper_files",
+                        "semantic_surfaces",
+                    ],
+                    "path_fields": ["test_files", "helper_files"],
                     "file_count": sum(
                         item["file_count"] for item in service_offline_coverage_files
                     ),
@@ -916,7 +994,7 @@ def static_contract_trace_metadata(
                     "services": [
                         item["service"] for item in service_offline_coverage_files
                     ],
-                    "protects": "Offline service trace coverage must name at least one test file and helper file per service, and every listed path must exist.",
+                    "protects": "Offline service trace coverage must name at least one test file, helper file, and protected semantic surface per service; every listed path must exist.",
                 },
                 raw_route_pressure_report_contract,
                 inherited_gate_guidance_contract,
@@ -1064,6 +1142,7 @@ def task_static_contracts(root: Path) -> float:
                 "cdp_offline_treasury_transfer_contract",
                 "benchmark_whole_app.py --list-tasks",
                 "Manual diff combines do not automatically carry gate metadata",
+                "duplicate focused gate validation",
             ],
         ),
         (
@@ -1080,6 +1159,7 @@ def task_static_contracts(root: Path) -> float:
                 "cdp_offline_treasury_transfer_contract",
                 "benchmark_whole_app.py --list-tasks",
                 "service_offline_ap2",
+                "duplicate focused gate validation",
             ],
         ),
     ]
@@ -1095,7 +1175,8 @@ def task_static_contracts(root: Path) -> float:
 
     service_offline_coverage_files = []
     for service, coverage in SERVICE_OFFLINE_COVERAGE.items():
-        required_fields = ["test_files", "helper_files"]
+        required_fields = ["test_files", "helper_files", "semantic_surfaces"]
+        path_fields = ["test_files", "helper_files"]
         empty_required_fields = [
             field for field in required_fields if len(coverage[field]) == 0
         ]
@@ -1115,9 +1196,11 @@ def task_static_contracts(root: Path) -> float:
         service_offline_coverage_files.append(
             {
                 "service": service,
-                "checked_fields": ["test_files", "helper_files"],
+                "checked_fields": path_fields,
+                "required_nonempty_fields": required_fields,
                 "test_files": coverage["test_files"],
                 "helper_files": coverage["helper_files"],
+                "semantic_surfaces": coverage["semantic_surfaces"],
                 "field_counts": {
                     field: len(coverage[field]) for field in required_fields
                 },
@@ -1450,6 +1533,8 @@ def run_service_offline_node_task(root: Path, service: str) -> tuple[float, dict
         "validation_command": "pnpm run test:offline",
         "covered_test_files": coverage["test_files"],
         "covered_helper_files": coverage["helper_files"],
+        "coverage_points": coverage["coverage_points"],
+        "semantic_surfaces": coverage["semantic_surfaces"],
     }
     score = run_command(
         root,
@@ -1477,6 +1562,8 @@ def run_service_offline_ap2_task(root: Path) -> tuple[float, dict[str, Any]]:
         "validation_command": "PYTHONPATH=src python3 -m unittest discover -s tests -q",
         "covered_test_files": SERVICE_OFFLINE_COVERAGE["ap2"]["test_files"],
         "covered_helper_files": SERVICE_OFFLINE_COVERAGE["ap2"]["helper_files"],
+        "coverage_points": SERVICE_OFFLINE_COVERAGE["ap2"]["coverage_points"],
+        "semantic_surfaces": SERVICE_OFFLINE_COVERAGE["ap2"]["semantic_surfaces"],
     }
     score = run_command(
         root,
@@ -1674,6 +1761,40 @@ def task_catalog() -> list[dict[str, Any]]:
             ]
             entry["manual_validation_task_ids"] = service_task_ids
             entry["manual_selection"] = f"--task-ids {','.join(service_task_ids)}"
+        duplicate_validation = focused_gate_duplicate_validation_metadata()
+        if task_id.startswith("service_offline_"):
+            service = task_id.removeprefix("service_offline_")
+            if service in SERVICE_OFFLINE_COVERAGE:
+                coverage = SERVICE_OFFLINE_COVERAGE[service]
+                entry.update(
+                    {
+                        "category": "service_offline_protocol",
+                        "service": service,
+                        "covered_test_files": coverage["test_files"],
+                        "covered_helper_files": coverage["helper_files"],
+                        "coverage_points": coverage["coverage_points"],
+                        "semantic_surfaces": coverage["semantic_surfaces"],
+                    }
+                )
+        if task_id == "service_offline_protocol_tests":
+            entry["semantic_surfaces_by_service"] = {
+                service: coverage["semantic_surfaces"]
+                for service, coverage in SERVICE_OFFLINE_COVERAGE.items()
+            }
+        if task_id == duplicate_validation["benchmark_aggregate_task_id"]:
+            entry["duplicate_validation"] = duplicate_validation
+        else:
+            duplicate_entries = [
+                item
+                for item in FOCUSED_GATE_DUPLICATE_VALIDATION
+                if item["focused_task_id"] == task_id
+            ]
+            if duplicate_entries:
+                entry["duplicate_validation"] = {
+                    "kind": duplicate_validation["kind"],
+                    "entries": duplicate_entries,
+                    "note": duplicate_validation["note"],
+                }
         matching_gates = [
             gate
             for gate in INHERITED_GATE_GUIDANCE

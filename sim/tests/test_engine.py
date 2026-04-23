@@ -500,6 +500,49 @@ def test_emergent_world_report_section():
     assert result.world_events[0].summary == "Round 1 closed after mpp settlement and cdp funding checks."
 
 
+def test_report_explains_route_score_driven_merchant_protocol_change():
+    config = SimulationConfig(
+        num_agents=1,
+        num_rounds=1,
+        protocols=[Protocol.MPP],
+    )
+    result = SimulationResult(config=config)
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=8,
+            event_type="merchant_protocol_mix_changed",
+            summary="merchant_test removed MPP after observing ecosystem evidence.",
+            actor_id="merchant_test",
+            protocol="mpp",
+            data={
+                "merchant_id": "merchant_test",
+                "merchant": "merchant_test",
+                "action": "removed",
+                "protocol": "mpp",
+                "round": 8,
+                "reason": "ecosystem_evidence",
+                "evidence": {
+                    "route_score": 0.1,
+                    "route_score_pressure_drag": 1.8,
+                    "route_score_sustainability_lift": -0.4,
+                    "route_pressure": 0.0,
+                },
+            },
+        )
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    emergent = next((s for s in sections if s["title"] == "Emergent Agent Economy"), None)
+
+    assert emergent is not None
+    assert "Route-score merchant changes:" in emergent["content"]
+    assert (
+        "R8: merchant_test removed Stripe MPP after route-score evidence "
+        "(score 0.10, pressure drag 1.80, sustainability lift -0.40, "
+        "reason ecosystem_evidence)."
+    ) in emergent["content"]
+
+
 def test_self_sustainability_report_section():
     """Report promotes treasury and route pressure as economy signals."""
     config = SimulationConfig(

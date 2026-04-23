@@ -120,6 +120,39 @@ def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
     )
 
 
+def _merchant_switch_route_score_lines(events: list[object], limit: int = 5) -> list[str]:
+    lines: list[str] = []
+    for event in events:
+        if getattr(event, "event_type", None) != "merchant_protocol_mix_changed":
+            continue
+        data = getattr(event, "data", None)
+        if not isinstance(data, dict):
+            continue
+        evidence = data.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+
+        pressure_drag = _as_float(evidence.get("route_score_pressure_drag", 0.0))
+        sustainability_lift = _as_float(evidence.get("route_score_sustainability_lift", 0.0))
+        route_score = _as_float(evidence.get("route_score", 0.0))
+        if pressure_drag == 0 and sustainability_lift == 0:
+            continue
+
+        merchant = str(data.get("merchant") or data.get("merchant_id") or "unknown merchant")
+        action = str(data.get("action") or "changed")
+        protocol = protocol_display_label(data.get("protocol"))
+        reason = str(data.get("reason") or "unknown")
+        lines.append(
+            f"  R{getattr(event, 'round_num', data.get('round', 'n/a'))}: {merchant} {action} "
+            f"{protocol} after route-score evidence "
+            f"(score {route_score:.2f}, pressure drag {pressure_drag:.2f}, "
+            f"sustainability lift {sustainability_lift:+.2f}, reason {reason})."
+        )
+        if len(lines) >= limit:
+            break
+    return lines
+
+
 # Canonical protocol display order
 _PROTO_ORDER = ["acp", "ap2", "x402", "mpp", "atxp"]
 
@@ -237,6 +270,12 @@ class ReportGenerator:
                 lines.append(
                     f"  R{event.round_num}: {normalize_protocol_labels_in_text(event.summary)}"
                 )
+
+            switch_lines = _merchant_switch_route_score_lines(self.result.world_events)
+            if switch_lines:
+                lines.append("")
+                lines.append("Route-score merchant changes:")
+                lines.extend(switch_lines)
 
         return {"title": "Emergent Agent Economy", "content": "\n".join(lines), "status": "ok"}
 

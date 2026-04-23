@@ -158,6 +158,9 @@ legacy stochastic market churn. Adoption evidence includes `adoption_score`,
 `serves_preferred_domain`. Removal evidence includes `removal_risk`,
 `avg_trust`, `recent_memory_signal`, `route_pressure`, `reliability`, and
 `operator_margin_cents`.
+When `route_score_pressure_drag` or `route_score_sustainability_lift` drives a
+merchant protocol change, reports include a direct route-score merchant change
+readout instead of leaving the reason buried inside raw switch evidence.
 
 ## Dataclass Payloads
 

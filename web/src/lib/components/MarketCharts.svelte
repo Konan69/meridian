@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getProtocolColor, getProtocolDisplayLabel } from '$lib/constants';
 	import { buildNoRoutePressureRows, formatRoutePressureLabel } from '$lib/routePressureDisplay';
+	import { routeScoreDriverDisplay } from '$lib/routeScoreDrivers';
 	import type { RoutePressureSummary } from '$lib/stores/simulation.svelte';
 
 	interface ProtoMetric {
@@ -124,15 +125,24 @@
 	let marginAbsMax = $derived(Math.max(...marginData.map(m => Math.abs(m.margin_cents)), 1));
 
 	let adoptionData = $derived(
-		railProtocols.map(protocol => ({
-			protocol,
-			merchant_count: wholeNonNegative(ecosystem[protocol]?.merchant_count),
-			network_effect: unit(numberFrom(ecosystem[protocol]?.network_effect) ?? 0),
-			congestion: unit(numberFrom(ecosystem[protocol]?.congestion) ?? 0),
-			route_score: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_route_score) ?? 0,
-			pressure_drag: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_route_pressure_penalty) ?? 0,
-			sustainability_lift: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_sustainability_bias) ?? 0,
-		})).sort((a, b) => b.network_effect - a.network_effect)
+		railProtocols.map(protocol => {
+			const clean = metricData.find(m => m.protocol === protocol);
+			const raw = metrics.find(m => m.protocol === protocol);
+			return {
+				protocol,
+				merchant_count: wholeNonNegative(ecosystem[protocol]?.merchant_count),
+				network_effect: unit(numberFrom(ecosystem[protocol]?.network_effect) ?? 0),
+				congestion: unit(numberFrom(ecosystem[protocol]?.congestion) ?? 0),
+				route_score: numberFrom(clean?.avg_route_score) ?? 0,
+				pressure_drag: numberFrom(clean?.avg_route_pressure_penalty) ?? 0,
+				sustainability_lift: numberFrom(clean?.avg_sustainability_bias) ?? 0,
+				score_drivers: routeScoreDriverDisplay(
+					raw?.avg_route_score,
+					raw?.avg_route_pressure_penalty,
+					raw?.avg_sustainability_bias,
+				),
+			};
+		}).sort((a, b) => b.network_effect - a.network_effect)
 	);
 
 	let floatData = $derived(
@@ -388,9 +398,9 @@
 				<text x={labelWidth + congestionW + 6} y={y + 23} fill="var(--tx-3)" font-size="10" font-family="'Berkeley Mono', var(--mono), monospace">
 					CG {m.congestion.toFixed(2)} · {m.merchant_count} merchants
 				</text>
-				{#if m.route_score !== 0 || m.pressure_drag !== 0 || m.sustainability_lift !== 0}
+				{#if m.score_drivers}
 					<text x={labelWidth} y={y + 35} fill="var(--tx-3)" font-size="9" font-family="'Berkeley Mono', var(--mono), monospace">
-						score {m.route_score.toFixed(2)} · pressure {m.pressure_drag.toFixed(2)} · sustain +{m.sustainability_lift.toFixed(2)}
+						{m.score_drivers.text}
 					</text>
 				{/if}
 			{:else}

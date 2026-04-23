@@ -132,13 +132,28 @@ Offline service protocol tests are benchmark tasks too. Read
 `service_offline_cdp`, `service_offline_stripe`, `service_offline_atxp`, and
 `service_offline_ap2` for the exact credential-free helper tests that ran.
 Those traces list `trace_metadata.validation.covered_test_files`,
-`covered_helper_files`, and `coverage_points` so coverage gaps are visible
-without scraping command output. The Node service tasks use the same frozen pnpm
-install and node_modules seeding metadata as build tasks; AP2 runs its pure
-Python unittest contract directly. The static benchmark contract also requires
-each service coverage entry to list at least one test file and one helper file,
-then checks that every listed path still exists. Deleting or renaming one of
-those files requires updating the metadata in the same change.
+`covered_helper_files`, `coverage_points`, and `semantic_surfaces` so coverage
+gaps are visible without scraping command output. `semantic_surfaces` names the
+newly gated helper contracts directly: CDP treasury transfer request/response
+semantics, Stripe MPP session and settlement semantics, ATXP direct-transfer
+and cdp-base top-up semantics, and AP2 nested mandate actor, merchant, and
+amount semantics. The Node service tasks use the same frozen pnpm install and
+node_modules seeding metadata as build tasks; AP2 runs its pure Python unittest
+contract directly. The static benchmark contract also requires each service
+coverage entry to list at least one test file, one helper file, and one semantic
+surface, then checks that every listed path still exists. Deleting or renaming
+one of those files, or moving one of those protocol contracts, requires updating
+the metadata in the same change.
+
+Focused service gates intentionally duplicate some of that validation after the
+full benchmark. Treat duplicate focused gate validation as expected correctness
+cost: `service_offline_protocol_tests` runs all offline service suites once,
+then inherited gates may rerun `service_offline_ap2`,
+`service_offline_stripe`, `service_offline_atxp`, or `service_offline_cdp`
+against the same helper contracts. The duplicate cost is visible in
+`trace_metadata.duplicate_validation` and task listing from
+`benchmark_whole_app.py --list-tasks`; use it for budget planning, not as a
+reason to remove, skip, merge, or weaken focused gates.
 
 Manual Evo combines need a separate gate hygiene pass. Before applying a
 winning diff outside its ancestry, run `evo gate list <source>` and
