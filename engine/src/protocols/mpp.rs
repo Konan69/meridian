@@ -88,7 +88,10 @@ impl MppAdapter {
             .build()
             .unwrap_or_default();
         let response = match client
-            .get(format!("{}/health", config.stripe_service_url.trim_end_matches('/')))
+            .get(format!(
+                "{}/health",
+                config.stripe_service_url.trim_end_matches('/')
+            ))
             .send()
             .await
         {
@@ -97,7 +100,7 @@ impl MppAdapter {
                 return MppHealthStatus {
                     runtime_ready: false,
                     reason: format!("MPP service unreachable: {}", error),
-                }
+                };
             }
         };
 
@@ -114,7 +117,7 @@ impl MppAdapter {
                 return MppHealthStatus {
                     runtime_ready: false,
                     reason: format!("MPP service health parse failed: {}", error),
-                }
+                };
             }
         };
 
@@ -153,7 +156,10 @@ impl ProtocolAdapter for MppAdapter {
         let started = Instant::now();
         let response = self
             .http_client
-            .post(format!("{}/mpp/authorize", self.service_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/mpp/authorize",
+                self.service_url.trim_end_matches('/')
+            ))
             .json(&MppAuthorizeRequest {
                 actor_id: wallet.owner_id.clone(),
                 merchant: merchant.clone(),
@@ -162,7 +168,9 @@ impl ProtocolAdapter for MppAdapter {
             })
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("mpp authorize request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("mpp authorize request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -174,9 +182,11 @@ impl ProtocolAdapter for MppAdapter {
             )));
         }
 
-        let body: MppAuthorizeResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| EngineError::ExternalService(format!("mpp authorize parse failed: {}", e)))?;
-        self.metrics.record_auth(started.elapsed().as_micros() as u64);
+        let body: MppAuthorizeResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("mpp authorize parse failed: {}", e))
+        })?;
+        self.metrics
+            .record_auth(started.elapsed().as_micros() as u64);
 
         Ok(AuthToken {
             token_id: format!("mpp_auth_{}", Uuid::new_v4().simple()),
@@ -203,7 +213,10 @@ impl ProtocolAdapter for MppAdapter {
         let started = Instant::now();
         let response = self
             .http_client
-            .post(format!("{}/mpp/execute", self.service_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/mpp/execute",
+                self.service_url.trim_end_matches('/')
+            ))
             .json(&MppExecuteRequest {
                 actor_id: actor_id.to_string(),
                 merchant: merchant.to_string(),
@@ -211,7 +224,9 @@ impl ProtocolAdapter for MppAdapter {
             })
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("mpp execute request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("mpp execute request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -225,11 +240,13 @@ impl ProtocolAdapter for MppAdapter {
             )));
         }
 
-        let body: MppExecuteResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| EngineError::ExternalService(format!("mpp execute parse failed: {}", e)))?;
+        let body: MppExecuteResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("mpp execute parse failed: {}", e))
+        })?;
         let exec_us = started.elapsed().as_micros() as u64;
         let fee = self.fee_for(amount);
-        self.metrics.record_success(amount, fee, exec_us, amount < 100);
+        self.metrics
+            .record_success(amount, fee, exec_us, amount < 100);
 
         Ok(PaymentResult {
             payment_id: body.payment_id.clone(),
@@ -259,7 +276,9 @@ impl ProtocolAdapter for MppAdapter {
     }
 
     async fn refund(&self, _payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
-        Err(EngineError::ProtocolError("mpp refunds are not implemented yet".into()))
+        Err(EngineError::ProtocolError(
+            "mpp refunds are not implemented yet".into(),
+        ))
     }
 
     fn metrics(&self) -> ProtocolMetrics {

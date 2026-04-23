@@ -65,7 +65,12 @@ impl WalletService {
         Ok(wallet)
     }
 
-    pub fn get_wallet(&self, owner_kind: &str, owner_id: &str, protocol: &str) -> Result<WalletInfo> {
+    pub fn get_wallet(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        protocol: &str,
+    ) -> Result<WalletInfo> {
         let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let wallets = self.wallets.read().unwrap();
 
@@ -95,7 +100,13 @@ impl WalletService {
         self.get_wallet(owner_kind, owner_id, protocol)
     }
 
-    pub fn deduct(&self, owner_kind: &str, owner_id: &str, protocol: &str, amount: Cents) -> Result<()> {
+    pub fn deduct(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        protocol: &str,
+        amount: Cents,
+    ) -> Result<()> {
         let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let mut wallets = self.wallets.write().unwrap();
 
@@ -125,7 +136,13 @@ impl WalletService {
         Ok(())
     }
 
-    pub fn credit(&self, owner_kind: &str, owner_id: &str, protocol: &str, amount: Cents) -> Result<()> {
+    pub fn credit(
+        &self,
+        owner_kind: &str,
+        owner_id: &str,
+        protocol: &str,
+        amount: Cents,
+    ) -> Result<()> {
         let key = format!("{}:{}:{}", owner_kind, owner_id, protocol);
         let mut wallets = self.wallets.write().unwrap();
 

@@ -90,7 +90,10 @@ impl Ap2Adapter {
             .build()
             .unwrap_or_default();
         let response = match client
-            .get(format!("{}/health", config.ap2_service_url.trim_end_matches('/')))
+            .get(format!(
+                "{}/health",
+                config.ap2_service_url.trim_end_matches('/')
+            ))
             .send()
             .await
         {
@@ -99,7 +102,7 @@ impl Ap2Adapter {
                 return Ap2HealthStatus {
                     runtime_ready: false,
                     reason: format!("AP2 service unreachable: {}", error),
-                }
+                };
             }
         };
 
@@ -116,11 +119,12 @@ impl Ap2Adapter {
                 return Ap2HealthStatus {
                     runtime_ready: false,
                     reason: format!("AP2 service health parse failed: {}", error),
-                }
+                };
             }
         };
 
-        let runtime_ready = body.status == "ok" && body.service == "meridian-ap2" && body.runtime_ready;
+        let runtime_ready =
+            body.status == "ok" && body.service == "meridian-ap2" && body.runtime_ready;
         Ap2HealthStatus {
             runtime_ready,
             reason: body.runtime_ready_reason,
@@ -154,7 +158,10 @@ impl ProtocolAdapter for Ap2Adapter {
         let started = Instant::now();
         let response = self
             .http_client
-            .post(format!("{}/ap2/authorize", self.service_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/ap2/authorize",
+                self.service_url.trim_end_matches('/')
+            ))
             .json(&Ap2AuthorizeRequest {
                 actor_id: wallet.owner_id.clone(),
                 merchant: merchant.clone(),
@@ -164,7 +171,9 @@ impl ProtocolAdapter for Ap2Adapter {
             })
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("ap2 authorize request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("ap2 authorize request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -176,8 +185,9 @@ impl ProtocolAdapter for Ap2Adapter {
             )));
         }
 
-        let body: Ap2AuthorizeResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| EngineError::ExternalService(format!("ap2 authorize parse failed: {}", e)))?;
+        let body: Ap2AuthorizeResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("ap2 authorize parse failed: {}", e))
+        })?;
         self.metrics
             .record_auth(started.elapsed().as_micros().min(u64::MAX as u128) as u64);
 
@@ -202,7 +212,9 @@ impl ProtocolAdapter for Ap2Adapter {
             .protocol_data
             .get("credential")
             .and_then(|value| value.as_str())
-            .ok_or_else(|| EngineError::ProtocolError("ap2 auth token missing credential".into()))?;
+            .ok_or_else(|| {
+                EngineError::ProtocolError("ap2 auth token missing credential".into())
+            })?;
         let memo = token
             .protocol_data
             .get("memo")
@@ -212,7 +224,10 @@ impl ProtocolAdapter for Ap2Adapter {
         let started = Instant::now();
         let response = self
             .http_client
-            .post(format!("{}/ap2/settle", self.service_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/ap2/settle",
+                self.service_url.trim_end_matches('/')
+            ))
             .header("x-ap2-credential", credential)
             .json(&Ap2SettleRequest {
                 merchant: merchant.to_string(),
@@ -221,7 +236,9 @@ impl ProtocolAdapter for Ap2Adapter {
             })
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("ap2 settle request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("ap2 settle request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -270,7 +287,9 @@ impl ProtocolAdapter for Ap2Adapter {
     }
 
     async fn refund(&self, _payment: &PaymentResult, _reason: &str) -> Result<RefundResult> {
-        Err(EngineError::ProtocolError("ap2 refunds are not implemented yet".into()))
+        Err(EngineError::ProtocolError(
+            "ap2 refunds are not implemented yet".into(),
+        ))
     }
 
     fn metrics(&self) -> ProtocolMetrics {

@@ -116,7 +116,10 @@ impl AtxpAdapter {
             .build()
             .unwrap_or_default();
         let response = match client
-            .get(format!("{}/health", config.atxp_service_url.trim_end_matches('/')))
+            .get(format!(
+                "{}/health",
+                config.atxp_service_url.trim_end_matches('/')
+            ))
             .send()
             .await
         {
@@ -126,7 +129,7 @@ impl AtxpAdapter {
                     runtime_ready: false,
                     runtime_mode: "unsupported".into(),
                     reason: format!("ATXP service unreachable: {}", error),
-                }
+                };
             }
         };
 
@@ -145,7 +148,7 @@ impl AtxpAdapter {
                     runtime_ready: false,
                     runtime_mode: "unsupported".into(),
                     reason: format!("ATXP service health parse failed: {}", error),
-                }
+                };
             }
         };
 
@@ -187,7 +190,10 @@ impl AtxpAdapter {
         amount as f64 / 100.0
     }
 
-    async fn authorize_request(&self, body: &AtxpAuthorizeRequest) -> Result<AtxpAuthorizeResponse> {
+    async fn authorize_request(
+        &self,
+        body: &AtxpAuthorizeRequest,
+    ) -> Result<AtxpAuthorizeResponse> {
         let response = self
             .http_client
             .post(format!(
@@ -197,7 +203,9 @@ impl AtxpAdapter {
             .json(body)
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("atxp authorize request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("atxp authorize request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -312,7 +320,9 @@ impl ProtocolAdapter for AtxpAdapter {
                 .protocol_data
                 .get("actor_id")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| EngineError::ProtocolError("atxp auth token missing actor_id".into()))?;
+                .ok_or_else(|| {
+                    EngineError::ProtocolError("atxp auth token missing actor_id".into())
+                })?;
             let memo = token
                 .protocol_data
                 .get("memo")
@@ -334,7 +344,9 @@ impl ProtocolAdapter for AtxpAdapter {
                 })
                 .send()
                 .await
-                .map_err(|e| EngineError::ExternalService(format!("atxp execute request failed: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ExternalService(format!("atxp execute request failed: {}", e))
+                })?;
 
             let status = response.status();
             let bytes = response.bytes().await.unwrap_or_default();
@@ -348,8 +360,9 @@ impl ProtocolAdapter for AtxpAdapter {
                 )));
             }
 
-            let body: AtxpExecuteResponse = serde_json::from_slice(&bytes)
-                .map_err(|e| EngineError::ExternalService(format!("atxp execute parse failed: {}", e)))?;
+            let body: AtxpExecuteResponse = serde_json::from_slice(&bytes).map_err(|e| {
+                EngineError::ExternalService(format!("atxp execute parse failed: {}", e))
+            })?;
             let exec_us = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
 
             if !body.ok {
@@ -360,8 +373,12 @@ impl ProtocolAdapter for AtxpAdapter {
             }
 
             let fee = self.fee_for(amount);
-            self.metrics
-                .record_success(amount, fee, exec_us, self.supports_micropayments() && amount < 100);
+            self.metrics.record_success(
+                amount,
+                fee,
+                exec_us,
+                self.supports_micropayments() && amount < 100,
+            );
 
             let payment_id = body
                 .payment_events
@@ -393,7 +410,9 @@ impl ProtocolAdapter for AtxpAdapter {
             .protocol_data
             .get("credential")
             .and_then(|value| value.as_str())
-            .ok_or_else(|| EngineError::ProtocolError("atxp auth token missing credential".into()))?;
+            .ok_or_else(|| {
+                EngineError::ProtocolError("atxp auth token missing credential".into())
+            })?;
         let memo = token
             .protocol_data
             .get("memo")
@@ -415,7 +434,9 @@ impl ProtocolAdapter for AtxpAdapter {
             })
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("atxp direct-transfer request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("atxp direct-transfer request failed: {}", e))
+            })?;
 
         let status = response.status();
         let bytes = response.bytes().await.unwrap_or_default();
@@ -442,8 +463,12 @@ impl ProtocolAdapter for AtxpAdapter {
         }
 
         let fee = self.fee_for(amount);
-        self.metrics
-            .record_success(amount, fee, exec_us, self.supports_micropayments() && amount < 100);
+        self.metrics.record_success(
+            amount,
+            fee,
+            exec_us,
+            self.supports_micropayments() && amount < 100,
+        );
 
         Ok(PaymentResult {
             payment_id: body.tx_hash.clone(),

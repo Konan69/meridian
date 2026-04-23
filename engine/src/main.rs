@@ -21,6 +21,7 @@ use crate::protocols::ProtocolAdapter;
 
 pub struct AppState {
     pub catalog: Arc<Vec<Product>>,
+    pub config: config::Config,
     pub sessions: Mutex<HashMap<String, CheckoutSession>>,
     pub protocols: HashMap<String, Box<dyn ProtocolAdapter>>,
     pub protocol_capabilities: Vec<ProtocolCapability>,
@@ -163,7 +164,10 @@ async fn main() {
     let protocol_map = runtime_catalog.protocols;
     let protocol_capabilities = runtime_catalog.capabilities;
 
-    if let Some(atxp_status) = protocol_capabilities.iter().find(|status| status.protocol == "atxp") {
+    if let Some(atxp_status) = protocol_capabilities
+        .iter()
+        .find(|status| status.protocol == "atxp")
+    {
         if !atxp_status.runtime_ready {
             tracing::warn!(
                 "ATXP service not runtime-ready at {}; skipping atxp registration ({})",
@@ -172,7 +176,10 @@ async fn main() {
             );
         }
     }
-    if let Some(ap2_status) = protocol_capabilities.iter().find(|status| status.protocol == "ap2") {
+    if let Some(ap2_status) = protocol_capabilities
+        .iter()
+        .find(|status| status.protocol == "ap2")
+    {
         if !ap2_status.runtime_ready {
             tracing::warn!(
                 "AP2 service not runtime-ready at {}; skipping ap2 registration ({})",
@@ -190,6 +197,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         catalog: Arc::new(catalog),
+        config: cfg.clone(),
         sessions: Mutex::new(HashMap::new()),
         protocols: protocol_map,
         protocol_capabilities,

@@ -179,6 +179,29 @@ def task_static_contracts(root: Path) -> float:
             "Building and starting commerce engine",
             "Starting frontend",
             "ATXP funding: curl http://localhost:3010/funding",
+            "cd sim && .venv/bin/python3 -m sim.engine",
+        ],
+        failures,
+    )
+    require_contains(
+        root / "docs/funding.md",
+        [
+            "treasury recycling",
+            "/evm/transfer-usdc",
+            "/evm/transfer-native",
+            "CDP treasury recycling",
+        ],
+        failures,
+    )
+    require_contains(
+        root / "services/cdp/src/index.ts",
+        [
+            'app.post("/evm/transfer-usdc"',
+            'app.post("/evm/transfer-native"',
+            "BASE_SEPOLIA_USDC",
+            "encodeErc20Transfer",
+            "treasury USDC transfers only support base-sepolia",
+            "treasury native transfers only support base-sepolia",
         ],
         failures,
     )
@@ -213,8 +236,24 @@ def task_static_contracts(root: Path) -> float:
         failures,
     )
     require_contains(
+        root / "web/src/routes/funding/+page.svelte",
+        ["/evm/transfer-usdc", "/evm/transfer-native"],
+        failures,
+    )
+    require_contains(
         root / "web/src/routes/api/funding/+server.ts",
         ["http://localhost:3010", "http://localhost:3030", "http://localhost:3040"],
+        failures,
+    )
+    require_contains(
+        root / "engine/src/routes/capabilities.rs",
+        [
+            "tokio::join!",
+            "AtxpAdapter::health_status",
+            "MppAdapter::health_status",
+            "Ap2Adapter::health_status",
+            "status.runtime_ready && status.integration == \"in_engine\"",
+        ],
         failures,
     )
 

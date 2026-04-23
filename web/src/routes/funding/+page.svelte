@@ -272,6 +272,8 @@
 				<pre>curl http://localhost:4080/capabilities</pre>
 				<pre>cd services/atxp && pnpm run recover</pre>
 				<pre>curl -X POST http://localhost:3030/evm/request-faucet -H 'content-type: application/json' -d '&#123;"address":"0x...","token":"eth"&#125;'</pre>
+				<pre>curl -X POST http://localhost:3030/evm/transfer-usdc -H 'content-type: application/json' -d '&#123;"fromAddress":"0xTREASURY","toAddress":"0xPAYER","amount":"0.10"&#125;'</pre>
+				<pre>curl -X POST http://localhost:3030/evm/transfer-native -H 'content-type: application/json' -d '&#123;"fromAddress":"0xTREASURY","toAddress":"0xPAYER","amount":"0.00001"&#125;'</pre>
 			</div>
 		</section>
 

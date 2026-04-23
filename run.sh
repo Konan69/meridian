@@ -232,7 +232,7 @@ echo "  ATXP funding: curl http://localhost:3010/funding"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Run simulation:"
-echo "  cd sim && .venv/bin/python -m sim.engine"
+echo "  cd sim && .venv/bin/python3 -m sim.engine"
 echo ""
 echo "Press Ctrl+C to stop all services"
 

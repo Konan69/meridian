@@ -50,7 +50,32 @@ async def test_atxp_service_health_and_tools():
             },
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         ) as resp:
-            # Unauthenticated MCP access should trigger an OAuth challenge.
+            # Tool discovery is public; execution remains protected.
+            assert resp.status == 200
+            body = await resp.json()
+            tools = body.get("result", {}).get("tools", [])
+            assert any(tool.get("name") == "stablecoin_transfer" for tool in tools)
+
+        async with session.post(
+            f"{ATXP_SERVICE_URL}/mcp",
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "stablecoin_transfer",
+                    "arguments": {
+                        "merchant": "atxp_test_merchant",
+                        "amountUsd": 0.01,
+                    },
+                },
+            },
+        ) as resp:
+            # Unauthenticated MCP execution should trigger an OAuth challenge.
             assert resp.status == 401
             assert (
                 resp.headers.get("WWW-Authenticate")
