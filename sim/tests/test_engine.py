@@ -4,7 +4,15 @@ import uuid
 import pytest
 
 from sim.commerce import CommerceClient
-from sim.types import Protocol, SimulationConfig, SimulationResult, AgentProfile, AgentRole
+from sim.types import (
+    AgentMemoryEvent,
+    AgentProfile,
+    AgentRole,
+    EconomyWorldEvent,
+    Protocol,
+    SimulationConfig,
+    SimulationResult,
+)
 from sim.agents import generate_agents
 from sim.scenarios import SCENARIOS, SCENARIO_DESCRIPTIONS
 from sim.report import ReportGenerator
@@ -441,6 +449,51 @@ def test_scenarios():
         assert len(SCENARIO_DESCRIPTIONS[name]) > 10, (
             f"Scenario '{name}' has a trivially short description"
         )
+
+
+def test_emergent_world_report_section():
+    """Report includes MiroFish-style world/memory state without a live engine."""
+    config = SimulationConfig(
+        num_agents=2,
+        num_rounds=1,
+        protocols=[Protocol.X402, Protocol.ATXP],
+        world_seed="test-agent-economy",
+        scenario_prompt="agents compare payment protocols",
+    )
+    result = SimulationResult(config=config)
+    result.trust_summary = {
+        "x402": {"avg": 0.72, "min": 0.61, "max": 0.83},
+        "atxp": {"avg": 0.66, "min": 0.55, "max": 0.77},
+    }
+    result.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_0001",
+            agent_name="Alice_1",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=0.05,
+            trust_before=0.6,
+            trust_after=0.65,
+            amount_cents=100,
+            reason="payment_settled",
+        )
+    ]
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=1,
+            event_type="round_closed",
+            summary="Round 1 closed with protocol trust changes.",
+        )
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    emergent = next((s for s in sections if s["title"] == "Emergent Agent Economy"), None)
+    assert emergent is not None
+    assert "test-agent-economy" in emergent["content"]
+    assert "Agent memory events: 1" in emergent["content"]
+    assert "X402" in emergent["content"]
 
 
 # ------------------------------------------------------------------

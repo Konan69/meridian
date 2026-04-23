@@ -10,6 +10,10 @@ export const POST: RequestHandler = async ({ request }) => {
     merchantsPerCategory = 3,
     flowMix,
     stableUniverse = "usdc_centric",
+    worldSeed = "meridian-protocol-economy",
+    scenarioPrompt = "",
+    marketLearningRate = 1,
+    socialMemoryStrength = 0.35,
   } = await request.json();
 
   // Path to the Python simulation
@@ -24,6 +28,10 @@ export const POST: RequestHandler = async ({ request }) => {
       MERIDIAN_ROUNDS: String(rounds),
       MERIDIAN_MERCHANTS_PER_CATEGORY: String(merchantsPerCategory),
       MERIDIAN_STABLE_UNIVERSE: String(stableUniverse),
+      MERIDIAN_WORLD_SEED: String(worldSeed),
+      MERIDIAN_SCENARIO_PROMPT: String(scenarioPrompt),
+      MERIDIAN_MARKET_LEARNING_RATE: String(marketLearningRate),
+      MERIDIAN_SOCIAL_MEMORY_STRENGTH: String(socialMemoryStrength),
       ...(Array.isArray(protocols) && protocols.length > 0
         ? { MERIDIAN_PROTOCOLS: protocols.join(",") }
         : {}),

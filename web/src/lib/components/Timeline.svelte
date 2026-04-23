@@ -17,6 +17,14 @@
     primitive?: string;
     route_id?: string;
     workload_type?: string;
+    agent_name?: string;
+    product_name?: string;
+    reason?: string;
+    summary?: string;
+    event_type?: string;
+    trust_before?: number;
+    trust_after?: number;
+    sentiment_delta?: number;
   }
 
   let { events = [] }: { events: TimelineEvent[] } = $props();
@@ -57,6 +65,14 @@
     }
   }
 
+  function actorName(evt: TimelineEvent) {
+    return evt.agent ?? evt.agent_name ?? 'World';
+  }
+
+  function eventBody(evt: TimelineEvent) {
+    return evt.product ?? evt.product_name ?? evt.summary ?? evt.reason ?? evt.event_type ?? '--';
+  }
+
   const typeBadgeStyles = {
     CHECKOUT:  { bg: 'rgba(59,130,246,0.15)', color: '#3b82f6', border: 'rgba(59,130,246,0.3)' },
     PAYMENT:   { bg: 'rgba(16,185,129,0.15)', color: '#10b981', border: 'rgba(16,185,129,0.3)' },
@@ -81,13 +97,15 @@
           <div class="event-card" style="animation-delay: {Math.min(idx * 30, 300)}ms">
         <div class="card-header">
           <div class="agent-info">
-            <div class="avatar" style:background={getAvatarColor(evt.agent ?? 'agent')}>
-              {evt.agent ? evt.agent[0].toUpperCase() : 'A'}
+            <div class="avatar" style:background={getAvatarColor(actorName(evt))}>
+              {actorName(evt)[0].toUpperCase()}
             </div>
-            <span class="agent-name">{evt.agent ?? 'Unknown'}</span>
+            <span class="agent-name">{actorName(evt)}</span>
           </div>
           <div class="header-badges">
-            <ProtocolBadge protocol={evt.protocol ?? 'acp'} />
+            {#if evt.protocol}
+              <ProtocolBadge protocol={evt.protocol} />
+            {/if}
             <span class="type-badge" style={badgeStyle(evt.type)}>
               {evt.type?.toUpperCase() ?? 'EVENT'}
             </span>
@@ -95,14 +113,14 @@
         </div>
 
         <div class="card-body">
-          <span class="product-name">{evt.product ?? '--'}</span>
+          <span class="product-name">{eventBody(evt)}</span>
           <span class="amount">{formatAmount(evt.amount_cents)}</span>
           {#if evt.fee_cents}
             <span class="fee">{formatFee(evt.fee_cents)}</span>
           {/if}
         </div>
 
-        {#if evt.merchant || evt.source_domain || evt.target_domain || evt.primitive || evt.route_id || evt.workload_type}
+        {#if evt.merchant || evt.source_domain || evt.target_domain || evt.primitive || evt.route_id || evt.workload_type || evt.trust_after}
           <div class="card-meta">
             {#if evt.merchant}<span>merchant: {evt.merchant}</span>{/if}
             {#if evt.source_domain}<span>from: {evt.source_domain}</span>{/if}
@@ -110,6 +128,7 @@
             {#if evt.primitive}<span>mode: {evt.primitive}</span>{/if}
             {#if evt.route_id}<span>route: {evt.route_id}</span>{/if}
             {#if evt.workload_type}<span>flow: {evt.workload_type}</span>{/if}
+            {#if evt.trust_after}<span>trust: {evt.trust_before?.toFixed(2)} → {evt.trust_after.toFixed(2)}</span>{/if}
           </div>
         {/if}
 

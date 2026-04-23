@@ -9,6 +9,8 @@ import random
 import sys
 import time
 from collections import defaultdict
+from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from .agents import generate_agents
@@ -22,8 +24,10 @@ from .types import (
     PROTOCOL_PREFERRED_WORKLOADS,
     PROTOCOL_PRIMITIVE_SUPPORT,
     PROTOCOL_TRAITS,
+    AgentMemoryEvent,
     AgentProfile,
     AgentRole,
+    EconomyWorldEvent,
     MerchantProfile,
     Protocol,
     ProtocolEcosystemState,
@@ -40,7 +44,7 @@ if TYPE_CHECKING:
 
 
 class SimulationEngine:
-    """Runs a stablecoin economy simulation across live payment rails."""
+    """Runs an agent economy simulation constrained by live payment protocols."""
 
     def __init__(self, config: SimulationConfig):
         self.config = config
@@ -54,6 +58,10 @@ class SimulationEngine:
         self.graph: Optional["CommerceGraphBuilder"] = None
         self.memory: Optional[MemoryUpdater] = None
         self.economy: Optional[StablecoinEconomy] = None
+        world_hash = sum((idx + 1) * ord(ch) for idx, ch in enumerate(config.world_seed))
+        self.world_id = f"world_{config.seed}_{world_hash % 1_000_000:06d}"
+        self.agent_memory_log: list[AgentMemoryEvent] = []
+        self.world_events: list[EconomyWorldEvent] = []
         self.active_protocols: list[Protocol] = list(self.config.protocols)
         self.protocol_state: dict[str, ProtocolEcosystemState] = {
             proto.value: ProtocolEcosystemState(
@@ -78,7 +86,147 @@ class SimulationEngine:
                 raise RuntimeError("MERIDIAN_USE_LLM is enabled but OPENCODE_API_KEY is not set")
 
     def _emit(self, event_type: str, data: dict):
-        print(json.dumps({"type": event_type, **data}), flush=True)
+        payload = {
+            "type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **data,
+        }
+        print(json.dumps(payload), flush=True)
+
+    def _record_world_event(
+        self,
+        summary: RoundSummary | None,
+        round_num: int,
+        event_type: str,
+        text: str,
+        *,
+        actor_id: str | None = None,
+        protocol: Protocol | str | None = None,
+        data: dict | None = None,
+    ):
+        protocol_value = protocol.value if isinstance(protocol, Protocol) else protocol
+        event = EconomyWorldEvent(
+            round_num=round_num,
+            event_type=event_type,
+            summary=text,
+            actor_id=actor_id,
+            protocol=protocol_value,
+            data=data or {},
+        )
+        self.world_events.append(event)
+        if summary is not None:
+            summary.world_events.append(event)
+        self._emit(
+            "world_event",
+            {
+                "world_id": self.world_id,
+                "round": round_num,
+                "event_type": event_type,
+                "summary": text,
+                "actor_id": actor_id,
+                "protocol": protocol_value,
+                "data": data or {},
+            },
+        )
+
+    def _protocol_trust_summary(self) -> dict[str, dict[str, float]]:
+        summary: dict[str, dict[str, float]] = {}
+        for protocol in self.active_protocols:
+            values = [
+                agent.protocol_trust.get(protocol.value, 0.6)
+                for agent in self.agents
+            ]
+            if not values:
+                summary[protocol.value] = {"avg": 0.0, "min": 0.0, "max": 0.0}
+                continue
+            summary[protocol.value] = {
+                "avg": round(sum(values) / len(values), 4),
+                "min": round(min(values), 4),
+                "max": round(max(values), 4),
+            }
+        return summary
+
+    def _apply_protocol_experience(
+        self,
+        agent: AgentProfile,
+        protocol: Protocol,
+        *,
+        success: bool,
+        ecosystem_pressure: float,
+    ) -> tuple[float, float, float]:
+        before = agent.protocol_trust.get(protocol.value, 0.6)
+        state = self.protocol_state.get(protocol.value)
+        reliability = state.reliability if state else 0.96
+        network_effect = state.network_effect if state else 0.0
+        social_boost = (
+            (network_effect - 0.45)
+            * agent.social_influence
+            * self.config.social_memory_strength
+            * 0.06
+        )
+        if success:
+            delta = (
+                0.035
+                + reliability * 0.018
+                + max(0.0, 1.0 - ecosystem_pressure) * 0.012
+                + social_boost
+            )
+        else:
+            delta = -(
+                0.08
+                + ecosystem_pressure * 0.04
+                + (1.0 - agent.risk_tolerance) * 0.025
+                - min(social_boost, 0.02)
+            )
+        delta *= self.config.market_learning_rate
+        after = max(0.05, min(1.0, before + delta))
+        agent.protocol_trust[protocol.value] = after
+        return before, after, after - before
+
+    def _record_agent_memory(
+        self,
+        summary: RoundSummary,
+        *,
+        round_num: int,
+        agent: AgentProfile,
+        protocol: Protocol,
+        workload_type: WorkloadType,
+        sentiment_delta: float,
+        trust_before: float,
+        trust_after: float,
+        amount_cents: int,
+        merchant: MerchantProfile | None,
+        product_name: str | None,
+        route_id: str | None,
+        reason: str,
+    ):
+        event = AgentMemoryEvent(
+            round_num=round_num,
+            agent_id=agent.agent_id,
+            agent_name=agent.name,
+            event_type="protocol_experience",
+            protocol=protocol.value,
+            workload_type=workload_type.value,
+            sentiment_delta=round(sentiment_delta, 4),
+            trust_before=round(trust_before, 4),
+            trust_after=round(trust_after, 4),
+            amount_cents=amount_cents,
+            merchant_id=merchant.merchant_id if merchant else None,
+            merchant_name=merchant.name if merchant else None,
+            product_name=product_name,
+            route_id=route_id,
+            reason=reason,
+        )
+        self.agent_memory_log.append(event)
+        summary.agent_memories.append(event)
+        self._emit(
+            "agent_memory",
+            {
+                "world_id": self.world_id,
+                "round": round_num,
+                **asdict(event),
+            },
+        )
 
     async def setup(self):
         healthy = await self.client.health()
@@ -128,12 +276,28 @@ class SimulationEngine:
         self._emit(
             "setup",
             {
+                "world_id": self.world_id,
+                "world_seed": self.config.world_seed,
+                "scenario_prompt": self.config.scenario_prompt,
                 "products": len(self.products),
                 "agents": len(self.agents),
                 "merchants": len(self.merchants),
                 "engine_url": self.config.engine_url,
                 "supported_protocols": [proto.value for proto in self.active_protocols],
                 "stable_universe": self.config.stable_universe,
+            },
+        )
+        self._record_world_event(
+            None,
+            0,
+            "world_seeded",
+            "Seeded protocol economy with agents, merchants, stablecoin domains, and payment rails.",
+            data={
+                "world_seed": self.config.world_seed,
+                "scenario_prompt": self.config.scenario_prompt,
+                "agents": len(self.agents),
+                "merchants": len(self.merchants),
+                "protocols": [proto.value for proto in self.active_protocols],
             },
         )
 
@@ -619,13 +783,32 @@ class SimulationEngine:
             record.target_domain = option["target_domain"].value
             record.primitive = route.primitive.value
             record.route_id = route.route_id
-            agent.spent += record.amount
-            agent.protocol_trust[option["protocol"].value] = min(
-                1.0, agent.protocol_trust.get(option["protocol"].value, 0.6) + 0.04
+            ecosystem_pressure = max(0.0, option["capacity_ratio"] - 1.0)
+            trust_before, trust_after, sentiment_delta = self._apply_protocol_experience(
+                agent,
+                option["protocol"],
+                success=True,
+                ecosystem_pressure=ecosystem_pressure,
             )
+            agent.spent += record.amount
             merchant.reputation = min(0.99, merchant.reputation + 0.01)
             summary.transactions.append(record)
             summary.route_executions.append(route_record)
+            self._record_agent_memory(
+                summary,
+                round_num=round_num,
+                agent=agent,
+                protocol=option["protocol"],
+                workload_type=workload_type,
+                sentiment_delta=sentiment_delta,
+                trust_before=trust_before,
+                trust_after=trust_after,
+                amount_cents=record.amount,
+                merchant=merchant,
+                product_name=product["name"],
+                route_id=route.route_id,
+                reason="payment_settled",
+            )
             summary.success_count += 1
             summary.total_volume += record.amount
             summary.total_fees += record.fee
@@ -646,8 +829,10 @@ class SimulationEngine:
                     "target_domain": option["target_domain"].value,
                     "primitive": route.primitive.value,
                     "route_id": route.route_id,
-                    "ecosystem_pressure": max(0.0, option["capacity_ratio"] - 1.0),
+                    "ecosystem_pressure": ecosystem_pressure,
                     "margin_delta_cents": margin_delta,
+                    "trust_before": round(trust_before, 4),
+                    "trust_after": round(trust_after, 4),
                     "workload_type": workload_type.value,
                     "round": round_num,
                 },
@@ -665,22 +850,41 @@ class SimulationEngine:
                 reservation_id=reservation.reservation_id,
                 reason=record.error or "payment_failed",
             )
+            ecosystem_pressure = max(0.0, option["capacity_ratio"] - 1.0)
             self._record_protocol_economics(
                 protocol=option["protocol"],
                 amount=price,
                 protocol_fee=0,
                 settlement_ms=PROTOCOL_TRAITS[option["protocol"]]["settlement_ms"],
                 success=False,
-                ecosystem_pressure=max(0.0, option["capacity_ratio"] - 1.0),
+                ecosystem_pressure=ecosystem_pressure,
                 route_id=route.route_id,
                 route_fee=route_record.route_fee_cents,
             )
-            agent.protocol_trust[option["protocol"].value] = max(
-                0.05, agent.protocol_trust.get(option["protocol"].value, 0.6) - 0.12
+            trust_before, trust_after, sentiment_delta = self._apply_protocol_experience(
+                agent,
+                option["protocol"],
+                success=False,
+                ecosystem_pressure=ecosystem_pressure,
             )
             merchant.reputation = max(0.2, merchant.reputation - 0.015)
             summary.transactions.append(record)
             summary.route_executions.append(route_record)
+            self._record_agent_memory(
+                summary,
+                round_num=round_num,
+                agent=agent,
+                protocol=option["protocol"],
+                workload_type=workload_type,
+                sentiment_delta=sentiment_delta,
+                trust_before=trust_before,
+                trust_after=trust_after,
+                amount_cents=price,
+                merchant=merchant,
+                product_name=product["name"],
+                route_id=route.route_id,
+                reason=record.error or "payment_failed",
+            )
             summary.fail_count += 1
             self._emit(
                 "purchase_failed",
@@ -694,6 +898,9 @@ class SimulationEngine:
                     "primitive": route.primitive.value,
                     "route_id": route.route_id,
                     "workload_type": workload_type.value,
+                    "ecosystem_pressure": ecosystem_pressure,
+                    "trust_before": round(trust_before, 4),
+                    "trust_after": round(trust_after, 4),
                     "round": round_num,
                 },
             )
@@ -809,7 +1016,7 @@ class SimulationEngine:
                 summary.route_executions.append(route_record)
                 summary.fail_count += 1
 
-    def _evolve_market(self, round_num: int):
+    def _evolve_market(self, round_num: int, summary: RoundSummary):
         ranked = sorted(
             self.protocol_state.values(),
             key=lambda state: (
@@ -859,6 +1066,52 @@ class SimulationEngine:
         self._refresh_protocol_market_state()
         for switch in switches:
             self._emit("merchant_switch", switch)
+            self._record_world_event(
+                summary,
+                round_num,
+                "merchant_protocol_mix_changed",
+                f"{switch['merchant']} {switch['action']} {switch['protocol'].upper()} after observing rail economics.",
+                actor_id=switch["merchant_id"],
+                protocol=switch["protocol"],
+                data=switch,
+            )
+
+        trust_shifts: list[dict] = []
+        for agent in self.agents:
+            if self.rng.random() > 0.08 * self.config.social_memory_strength:
+                continue
+            ranked_trust = sorted(
+                agent.protocol_trust.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            if not ranked_trust:
+                continue
+            best_protocol, best_trust = ranked_trust[0]
+            current = agent.protocol_preference.value if agent.protocol_preference else None
+            current_trust = agent.protocol_trust.get(current, 0.6) if current else 0.6
+            if best_protocol != current and best_trust - current_trust > 0.08:
+                agent.protocol_preference = Protocol(best_protocol)
+                shift = {
+                    "agent_id": agent.agent_id,
+                    "agent": agent.name,
+                    "protocol": best_protocol,
+                    "trust": round(best_trust, 4),
+                    "round": round_num,
+                }
+                trust_shifts.append(shift)
+
+        for shift in trust_shifts:
+            self._emit("agent_preference_shift", shift)
+            self._record_world_event(
+                summary,
+                round_num,
+                "agent_preference_shift",
+                f"{shift['agent']} now prefers {shift['protocol'].upper()} after accumulated payment memories.",
+                actor_id=shift["agent_id"],
+                protocol=shift["protocol"],
+                data=shift,
+            )
 
     async def run_round(self, round_num: int) -> RoundSummary:
         assert self.economy is not None
@@ -914,6 +1167,30 @@ class SimulationEngine:
                 },
             )
 
+        trust_summary = self._protocol_trust_summary()
+        self._emit(
+            "trust_snapshot",
+            {
+                "world_id": self.world_id,
+                "round": round_num,
+                "trust_summary": trust_summary,
+            },
+        )
+        self._record_world_event(
+            summary,
+            round_num,
+            "round_closed",
+            f"Round {round_num} closed with {summary.success_count} settled transactions and {summary.fail_count} failures.",
+            data={
+                "active_agents": summary.active_agents,
+                "success_count": summary.success_count,
+                "fail_count": summary.fail_count,
+                "volume_cents": summary.total_volume,
+                "fees_cents": summary.total_fees,
+                "trust_summary": trust_summary,
+            },
+        )
+
         self._emit(
             "round_complete",
             {
@@ -925,6 +1202,8 @@ class SimulationEngine:
                 "fees_cents": summary.total_fees,
                 "protocol_attempts": summary.protocol_attempts,
                 "route_usage": summary.route_usage,
+                "memory_events": len(summary.agent_memories),
+                "trust_summary": trust_summary,
             },
         )
 
@@ -958,7 +1237,7 @@ class SimulationEngine:
                 except Exception:
                     pass
 
-        self._evolve_market(round_num)
+        self._evolve_market(round_num, summary)
         return summary
 
     async def run(self) -> SimulationResult:
@@ -969,6 +1248,9 @@ class SimulationEngine:
         self._emit(
             "simulation_start",
             {
+                "world_id": self.world_id,
+                "world_seed": self.config.world_seed,
+                "scenario_prompt": self.config.scenario_prompt,
                 "agents": self.config.num_agents,
                 "rounds": self.config.num_rounds,
                 "merchants": len(self.merchants),
@@ -993,8 +1275,23 @@ class SimulationEngine:
         self.result.route_usage_summary = dict(self.economy.total_route_usage)
         self.result.float_summary = self.economy.snapshot_float_summary()
         self.result.treasury_distribution = self.economy.snapshot_treasury_distribution()
+        self.result.trust_summary = self._protocol_trust_summary()
+        self.result.agent_memory_log = list(self.agent_memory_log)
+        self.result.world_events = list(self.world_events)
 
         completion_data = {
+            "world_id": self.world_id,
+            "simulation_world": {
+                "world_id": self.world_id,
+                "world_seed": self.config.world_seed,
+                "scenario_prompt": self.config.scenario_prompt,
+                "stable_universe": self.config.stable_universe,
+                "agents": len(self.agents),
+                "merchants": len(self.merchants),
+                "protocols": [protocol.value for protocol in self.active_protocols],
+                "memory_events": len(self.result.agent_memory_log),
+                "world_events": len(self.result.world_events),
+            },
             "total_transactions": self.result.total_transactions,
             "total_volume_cents": self.result.total_volume,
             "duration_seconds": round(self.result.duration_seconds, 2),
@@ -1015,6 +1312,9 @@ class SimulationEngine:
             "treasury_distribution": self.result.treasury_distribution,
             "rail_pnl_history": self.result.rail_pnl_history,
             "balances": self.economy.snapshot_balances(),
+            "trust_summary": self.result.trust_summary,
+            "agent_memory_log": [asdict(event) for event in self.result.agent_memory_log[-500:]],
+            "world_events": [asdict(event) for event in self.result.world_events[-300:]],
         }
         if self.llm_engine:
             completion_data["llm_usage"] = self.llm_engine.usage_summary()
@@ -1089,10 +1389,14 @@ async def main():
         protocols=configured_protocols,
         engine_url=os.environ.get("MERIDIAN_ENGINE_URL", "http://localhost:4080"),
         seed=int(os.environ.get("MERIDIAN_SEED", "42")),
+        world_seed=os.environ.get("MERIDIAN_WORLD_SEED", "meridian-protocol-economy"),
+        scenario_prompt=os.environ.get("MERIDIAN_SCENARIO_PROMPT", ""),
         use_llm=use_llm,
         llm_model=os.environ.get("MERIDIAN_LLM_MODEL", "minimax-m2.5"),
         merchants_per_category=int(os.environ.get("MERIDIAN_MERCHANTS_PER_CATEGORY", "3")),
         stable_universe=os.environ.get("MERIDIAN_STABLE_UNIVERSE", "usdc_centric"),
+        market_learning_rate=float(os.environ.get("MERIDIAN_MARKET_LEARNING_RATE", "1.0")),
+        social_memory_strength=float(os.environ.get("MERIDIAN_SOCIAL_MEMORY_STRENGTH", "0.35")),
         flow_mix=flow_mix
         or {
             WorkloadType.API_MICRO: 0.55,
