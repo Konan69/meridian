@@ -4,7 +4,9 @@ import type {
   EconomyWorldEvent,
   ProtoMetrics,
   ProtocolEcosystem,
+  RoutePressureSummary,
   SimEvent,
+  TreasuryPostureSummary,
 } from './stores/simulation.svelte';
 
 export type TrustSummary = Record<string, { avg: number; min: number; max: number }>;
@@ -91,9 +93,13 @@ export function normalizeAgentMemoryEvent(event: SimEvent): AgentMemoryEvent | n
     sentiment_delta: numberFrom(event.sentiment_delta) ?? 0,
     trust_before: trustBefore,
     trust_after: numberFrom(event.trust_after, event.trust) ?? trustBefore,
+    outcome: nullableText(event.outcome) ?? undefined,
+    trust_driver: nullableText(event.trust_driver) ?? undefined,
+    ecosystem_pressure: numberFrom(event.ecosystem_pressure) ?? undefined,
     amount_cents: wholeNumberFrom(event.amount_cents) ?? 0,
     merchant_id: nullableText(event.merchant_id),
     merchant_name: nullableText(event.merchant_name) ?? nullableText(event.merchant),
+    merchant_reputation: numberFrom(event.merchant_reputation),
     product_name: nullableText(event.product_name) ?? nullableText(event.product),
     route_id: nullableText(event.route_id),
     reason: textFrom(event.reason) ?? textFrom(event.summary) ?? 'memory_event',
@@ -253,6 +259,56 @@ export function normalizeNumberArrayRecord(value: unknown): Record<string, numbe
       return values.length === 0 ? [] : [[key, values]];
     }),
   );
+}
+
+export function normalizeRoutePressureSummaries(value: unknown): RoutePressureSummary[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw) => {
+    const item = asRecord(raw);
+    if (!item) return [];
+    const routeId = textFrom(item.route_id);
+    if (!routeId) return [];
+
+    return [{
+      route_id: routeId,
+      source_domain: textFrom(item.source_domain) ?? 'unknown',
+      target_domain: textFrom(item.target_domain) ?? 'unknown',
+      primitive: textFrom(item.primitive) ?? 'unknown',
+      protocols: Array.isArray(item.protocols)
+        ? item.protocols.flatMap((rawProtocol) => {
+          const protocol = textFrom(rawProtocol);
+          return protocol ? [protocol] : [];
+        })
+        : [],
+      total_usage_cents: wholeNumberFrom(item.total_usage_cents) ?? 0,
+      max_capacity_ratio: numberFrom(item.max_capacity_ratio) ?? 0,
+      pressure_rounds: wholeNumberFrom(item.pressure_rounds) ?? 0,
+      last_pressure_level: textFrom(item.last_pressure_level) ?? 'unknown',
+    }];
+  });
+}
+
+export function normalizeTreasuryPostureSummaries(value: unknown): TreasuryPostureSummary[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw) => {
+    const item = asRecord(raw);
+    if (!item) return [];
+    const merchantId = textFrom(item.merchant_id);
+    if (!merchantId) return [];
+
+    return [{
+      merchant_id: merchantId,
+      merchant: textFrom(item.merchant) ?? merchantId,
+      preferred_domain: textFrom(item.preferred_domain) ?? 'unknown',
+      max_preferred_shortfall_cents: wholeNumberFrom(item.max_preferred_shortfall_cents) ?? 0,
+      min_preferred_ratio: numberFrom(item.min_preferred_ratio) ?? 1,
+      rebalance_ready_rounds: wholeNumberFrom(item.rebalance_ready_rounds) ?? 0,
+      last_preferred_ratio: numberFrom(item.last_preferred_ratio) ?? 1,
+      last_total_treasury_cents: wholeNumberFrom(item.last_total_treasury_cents) ?? 0,
+    }];
+  });
 }
 
 export function numberFrom(...values: unknown[]) {
