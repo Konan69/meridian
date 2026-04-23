@@ -531,7 +531,7 @@ def python_sim_trace_metadata(root: Path) -> dict[str, Any]:
             "validation_commands": [
                 "python3 -m venv when dependency cache marker is missing",
                 "python3 -m pip install pytest dependencies when marker is missing",
-                "python3 -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q",
+                "python3 -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios tests/test_engine.py::test_self_sustainability_report_uses_raw_route_pressure_events_without_summary -q",
             ],
             "cache_note": "The keyed dependency venv may skip reinstalling wheels, but pytest still runs.",
         },
@@ -1055,7 +1055,7 @@ def task_python_tests(root: Path) -> float:
         '--prefer-binary "aiohttp>=3.9.0" "pytest>=8.0" "pytest-asyncio>=0.23" && '
         'touch "$READY"; '
         'fi && '
-        'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" "$VENVDIR/bin/python3" -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q',
+        'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" "$VENVDIR/bin/python3" -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios tests/test_engine.py::test_self_sustainability_report_uses_raw_route_pressure_events_without_summary -q',
         cwd=root / "sim",
         timeout=120,
         target_seconds=14,
@@ -1244,6 +1244,22 @@ def task_web_check(root: Path) -> float:
     )
 
 
+BENCHMARK_PROFILE_TASK_IDS = [
+    "static_contracts",
+    "python_compile",
+    "python_sim_tests",
+    "rust_engine_tests",
+    "service_builds_summary",
+    "service_offline_protocol_tests",
+    "web_check_build",
+]
+
+GATE_PROFILE_TASK_IDS = [
+    "static_contracts",
+    "python_compile",
+]
+
+
 def task_runners() -> dict[str, Any]:
     return {
         "static_contracts": task_static_contracts,
@@ -1261,6 +1277,41 @@ def task_runners() -> dict[str, Any]:
         "service_offline_protocol_tests": task_service_offline_protocol_tests,
         "web_check_build": task_web_check,
     }
+
+
+def task_catalog() -> list[dict[str, Any]]:
+    benchmark_tasks = set(BENCHMARK_PROFILE_TASK_IDS)
+    gate_tasks = set(GATE_PROFILE_TASK_IDS)
+    catalog = []
+    for task_id in task_runners():
+        catalog.append(
+            {
+                "task_id": task_id,
+                "benchmark_profile": task_id in benchmark_tasks,
+                "gate_profile": task_id in gate_tasks,
+            }
+        )
+    return catalog
+
+
+def list_tasks() -> float:
+    print(
+        json.dumps(
+            {
+                "tasks": task_catalog(),
+                "profiles": {
+                    "benchmark": BENCHMARK_PROFILE_TASK_IDS,
+                    "gate": GATE_PROFILE_TASK_IDS,
+                },
+                "manual_selection": {
+                    "single": "--task-id web_check_build",
+                    "multiple": "--task-ids service_offline_cdp,web_check_build",
+                },
+            },
+            indent=2,
+        )
+    )
+    return 0.0
 
 
 def parse_task_selection(
@@ -1308,31 +1359,27 @@ def run_selected_tasks(root: Path, selected_task_ids: list[str], profile: str) -
 
 
 def run_benchmark(root: Path) -> float:
-    scores = [
-        task_static_contracts(root),
-        task_python_compile(root),
-        task_python_tests(root),
-        task_rust_tests(root),
-        task_service_builds(root),
-        task_service_offline_protocol_tests(root),
-        task_web_check(root),
-    ]
+    runners = task_runners()
+    scores = [runners[task_id](root) for task_id in BENCHMARK_PROFILE_TASK_IDS]
     return write_result(sum(scores) / len(scores))
 
 
 def run_gate(root: Path) -> float:
-    scores = [
-        task_static_contracts(root),
-        task_python_compile(root),
-    ]
+    runners = task_runners()
+    scores = [runners[task_id](root) for task_id in GATE_PROFILE_TASK_IDS]
     return write_result(sum(scores) / len(scores))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", required=True)
+    parser.add_argument("--target")
     parser.add_argument("--profile", choices=["benchmark", "gate"], default="benchmark")
     parser.add_argument("--min-score", type=float)
+    parser.add_argument(
+        "--list-tasks",
+        action="store_true",
+        help="Print valid manual task ids and default profile membership, then exit.",
+    )
     parser.add_argument(
         "--task-id",
         action="append",
@@ -1345,6 +1392,13 @@ def main() -> int:
         help="Comma-separated task ids for manual validation.",
     )
     args = parser.parse_args()
+
+    if args.list_tasks:
+        list_tasks()
+        return 0
+
+    if not args.target:
+        raise SystemExit("--target is required unless --list-tasks is used")
 
     root = Path(args.target).resolve()
     if not root.is_dir():

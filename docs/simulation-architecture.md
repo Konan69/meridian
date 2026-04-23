@@ -110,8 +110,9 @@ readiness.
 For synthetic summary tasks such as `service_builds_summary`, inspect
 `trace_metadata.aggregation.component_tasks`; the summary is only an average,
 and the component task traces show the real commands and caches.
-For local validation, `benchmark_whole_app.py` accepts explicit task selection:
-pass `--task-id web_check_build` repeatedly, or use
+For local validation, `benchmark_whole_app.py --list-tasks` prints every valid
+task id and marks the default benchmark and gate profile members. Explicit task
+selection accepts `--task-id web_check_build` repeatedly, or
 `--task-ids service_offline_cdp,web_check_build`. Selection is opt-in; the
 default `--profile benchmark` and `--profile gate` task lists still run their
 normal coverage, and selected tasks still execute their real install, build,

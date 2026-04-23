@@ -59,6 +59,10 @@ Report grounding:
 - When only raw `world_events` entries with `event_type="route_pressure"` are
   available, reports should preserve the same visible no-route fields:
   `reason`, `failure_count`, and `pressure_level`.
+- Raw no-route events may carry the same operational context under treasury
+  failure field names such as `accepted_protocols`, `amount_cents`, and
+  `error`; reports should fold those into the existing route-pressure readout
+  instead of requiring a new summary payload.
 - Do not add a compact `self_sustainability_summary`. Keeping the report tied
   to source fields makes route capacity, treasury fit, margin, and memory
   drivers auditable in the stream and final payload.

@@ -22,6 +22,7 @@ const DOMAIN_FIELDS = new Set([
   "verifyingContract",
   "salt",
 ]);
+const TYPE_FIELD_KEYS = new Set(["name", "type"]);
 
 export class SignTypedDataRequestError extends Error {
   constructor(message: string) {
@@ -34,6 +35,24 @@ const { asRecord, requiredAddress, requiredNonEmptyString, optionalNonEmptyStrin
   makeRequestValidator(
     (message) => new SignTypedDataRequestError(message),
   );
+
+function ownValue(record: Record<string, unknown>, key: string, name: string): unknown {
+  if (!Object.hasOwn(record, key)) {
+    throw new SignTypedDataRequestError(`${name} is required`);
+  }
+  return record[key];
+}
+
+function optionalOwnValue(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function requiredExactNonEmptyString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new SignTypedDataRequestError(`${name} must be a non-empty string`);
+  }
+  return value;
+}
 
 function optionalSafeInteger(value: unknown, name: string): number | undefined {
   if (value === undefined || value === null) {
@@ -70,14 +89,18 @@ function normalizeDomain(value: unknown): SignTypedDataOptions["domain"] {
   }
 
   return {
-    name: optionalNonEmptyString(domain.name, "domain.name"),
-    version: optionalNonEmptyString(domain.version, "domain.version"),
-    chainId: optionalSafeInteger(domain.chainId, "domain.chainId"),
+    name: optionalNonEmptyString(optionalOwnValue(domain, "name"), "domain.name"),
+    version: optionalNonEmptyString(optionalOwnValue(domain, "version"), "domain.version"),
+    chainId: optionalSafeInteger(optionalOwnValue(domain, "chainId"), "domain.chainId"),
     verifyingContract:
-      domain.verifyingContract === undefined || domain.verifyingContract === null
+      optionalOwnValue(domain, "verifyingContract") === undefined ||
+      optionalOwnValue(domain, "verifyingContract") === null
         ? undefined
-        : requiredAddress(domain.verifyingContract, "domain.verifyingContract"),
-    salt: optionalHex32(domain.salt, "domain.salt"),
+        : requiredAddress(
+            optionalOwnValue(domain, "verifyingContract"),
+            "domain.verifyingContract",
+          ),
+    salt: optionalHex32(optionalOwnValue(domain, "salt"), "domain.salt"),
   };
 }
 
@@ -92,35 +115,72 @@ function normalizeTypes(value: unknown): SignTypedDataOptions["types"] {
     if (!Array.isArray(fields) || fields.length === 0) {
       throw new SignTypedDataRequestError(`types.${typeName} must be a non-empty array`);
     }
+    const fieldNames = new Set<string>();
     normalized[typeName] = fields.map((field, index) => {
       const fieldRecord = asRecord(field, `types.${typeName}[${index}]`);
-      return {
-        name: requiredNonEmptyString(fieldRecord.name, `types.${typeName}[${index}].name`),
-        type: requiredNonEmptyString(fieldRecord.type, `types.${typeName}[${index}].type`),
+      for (const key of Object.keys(fieldRecord)) {
+        if (!TYPE_FIELD_KEYS.has(key)) {
+          throw new SignTypedDataRequestError(`types.${typeName}[${index}].${key} is not supported`);
+        }
+      }
+      const normalizedField = {
+        name: requiredExactNonEmptyString(
+          ownValue(fieldRecord, "name", `types.${typeName}[${index}].name`),
+          `types.${typeName}[${index}].name`,
+        ),
+        type: requiredExactNonEmptyString(
+          ownValue(fieldRecord, "type", `types.${typeName}[${index}].type`),
+          `types.${typeName}[${index}].type`,
+        ),
       };
+      if (fieldNames.has(normalizedField.name)) {
+        throw new SignTypedDataRequestError(`types.${typeName} contains duplicate field ${normalizedField.name}`);
+      }
+      fieldNames.add(normalizedField.name);
+      return normalizedField;
     });
   }
 
   return normalized;
 }
 
+function normalizeMessage(
+  value: unknown,
+  primaryType: string,
+  fields: { name: string; type: string }[],
+): SignTypedDataOptions["message"] {
+  const message = asRecord(value, "message");
+  for (const field of fields) {
+    if (!Object.hasOwn(message, field.name)) {
+      throw new SignTypedDataRequestError(`message.${field.name} is required by primaryType ${primaryType}`);
+    }
+  }
+  return message;
+}
+
 export function normalizeSignTypedDataRequest(body: unknown): SignTypedDataOptions {
   const record = asRecord(body, "request body");
-  const types = normalizeTypes(record.types);
-  const primaryType = requiredNonEmptyString(record.primaryType, "primaryType");
+  const types = normalizeTypes(ownValue(record, "types", "types"));
+  const primaryType = requiredExactNonEmptyString(
+    ownValue(record, "primaryType", "primaryType"),
+    "primaryType",
+  );
   if (!Object.hasOwn(types, primaryType)) {
     throw new SignTypedDataRequestError("primaryType must be defined in types");
   }
 
   const options: SignTypedDataOptions = {
-    address: requiredAddress(record.address, "address"),
-    domain: normalizeDomain(record.domain),
+    address: requiredAddress(ownValue(record, "address", "address"), "address"),
+    domain: normalizeDomain(ownValue(record, "domain", "domain")),
     types,
     primaryType,
-    message: asRecord(record.message, "message"),
+    message: normalizeMessage(ownValue(record, "message", "message"), primaryType, types[primaryType]),
   };
 
-  const idempotencyKey = optionalNonEmptyString(record.idempotencyKey, "idempotencyKey");
+  const idempotencyKey = optionalNonEmptyString(
+    optionalOwnValue(record, "idempotencyKey"),
+    "idempotencyKey",
+  );
   if (idempotencyKey !== undefined) {
     options.idempotencyKey = idempotencyKey;
   }

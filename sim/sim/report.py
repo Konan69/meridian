@@ -43,18 +43,34 @@ def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
         if not isinstance(data, dict):
             continue
 
+        reason = str(data.get("reason") or data.get("error") or "")
+        source_domain = data.get("source_domain") or "unknown_source"
+        target_domain = data.get("target_domain") or "unknown_target"
         route_id = str(data.get("route_id") or "")
+        if (
+            not route_id
+            and reason == "no_feasible_rebalance_route"
+            and source_domain != "unknown_source"
+            and target_domain != "unknown_target"
+        ):
+            route_id = f"treasury_rebalance_unroutable:{source_domain}->{target_domain}"
         if not route_id:
             continue
+        protocols = data.get("protocols")
+        if not isinstance(protocols, list):
+            protocols = data.get("accepted_protocols")
+        if not isinstance(protocols, list):
+            actor_protocol = getattr(event, "protocol", None) or getattr(event, "actor_id", None)
+            protocols = [actor_protocol] if actor_protocol else []
 
         row = rows.setdefault(
             route_id,
             {
                 "route_id": route_id,
-                "source_domain": data.get("source_domain") or "unknown_source",
-                "target_domain": data.get("target_domain") or "unknown_target",
+                "source_domain": source_domain,
+                "target_domain": target_domain,
                 "primitive": data.get("primitive") or "unknown",
-                "protocols": data.get("protocols") if isinstance(data.get("protocols"), list) else [],
+                "protocols": protocols,
                 "total_usage_cents": 0,
                 "max_capacity_ratio": 0.0,
                 "pressure_rounds": 0,
@@ -62,8 +78,10 @@ def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
                 "_source": "world_events.route_pressure",
             },
         )
+        if not row.get("protocols") and protocols:
+            row["protocols"] = protocols
         row["total_usage_cents"] += _as_int(
-            data.get("total_usage_cents", data.get("usage_cents", 0))
+            data.get("total_usage_cents", data.get("usage_cents", data.get("amount_cents", 0)))
         )
         row["max_capacity_ratio"] = max(
             _as_float(row.get("max_capacity_ratio", 0)),
@@ -80,7 +98,7 @@ def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
             row["pressure_rounds"] += 1
         row["last_pressure_level"] = pressure_level
 
-        reason = str(data.get("reason") or row.get("reason") or "")
+        reason = str(reason or row.get("reason") or "")
         if reason:
             row["reason"] = reason
 

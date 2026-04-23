@@ -1,4 +1,9 @@
 import {
+  buildNoRoutePressureRows,
+  buildRoutePressureRows,
+  formatRoutePressureLabel,
+} from './routePressureDisplay';
+import {
   normalizeAgentMemoryEvent,
   normalizeAgentMemoryEvents,
   normalizeEcosystemSummary,
@@ -289,6 +294,59 @@ const economyObservabilityState: EconomyObservabilityStoreFields = {
   worldEvents: simState.worldEvents,
   events: simState.events,
 };
+const routePressureDisplayRows = buildRoutePressureRows([
+  {
+    route_id: 'ordinary-high-capacity',
+    source_domain: 'ap2',
+    target_domain: 'x402',
+    primitive: 'settlement',
+    protocols: ['ap2'],
+    total_usage_cents: 25000,
+    max_capacity_ratio: 1.4,
+    pressure_rounds: 5,
+    last_pressure_level: 'elevated',
+  },
+  {
+    route_id: 'treasury_rebalance_unroutable:tempo_usd->base_usdc',
+    source_domain: 'tempo_usd',
+    target_domain: 'base_usdc',
+    primitive: 'treasury_rebalance',
+    protocols: ['mpp'],
+    total_usage_cents: 12000,
+    max_capacity_ratio: 0.8,
+    pressure_rounds: 2,
+    last_pressure_level: 'critical',
+    reason: 'no_feasible_rebalance_route',
+    merchant: 'Merchant Test',
+    failure_count: 2,
+  },
+  {
+    route_id: 'ordinary-failed-route',
+    source_domain: 'cdp-base',
+    target_domain: 'ap2',
+    primitive: 'settlement',
+    protocols: ['cdp'],
+    total_usage_cents: 4000,
+    max_capacity_ratio: 0.55,
+    pressure_rounds: 1,
+    last_pressure_level: 'medium',
+    failure_count: 1,
+  },
+]);
+const noRoutePressureRows = buildNoRoutePressureRows(routePressureDisplayRows.map((row) => ({
+  route_id: row.route,
+  source_domain: row.domains.split(' to ')[0] ?? 'unknown',
+  target_domain: row.domains.split(' to ')[1] ?? 'unknown',
+  primitive: 'display_contract',
+  protocols: row.protocols,
+  total_usage_cents: row.usageCents,
+  max_capacity_ratio: row.capacityRatio,
+  pressure_rounds: row.pressureRounds,
+  last_pressure_level: row.level,
+  reason: row.reason,
+  merchant: row.merchant,
+  failure_count: row.failureCount ?? undefined,
+})));
 
 export const streamNormalizationContract = {
   route: {
@@ -371,6 +429,15 @@ export const streamNormalizationContract = {
     unroutableFailureCount: treasuryUnroutablePressure[0]?.failure_count,
     unroutableAcceptedProtocol: treasuryUnroutablePressure[0]?.protocols[0],
   }),
+  routePressureDisplay: requireRoutePressureDisplayContract({
+    firstRoute: routePressureDisplayRows[0]?.route,
+    firstReason: routePressureDisplayRows[0]?.reason,
+    firstLabel: formatRoutePressureLabel(routePressureDisplayRows[0]?.reason ?? ''),
+    firstDomains: routePressureDisplayRows[0]?.domains,
+    firstProtocol: routePressureDisplayRows[0]?.protocols[0],
+    noRouteRoutes: noRoutePressureRows.map((row) => row.route),
+    noRouteReasons: noRoutePressureRows.map((row) => row.reason),
+  }),
 };
 
 type EconomyObservabilityContract = {
@@ -400,6 +467,16 @@ type EconomyObservabilityContract = {
   unroutableReason?: unknown;
   unroutableFailureCount?: unknown;
   unroutableAcceptedProtocol?: unknown;
+};
+
+type RoutePressureDisplayContract = {
+  firstRoute?: unknown;
+  firstReason?: unknown;
+  firstLabel: string;
+  firstDomains?: unknown;
+  firstProtocol?: unknown;
+  noRouteRoutes: string[];
+  noRouteReasons: (string | null)[];
 };
 
 function requireMemory(memory: AgentMemoryEvent | null): AgentMemoryEvent {
@@ -498,6 +575,37 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.unroutableAcceptedProtocol !== 'mpp') {
     throw new Error('economy observability contract failed unroutable accepted protocol alias');
+  }
+  return contract;
+}
+
+function requireRoutePressureDisplayContract(contract: RoutePressureDisplayContract): RoutePressureDisplayContract {
+  if (contract.firstRoute !== 'treasury_rebalance_unroutable:tempo_usd->base_usdc') {
+    throw new Error('route pressure display contract failed no-route ordering');
+  }
+  if (contract.firstReason !== 'no_feasible_rebalance_route') {
+    throw new Error('route pressure display contract failed no-route reason');
+  }
+  if (contract.firstLabel !== 'no feasible rebalance route') {
+    throw new Error('route pressure display contract failed label formatting');
+  }
+  if (contract.firstDomains !== 'tempo_usd to base_usdc') {
+    throw new Error('route pressure display contract failed domain label');
+  }
+  if (contract.firstProtocol !== 'mpp') {
+    throw new Error('route pressure display contract failed protocol label');
+  }
+  if (!contract.noRouteRoutes.includes('treasury_rebalance_unroutable:tempo_usd->base_usdc')) {
+    throw new Error('route pressure display contract dropped no-route treasury evidence');
+  }
+  if (!contract.noRouteRoutes.includes('ordinary-failed-route')) {
+    throw new Error('route pressure display contract dropped failed pressure evidence');
+  }
+  if (contract.noRouteRoutes.includes('ordinary-high-capacity')) {
+    throw new Error('route pressure display contract included pressure without no-route or failure evidence');
+  }
+  if (!contract.noRouteReasons.includes('no_feasible_rebalance_route')) {
+    throw new Error('route pressure display contract lost no-route reason in filtered rows');
   }
   return contract;
 }
