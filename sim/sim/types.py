@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class Protocol(str, Enum):
@@ -322,12 +322,16 @@ class SimulationConfig:
     protocols: list[Protocol] = field(default_factory=lambda: list(Protocol))
     engine_url: str = "http://localhost:4080"
     seed: int = 42
+    world_seed: str = "meridian-protocol-economy"
+    scenario_prompt: str = ""
     agent_budget_range: tuple[int, int] = (5000, 50000)
     use_llm: bool = False
     llm_model: str = "minimax-m2.5"
     merchants_per_category: int = 3
     max_active_ratio: float = 0.45
     stable_universe: str = "usdc_centric"
+    market_learning_rate: float = 1.0
+    social_memory_strength: float = 0.35
     flow_mix: dict[WorkloadType | str, float] = field(
         default_factory=lambda: {
             WorkloadType.API_MICRO: 0.55,
@@ -350,6 +354,37 @@ class SimulationConfig:
         self.flow_mix = {
             workload: value / total for workload, value in normalized.items()
         }
+        self.market_learning_rate = max(0.0, min(2.0, self.market_learning_rate))
+        self.social_memory_strength = max(0.0, min(1.0, self.social_memory_strength))
+
+
+@dataclass
+class AgentMemoryEvent:
+    round_num: int
+    agent_id: str
+    agent_name: str
+    event_type: str
+    protocol: str
+    workload_type: str
+    sentiment_delta: float
+    trust_before: float
+    trust_after: float
+    amount_cents: int = 0
+    merchant_id: Optional[str] = None
+    merchant_name: Optional[str] = None
+    product_name: Optional[str] = None
+    route_id: Optional[str] = None
+    reason: str = ""
+
+
+@dataclass
+class EconomyWorldEvent:
+    round_num: int
+    event_type: str
+    summary: str
+    actor_id: Optional[str] = None
+    protocol: Optional[str] = None
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -382,6 +417,8 @@ class RoundSummary:
     round_num: int
     transactions: list[TransactionRecord] = field(default_factory=list)
     route_executions: list[RouteExecutionRecord] = field(default_factory=list)
+    agent_memories: list[AgentMemoryEvent] = field(default_factory=list)
+    world_events: list[EconomyWorldEvent] = field(default_factory=list)
     total_volume: int = 0
     total_fees: int = 0
     success_count: int = 0
@@ -400,6 +437,9 @@ class SimulationResult:
     config: SimulationConfig
     rounds: list[RoundSummary] = field(default_factory=list)
     protocol_summaries: dict = field(default_factory=dict)
+    trust_summary: dict[str, dict[str, float]] = field(default_factory=dict)
+    agent_memory_log: list[AgentMemoryEvent] = field(default_factory=list)
+    world_events: list[EconomyWorldEvent] = field(default_factory=list)
     total_transactions: int = 0
     total_volume: int = 0
     duration_seconds: float = 0.0

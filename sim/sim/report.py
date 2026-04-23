@@ -32,6 +32,7 @@ class ReportGenerator:
         sections: list[dict] = []
         sections.append(self._executive_summary())
         sections.append(self._ecosystem_summary())
+        sections.append(self._emergent_world_summary())
         sections.append(self._float_summary())
         sections.extend(self._per_protocol_sections())
         sections.append(self._comparative_ranking())
@@ -90,6 +91,44 @@ class ReportGenerator:
                 f"congestion={state.congestion:.2f}, scale_pressure={state.scale_pressure:.2f}"
             )
         return {"title": "Ecosystem Dynamics", "content": "\n".join(lines), "status": "ok"}
+
+    def _emergent_world_summary(self) -> dict:
+        memory_count = len(self.result.agent_memory_log)
+        world_count = len(self.result.world_events)
+        if memory_count == 0 and world_count == 0 and not self.result.trust_summary:
+            return {
+                "title": "Emergent Agent Economy",
+                "content": "No agent memory or world-event data available.",
+                "status": "empty",
+            }
+
+        lines = [
+            f"World seed: {self.result.config.world_seed}",
+            f"Agent memory events: {memory_count}",
+            f"World events: {world_count}",
+        ]
+        if self.result.config.scenario_prompt:
+            lines.append(f"Scenario prompt: {self.result.config.scenario_prompt}")
+
+        if self.result.trust_summary:
+            lines.append("")
+            lines.append("Protocol trust across agents:")
+            for proto_name in _PROTO_ORDER:
+                trust = self.result.trust_summary.get(proto_name)
+                if not trust:
+                    continue
+                lines.append(
+                    f"  {proto_name.upper()}: avg={trust.get('avg', 0):.2f}, "
+                    f"min={trust.get('min', 0):.2f}, max={trust.get('max', 0):.2f}"
+                )
+
+        if self.result.world_events:
+            lines.append("")
+            lines.append("Recent world events:")
+            for event in self.result.world_events[-5:]:
+                lines.append(f"  R{event.round_num}: {event.summary}")
+
+        return {"title": "Emergent Agent Economy", "content": "\n".join(lines), "status": "ok"}
 
     def _float_summary(self) -> dict:
         if not self.result.float_summary:

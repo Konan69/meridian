@@ -25,8 +25,7 @@ impl Default for Config {
             },
             public_base_url: std::env::var("MERIDIAN_PUBLIC_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:4080".into()),
-            cdp_service_url: std::env::var("CDP_SERVICE_URL")
-                .expect("CDP_SERVICE_URL must be set"),
+            cdp_service_url: std::env::var("CDP_SERVICE_URL").expect("CDP_SERVICE_URL must be set"),
             stripe_service_url: std::env::var("STRIPE_SERVICE_URL")
                 .unwrap_or_else(|_| "http://localhost:3020".into()),
             atxp_service_url: std::env::var("ATXP_SERVICE_URL")

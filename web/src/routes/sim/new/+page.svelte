@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { simState, type SimStep } from '$lib/stores/simulation.svelte';
-	import type { BalanceSnapshot, ProtoMetrics, ProtocolEcosystem } from '$lib/stores/simulation.svelte';
+	import type {
+		AgentMemoryEvent,
+		BalanceSnapshot,
+		EconomyWorldEvent,
+		ProtoMetrics,
+		ProtocolEcosystem,
+	} from '$lib/stores/simulation.svelte';
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import GraphPanel from '$lib/components/GraphPanel.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
@@ -92,8 +98,19 @@
 		const routeLines = Object.entries(simState.routeUsage)
 			.sort(([, a], [, b]) => b - a)
 			.map(([route, count]) => `  ${route}: ${count}`);
+		const trustLines = Object.entries(simState.trustSummary).map(([protocol, trust]) =>
+			`  ${protocol.toUpperCase()}: avg ${trust.avg.toFixed(2)}, min ${trust.min.toFixed(2)}, max ${trust.max.toFixed(2)}`
+		);
+		const memoryLines = simState.agentMemories.slice(-8).map((memory) =>
+			`  R${memory.round_num} ${memory.agent_name}: ${memory.protocol.toUpperCase()} trust ${memory.trust_before.toFixed(2)} -> ${memory.trust_after.toFixed(2)} (${memory.reason})`
+		);
+		const worldLines = simState.worldEvents.slice(-8).map((event) =>
+			`  R${event.round_num}: ${event.summary}`
+		);
 		const lines = [
 			`Simulation: ${simState.totalTxns} transactions, volume ${fmt(simState.totalVolume)}, duration ${simState.elapsed}, ${simState.config.num_agents} agents, ${simState.config.num_rounds} rounds.`,
+			`World seed: ${simState.config.worldSeed}.`,
+			simState.config.scenarioPrompt ? `Scenario: ${simState.config.scenarioPrompt}` : '',
 			`Engine-supported protocols: ${supportedProtocols.map((protocol) => protocol.toUpperCase()).join(', ')}.`,
 			'Protocol readiness:',
 			...capabilityLines,
@@ -107,8 +124,14 @@
 			...floatLines,
 			'Route usage:',
 			...routeLines,
+			'Agent trust:',
+			...trustLines,
+			'Recent agent memories:',
+			...memoryLines,
+			'Recent world events:',
+			...worldLines,
 		];
-		return lines.join('\n');
+		return lines.filter(Boolean).join('\n');
 	}
 
 	async function handleChatSend(message: string) {
@@ -173,6 +196,7 @@
 		protocol?: unknown;
 		amount_cents?: unknown;
 	};
+	const timelineTypes = new Set(['purchase', 'purchase_failed', 'agent_memory', 'world_event', 'agent_preference_shift']);
 
 	// View mode for split panel (MiroFish pattern)
 	let viewMode = $state<'graph' | 'split' | 'workbench'>('split');
@@ -189,10 +213,17 @@
 	// Step 1: Seed data
 	async function loadSeedData() {
 		const scenario = simState.seedText.trim();
+		simState.config = {
+			...simState.config,
+			scenarioPrompt: scenario,
+			worldSeed: scenario
+				? `meridian-${scenario.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)}`
+				: 'meridian-protocol-economy',
+		};
 		simState.addLog(
 			scenario
-				? 'Captured scenario seed. Using Meridian demo graph scaffold until live graph ingestion is wired.'
-				: 'Loading Meridian demo graph scaffold...',
+				? 'Captured economy seed and attached it to the simulation world.'
+				: 'Loading Meridian demo graph scaffold as the economy seed.',
 		);
 		const demo = generateDemoGraph();
 		const seedNode = scenario
@@ -278,6 +309,9 @@
 		simState.running = true;
 		simState.complete = false;
 		simState.events = [];
+		simState.agentMemories = [];
+		simState.worldEvents = [];
+		simState.trustSummary = {};
 		simState.addLog('Starting simulation...');
 
 		try {
@@ -297,6 +331,10 @@
 					merchantsPerCategory: simState.config.merchantsPerCategory,
 					flowMix: simState.config.flowMix,
 					stableUniverse: simState.config.stableUniverse,
+					worldSeed: simState.config.worldSeed,
+					scenarioPrompt: simState.config.scenarioPrompt,
+					marketLearningRate: simState.config.marketLearningRate,
+					socialMemoryStrength: simState.config.socialMemoryStrength,
 				}),
 			});
 
@@ -318,6 +356,22 @@
 						simState.events = [...simState.events.slice(-499), ev];
 						simState.addLog(`[${ev.type}] ${ev.agent || ''} ${ev.product || ''} ${ev.protocol || ''}`);
 
+						if (ev.type === 'agent_memory') {
+							simState.agentMemories = [
+								...simState.agentMemories.slice(-199),
+								ev as AgentMemoryEvent,
+							];
+						}
+						if (ev.type === 'world_event') {
+							simState.worldEvents = [
+								...simState.worldEvents.slice(-199),
+								{ ...ev, round_num: Number(ev.round_num ?? ev.round ?? 0) } as EconomyWorldEvent,
+							];
+						}
+						if (ev.type === 'trust_snapshot') {
+							simState.trustSummary = (ev.trust_summary as Record<string, { avg: number; min: number; max: number }>) ?? {};
+						}
+
 						if (ev.type === 'simulation_complete') {
 							simState.complete = true;
 							simState.elapsed = `${ev.duration_seconds}s`;
@@ -332,6 +386,9 @@
 							simState.floatSummary = (ev.float_summary as Record<string, number>) ?? {};
 							simState.treasuryDistribution = (ev.treasury_distribution as Record<string, Record<string, number>>) ?? {};
 							simState.railPnlHistory = (ev.rail_pnl_history as Record<string, number[]>) ?? {};
+							simState.trustSummary = (ev.trust_summary as Record<string, { avg: number; min: number; max: number }>) ?? {};
+							simState.agentMemories = (ev.agent_memory_log as AgentMemoryEvent[]) ?? simState.agentMemories;
+							simState.worldEvents = (ev.world_events as EconomyWorldEvent[]) ?? simState.worldEvents;
 
 							// Add transaction edges to graph
 							const txEdges = simState.purchases
@@ -393,6 +450,20 @@
 				content: Object.entries(simState.ecosystem).map(([protocol, state]) =>
 					`${protocol.toUpperCase()}: ${state.merchant_count} merchants, network effect ${state.network_effect.toFixed(2)}, congestion ${state.congestion.toFixed(2)}, operator margin ${fmt(state.operator_margin_cents)}`
 				).join('\n'),
+				status: 'complete',
+			},
+			{
+				title: 'Emergent Agent Economy',
+				content: [
+					`World seed: ${simState.config.worldSeed}`,
+					simState.config.scenarioPrompt ? `Scenario: ${simState.config.scenarioPrompt}` : '',
+					`Agent memories: ${simState.agentMemories.length}`,
+					`World events: ${simState.worldEvents.length}`,
+					...Object.entries(simState.trustSummary).map(([protocol, trust]) =>
+						`${protocol.toUpperCase()}: trust avg ${trust.avg.toFixed(2)}, min ${trust.min.toFixed(2)}, max ${trust.max.toFixed(2)}`
+					),
+					...simState.worldEvents.slice(-4).map((event) => `R${event.round_num}: ${event.summary}`),
+				].filter(Boolean).join('\n'),
 				status: 'complete',
 			},
 			{
@@ -649,6 +720,26 @@
 									</div>
 								</div>
 
+								<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Agent Trust</div>
+										{#each Object.entries(simState.trustSummary).sort(([, a], [, b]) => b.avg - a.avg).slice(0, 5) as [protocol, trust]}
+											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
+												<span>{protocol.toUpperCase()}</span>
+												<span>{trust.avg.toFixed(2)}</span>
+											</div>
+										{/each}
+									</div>
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">World Events</div>
+										{#each simState.worldEvents.slice(-5) as event}
+											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-2); padding:4px 0;">
+												R{event.round_num}: {event.summary}
+											</div>
+										{/each}
+									</div>
+								</div>
+
 								<button onclick={generateReport} style="
 									padding:10px 24px; border:none; border-radius:4px;
 									background:var(--acp); color:#fff; font-weight:600; font-size:13px;
@@ -657,7 +748,7 @@
 
 							<!-- Timeline -->
 							<div style="margin-top:16px;">
-								<Timeline events={simState.purchases.slice(-40)} />
+								<Timeline events={simState.events.filter((event) => timelineTypes.has(event.type)).slice(-60)} />
 							</div>
 						</div>
 
@@ -681,7 +772,7 @@
 											<polyline points="20 6 9 17 4 12"></polyline>
 										</svg>
 									</div>
-									<p style="font-size:13px; color:var(--tx-2); line-height:1.6;">{section.content}</p>
+									<p style="font-size:13px; color:var(--tx-2); line-height:1.6; white-space:pre-wrap;">{section.content}</p>
 								</div>
 							{/each}
 

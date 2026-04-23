@@ -177,13 +177,18 @@ impl X402Adapter {
         let slug = if normalized.is_empty() {
             "wallet".to_string()
         } else {
-            normalized.chars().take(max_slug_len.max(1)).collect::<String>()
+            normalized
+                .chars()
+                .take(max_slug_len.max(1))
+                .collect::<String>()
         };
         format!("{}{}-{}", prefix, slug.trim_matches('-'), hash)
     }
 
     fn is_evm_address(value: &str) -> bool {
-        value.starts_with("0x") && value.len() == 42 && value[2..].chars().all(|c| c.is_ascii_hexdigit())
+        value.starts_with("0x")
+            && value.len() == 42
+            && value[2..].chars().all(|c| c.is_ascii_hexdigit())
     }
 
     async fn cdp_get_or_create_account(&self, owner_kind: &str, owner_id: &str) -> Result<String> {
@@ -205,7 +210,9 @@ impl X402Adapter {
             }))
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("cdp account request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("cdp account request failed: {}", e))
+            })?;
 
         let status = resp.status();
         let bytes = resp.bytes().await.unwrap_or_default();
@@ -217,8 +224,9 @@ impl X402Adapter {
             )));
         }
 
-        let body: AccountResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| EngineError::ExternalService(format!("cdp account parse failed: {}", e)))?;
+        let body: AccountResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("cdp account parse failed: {}", e))
+        })?;
         Ok(body.address)
     }
 
@@ -265,7 +273,9 @@ impl X402Adapter {
             }))
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("cdp signTypedData failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("cdp signTypedData failed: {}", e))
+            })?;
 
         let status = resp.status();
         let bytes = resp.bytes().await.unwrap_or_default();
@@ -277,8 +287,9 @@ impl X402Adapter {
             )));
         }
 
-        let body: SignatureResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| EngineError::ExternalService(format!("cdp signature parse failed: {}", e)))?;
+        let body: SignatureResponse = serde_json::from_slice(&bytes).map_err(|e| {
+            EngineError::ExternalService(format!("cdp signature parse failed: {}", e))
+        })?;
         Ok(body.signature)
     }
 
@@ -295,7 +306,9 @@ impl X402Adapter {
             }))
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("cdp faucet request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("cdp faucet request failed: {}", e))
+            })?;
 
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -318,7 +331,9 @@ impl X402Adapter {
             ))
             .send()
             .await
-            .map_err(|e| EngineError::ExternalService(format!("cdp token balance request failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ExternalService(format!("cdp token balance request failed: {}", e))
+            })?;
 
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -426,7 +441,8 @@ impl X402Adapter {
             return Ok(merchant_ref.to_string());
         }
 
-        self.cdp_get_or_create_account("merchant", merchant_ref).await
+        self.cdp_get_or_create_account("merchant", merchant_ref)
+            .await
     }
 
     fn build_payment_requirements(&self, amount: Cents, pay_to: &str) -> PaymentRequirements {
@@ -479,9 +495,7 @@ impl X402Adapter {
             "validBefore": valid_before.to_string(),
             "nonce": nonce
         });
-        let signature = self
-            .cdp_sign_typed_data(&from, domain, message)
-            .await?;
+        let signature = self.cdp_sign_typed_data(&from, domain, message).await?;
 
         let payload = PaymentPayload {
             x402_version: 2,
@@ -544,8 +558,8 @@ impl X402Adapter {
                 )));
             }
 
-            let verify_result: FacilitatorVerifyResponse =
-                serde_json::from_str(&verify_body).map_err(|e| {
+            let verify_result: FacilitatorVerifyResponse = serde_json::from_str(&verify_body)
+                .map_err(|e| {
                     EngineError::ExternalService(format!(
                         "failed to parse facilitator verify response: {} - body: {}",
                         e, verify_body
@@ -566,8 +580,7 @@ impl X402Adapter {
 
                 return Err(EngineError::ExternalService(format!(
                     "payment verification failed: {:?} - {:?}",
-                    verify_result.invalid_reason,
-                    verify_result.invalid_message
+                    verify_result.invalid_reason, verify_result.invalid_message
                 )));
             }
 
@@ -578,7 +591,10 @@ impl X402Adapter {
                 .send()
                 .await
                 .map_err(|e| {
-                    EngineError::ExternalService(format!("facilitator settle request failed: {}", e))
+                    EngineError::ExternalService(format!(
+                        "facilitator settle request failed: {}",
+                        e
+                    ))
                 })?;
 
             let settle_status = settle_resp.status();
@@ -591,8 +607,8 @@ impl X402Adapter {
                 )));
             }
 
-            let settle_result: FacilitatorSettleResponse =
-                serde_json::from_str(&settle_body).map_err(|e| {
+            let settle_result: FacilitatorSettleResponse = serde_json::from_str(&settle_body)
+                .map_err(|e| {
                     EngineError::ExternalService(format!(
                         "failed to parse facilitator settle response: {} - body: {}",
                         e, settle_body
@@ -602,8 +618,7 @@ impl X402Adapter {
             if !settle_result.success {
                 return Err(EngineError::ExternalService(format!(
                     "payment settlement failed: {:?} - {:?}",
-                    settle_result.error_reason,
-                    settle_result.error_message
+                    settle_result.error_reason, settle_result.error_message
                 )));
             }
 
@@ -701,8 +716,9 @@ impl ProtocolAdapter for X402Adapter {
             .ok_or_else(|| EngineError::ProtocolError("missing x402 wallet address".into()))?;
 
         let resource_url = format!("{}/payments/x402/{}", self.public_base_url, token.token_id);
-        let (payload, from_addr, valid_after, valid_before, nonce) =
-            self.build_payment_payload(from_address, &resource_url, amount, merchant).await?;
+        let (payload, from_addr, valid_after, valid_before, nonce) = self
+            .build_payment_payload(from_address, &resource_url, amount, merchant)
+            .await?;
 
         let requirements = self.build_payment_requirements(amount, merchant);
 

@@ -47,10 +47,12 @@ pub async fn create_wallet(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateWalletRequest>,
 ) -> Result<Json<WalletResponse>> {
-    let wallet =
-        state
-            .wallet_service
-            .create_wallet(&req.owner_kind, &req.owner_id, &req.protocol, req.initial_balance)?;
+    let wallet = state.wallet_service.create_wallet(
+        &req.owner_kind,
+        &req.owner_id,
+        &req.protocol,
+        req.initial_balance,
+    )?;
 
     Ok(Json(WalletResponse::from(wallet)))
 }
@@ -59,7 +61,9 @@ pub async fn get_wallet(
     State(state): State<Arc<AppState>>,
     Path((owner_kind, owner_id, protocol)): Path<(String, String, String)>,
 ) -> Result<Json<WalletResponse>> {
-    let wallet = state.wallet_service.get_wallet(&owner_kind, &owner_id, &protocol)?;
+    let wallet = state
+        .wallet_service
+        .get_wallet(&owner_kind, &owner_id, &protocol)?;
     Ok(Json(WalletResponse::from(wallet)))
 }
 

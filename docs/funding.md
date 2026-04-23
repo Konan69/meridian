@@ -97,6 +97,32 @@ curl -X POST http://localhost:3030/evm/request-faucet \
   -d '{"address":"0x...","token":"usdc"}'
 ```
 
+For treasury recycling between CDP server-wallet accounts, use the local
+transfer helpers instead of hand-building calldata:
+
+```bash
+curl -X POST http://localhost:3030/evm/transfer-usdc \
+  -H 'content-type: application/json' \
+  -d '{"fromAddress":"0xTREASURY","toAddress":"0xPAYER","amount":"0.10"}'
+
+curl -X POST http://localhost:3030/evm/transfer-native \
+  -H 'content-type: application/json' \
+  -d '{"fromAddress":"0xTREASURY","toAddress":"0xPAYER","amount":"0.00001"}'
+```
+
+Both helpers are intentionally scoped to Base Sepolia testnet. Use
+`/evm/send-transaction` only when you explicitly need a lower-level transaction.
+
+For self-sustaining `ATXP_PAYER_MODE=cdp-base` runs, set
+`ATXP_CDP_TREASURY_ADDRESS` to a funded CDP server-wallet address. The ATXP
+CDP payer path will try treasury ETH/USDC top-ups before falling back to CDP
+faucet requests. The optional knobs are:
+
+```bash
+ATXP_CDP_TREASURY_NATIVE_TOPUP=0.00002
+ATXP_CDP_TREASURY_USDC_TOPUP_UNITS=1000000
+```
+
 Official CDP docs currently state:
 
 - Base Sepolia faucet support is available programmatically
@@ -118,9 +144,11 @@ Useful docs:
 For repeated local simulations, prefer funding paths in this order:
 
 1. Base Sepolia plus CDP faucet automation for repeatable test replenishment.
-2. ATXP account funding via `npx atxp fund` if the hosted ATXP path is the one
+2. CDP treasury recycling via `/evm/transfer-usdc` and `/evm/transfer-native`
+   when faucet limits are the bottleneck.
+3. ATXP account funding via `npx atxp fund` if the hosted ATXP path is the one
    under test.
-3. Polygon Amoy only when you explicitly need Polygon behavior and have a
+4. Polygon Amoy only when you explicitly need Polygon behavior and have a
    reliable external POL faucet or another funded Amoy wallet.
 
 ## Current Dead Ends

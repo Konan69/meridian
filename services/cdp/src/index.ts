@@ -4,6 +4,8 @@ import express, { Request, Response } from "express";
 import fs from "node:fs";
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3030;
+const BASE_SEPOLIA_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const ERC20_TRANSFER_SELECTOR = "a9059cbb";
 
 type SignTypedDataRequest = {
   address: `0x${string}`;
@@ -41,6 +43,18 @@ type SendTransactionOptions = {
   };
 };
 
+type TreasuryTransferRequest = {
+  fromAddress?: string;
+  toAddress?: string;
+  amount?: string | number;
+  amountUnits?: string | number;
+  network?: string;
+};
+
+type NativeTransferRequest = TreasuryTransferRequest & {
+  amountWei?: string | number;
+};
+
 type KeyFile = {
   id?: string;
   privateKey?: string;
@@ -75,6 +89,59 @@ function requireEnv(name: string): string {
     );
   }
   return value;
+}
+
+function isHexAddress(value: string): value is `0x${string}` {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function parseDecimalUnits(value: string | number, decimals: number): bigint {
+  const normalized = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error("amount must be a non-negative decimal string");
+  }
+
+  const [whole, fraction = ""] = normalized.split(".");
+  if (fraction.length > decimals) {
+    throw new Error(`amount supports at most ${decimals} decimal places`);
+  }
+
+  const scale = 10n ** BigInt(decimals);
+  return BigInt(whole || "0") * scale + BigInt(fraction.padEnd(decimals, "0") || "0");
+}
+
+function amountUnitsFromRequest(body: TreasuryTransferRequest, decimals: number): bigint {
+  if (body.amountUnits !== undefined && body.amountUnits !== null) {
+    const rawUnits = String(body.amountUnits).trim();
+    if (!/^\d+$/.test(rawUnits)) {
+      throw new Error("amountUnits must be a non-negative integer string");
+    }
+    return BigInt(rawUnits);
+  }
+
+  if (body.amount === undefined || body.amount === null) {
+    throw new Error("amount or amountUnits is required");
+  }
+
+  return parseDecimalUnits(body.amount, decimals);
+}
+
+function nativeValueWeiFromRequest(body: NativeTransferRequest): bigint {
+  if (body.amountWei !== undefined && body.amountWei !== null) {
+    const rawWei = String(body.amountWei).trim();
+    if (!/^\d+$/.test(rawWei)) {
+      throw new Error("amountWei must be a non-negative integer string");
+    }
+    return BigInt(rawWei);
+  }
+
+  return amountUnitsFromRequest(body, 18);
+}
+
+function encodeErc20Transfer(toAddress: `0x${string}`, amountUnits: bigint): `0x${string}` {
+  const addressArg = toAddress.slice(2).toLowerCase().padStart(64, "0");
+  const amountArg = amountUnits.toString(16).padStart(64, "0");
+  return `0x${ERC20_TRANSFER_SELECTOR}${addressArg}${amountArg}`;
 }
 
 const keyFile = loadApiKeyFile();
@@ -158,6 +225,100 @@ app.get("/evm/token-balances/:address", async (req: Request, res: Response) => {
         amount: balance.amount.amount.toString(),
         decimals: balance.amount.decimals,
       })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: String((error as Error)?.message || error) });
+  }
+});
+
+app.post("/evm/transfer-usdc", async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as TreasuryTransferRequest;
+    const fromAddress = String(body.fromAddress || "").trim();
+    const toAddress = String(body.toAddress || "").trim();
+    const network = body.network ?? "base-sepolia";
+
+    if (!isHexAddress(fromAddress) || !isHexAddress(toAddress)) {
+      res.status(400).json({ error: "fromAddress and toAddress must be EVM addresses" });
+      return;
+    }
+
+    if (network !== "base-sepolia") {
+      res.status(400).json({ error: "treasury USDC transfers only support base-sepolia" });
+      return;
+    }
+
+    const amountUnits = amountUnitsFromRequest(body, 6);
+    if (amountUnits <= 0n) {
+      res.status(400).json({ error: "amount must be greater than zero" });
+      return;
+    }
+
+    const txOptions: SendTransactionOptions = {
+      address: fromAddress,
+      network,
+      transaction: {
+        to: BASE_SEPOLIA_USDC,
+        data: encodeErc20Transfer(toAddress, amountUnits),
+        value: 0n,
+      },
+    };
+
+    const transaction = await cdp.evm.sendTransaction(txOptions);
+    res.json({
+      token: "USDC",
+      network,
+      contractAddress: BASE_SEPOLIA_USDC,
+      fromAddress,
+      toAddress,
+      amountUnits: amountUnits.toString(),
+      transaction,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String((error as Error)?.message || error) });
+  }
+});
+
+app.post("/evm/transfer-native", async (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as NativeTransferRequest;
+    const fromAddress = String(body.fromAddress || "").trim();
+    const toAddress = String(body.toAddress || "").trim();
+    const network = body.network ?? "base-sepolia";
+
+    if (!isHexAddress(fromAddress) || !isHexAddress(toAddress)) {
+      res.status(400).json({ error: "fromAddress and toAddress must be EVM addresses" });
+      return;
+    }
+
+    if (network !== "base-sepolia") {
+      res.status(400).json({ error: "treasury native transfers only support base-sepolia" });
+      return;
+    }
+
+    const value = nativeValueWeiFromRequest(body);
+    if (value <= 0n) {
+      res.status(400).json({ error: "amount must be greater than zero" });
+      return;
+    }
+
+    const txOptions: SendTransactionOptions = {
+      address: fromAddress,
+      network,
+      transaction: {
+        to: toAddress,
+        value,
+      },
+    };
+
+    const transaction = await cdp.evm.sendTransaction(txOptions);
+    res.json({
+      token: "ETH",
+      network,
+      fromAddress,
+      toAddress,
+      amountWei: value.toString(),
+      transaction,
     });
   } catch (error) {
     res.status(500).json({ error: String((error as Error)?.message || error) });

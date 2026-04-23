@@ -4,11 +4,11 @@ pub mod catalog;
 pub mod mpp;
 pub mod x402;
 
+use crate::core::error::Result;
+use crate::core::types::{ActorWallet, Cents, ProtocolMetrics, SpendingConstraints};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::core::error::Result;
-use crate::core::types::{ActorWallet, Cents, ProtocolMetrics, SpendingConstraints};
 
 // ---------------------------------------------------------------------------
 // Auth token — returned by authorize(), consumed by pay()

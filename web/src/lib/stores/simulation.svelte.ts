@@ -38,6 +38,33 @@ export interface SimEvent {
   [key: string]: unknown;
 }
 
+export interface AgentMemoryEvent {
+  round_num: number;
+  agent_id: string;
+  agent_name: string;
+  event_type: string;
+  protocol: string;
+  workload_type: string;
+  sentiment_delta: number;
+  trust_before: number;
+  trust_after: number;
+  amount_cents: number;
+  merchant_id?: string | null;
+  merchant_name?: string | null;
+  product_name?: string | null;
+  route_id?: string | null;
+  reason: string;
+}
+
+export interface EconomyWorldEvent {
+  round_num: number;
+  event_type: string;
+  summary: string;
+  actor_id?: string | null;
+  protocol?: string | null;
+  data?: Record<string, unknown>;
+}
+
 export interface ProtoMetrics {
   protocol: string;
   total_transactions: number;
@@ -79,6 +106,10 @@ export interface SimConfig {
   merchantsPerCategory: number;
   flowMix: Record<string, number>;
   stableUniverse: string;
+  worldSeed: string;
+  scenarioPrompt: string;
+  marketLearningRate: number;
+  socialMemoryStrength: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +143,10 @@ function createSimState() {
       treasury_rebalance: 0.15,
     },
     stableUniverse: "usdc_centric",
+    worldSeed: "meridian-protocol-economy",
+    scenarioPrompt: "",
+    marketLearningRate: 1,
+    socialMemoryStrength: 0.35,
   });
   let elapsed = $state("");
   let totalTxns = $state(0);
@@ -124,6 +159,9 @@ function createSimState() {
   let treasuryDistribution = $state<Record<string, Record<string, number>>>({});
   let railPnlHistory = $state<Record<string, number[]>>({});
   let floatSummary = $state<Record<string, number>>({});
+  let trustSummary = $state<Record<string, { avg: number; min: number; max: number }>>({});
+  let agentMemories = $state<AgentMemoryEvent[]>([]);
+  let worldEvents = $state<EconomyWorldEvent[]>([]);
 
   // Derived
   let purchases = $derived(events.filter((e) => e.type === "purchase"));
@@ -165,6 +203,9 @@ function createSimState() {
     treasuryDistribution = {};
     railPnlHistory = {};
     floatSummary = {};
+    trustSummary = {};
+    agentMemories = [];
+    worldEvents = [];
   }
 
   return {
@@ -308,6 +349,24 @@ function createSimState() {
     },
     set floatSummary(v: Record<string, number>) {
       floatSummary = v;
+    },
+    get trustSummary() {
+      return trustSummary;
+    },
+    set trustSummary(v: Record<string, { avg: number; min: number; max: number }>) {
+      trustSummary = v;
+    },
+    get agentMemories() {
+      return agentMemories;
+    },
+    set agentMemories(v: AgentMemoryEvent[]) {
+      agentMemories = v;
+    },
+    get worldEvents() {
+      return worldEvents;
+    },
+    set worldEvents(v: EconomyWorldEvent[]) {
+      worldEvents = v;
     },
     addLog,
     reset,

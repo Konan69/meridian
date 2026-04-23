@@ -102,7 +102,9 @@ pub async fn build_runtime_catalog(cfg: &Config) -> RuntimeCatalog {
         protocol: "acp".into(),
         runtime_ready: false,
         integration: "not_integrated".into(),
-        reason: "ACP remains a seller-side protocol surface and is not wired back into the runtime yet".into(),
+        reason:
+            "ACP remains a seller-side protocol surface and is not wired back into the runtime yet"
+                .into(),
     });
 
     RuntimeCatalog {
