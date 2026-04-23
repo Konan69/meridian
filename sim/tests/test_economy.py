@@ -217,6 +217,8 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
         product_name="API credits",
         route_id="base-direct",
         reason="payment_settled",
+        success=True,
+        ecosystem_pressure=0.0,
     )
 
     assert before == 0.6
@@ -230,7 +232,11 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
     assert memory.trust_before == round(before, 4)
     assert memory.trust_after == round(after, 4)
     assert memory.sentiment_delta == round(sentiment_delta, 4)
+    assert memory.outcome == "success"
+    assert memory.trust_driver == "settled_on_reliable_protocol"
+    assert memory.ecosystem_pressure == 0.0
     assert memory.merchant_id == "merchant_test"
+    assert memory.merchant_reputation == 0.7
     assert memory.product_name == "API credits"
     assert memory.route_id == "base-direct"
 
@@ -244,8 +250,34 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
     assert emitted["protocol"] == "x402"
     assert emitted["trust_before"] == round(before, 4)
     assert emitted["trust_after"] == round(after, 4)
+    assert emitted["outcome"] == "success"
+    assert emitted["trust_driver"] == "settled_on_reliable_protocol"
+    assert emitted["merchant_reputation"] == 0.7
     assert emitted["reason"] == "payment_settled"
     assert emitted["timestamp"].endswith("+00:00")
+
+    engine._record_agent_memory(
+        summary,
+        round_num=1,
+        agent=agent,
+        protocol=Protocol.X402,
+        workload_type=WorkloadType.API_MICRO,
+        sentiment_delta=-0.13,
+        trust_before=after,
+        trust_after=after - 0.13,
+        amount_cents=125,
+        merchant=merchant,
+        product_name="API credits",
+        route_id="base-direct",
+        reason="timeout",
+        success=False,
+        ecosystem_pressure=0.8,
+    )
+
+    failed = engine.agent_memory_log[1]
+    assert failed.outcome == "failure"
+    assert failed.trust_driver == "failed_under_route_pressure"
+    assert failed.ecosystem_pressure == 0.8
 
 
 def test_protocol_trust_summary_covers_active_protocols_with_defaults():

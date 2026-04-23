@@ -183,6 +183,31 @@ class SimulationEngine:
         agent.protocol_trust[protocol.value] = after
         return before, after, after - before
 
+    def _classify_trust_driver(
+        self,
+        *,
+        protocol: Protocol,
+        success: bool,
+        ecosystem_pressure: float,
+        merchant: MerchantProfile | None,
+    ) -> str:
+        state = self.protocol_state.get(protocol.value)
+        reliability = state.reliability if state else 0.96
+        if not success:
+            if ecosystem_pressure >= 0.5:
+                return "failed_under_route_pressure"
+            if reliability < 0.85:
+                return "failed_low_protocol_reliability"
+            return "failed_payment_error"
+
+        if ecosystem_pressure >= 0.5:
+            return "settled_despite_route_pressure"
+        if merchant and merchant.reputation >= 0.8:
+            return "settled_with_reputable_merchant"
+        if reliability >= 0.98:
+            return "settled_on_reliable_protocol"
+        return "settled_payment"
+
     def _record_agent_memory(
         self,
         summary: RoundSummary,
@@ -199,7 +224,10 @@ class SimulationEngine:
         product_name: str | None,
         route_id: str | None,
         reason: str,
+        success: bool | None = None,
+        ecosystem_pressure: float = 0.0,
     ):
+        success = sentiment_delta >= 0 if success is None else success
         event = AgentMemoryEvent(
             round_num=round_num,
             agent_id=agent.agent_id,
@@ -210,9 +238,18 @@ class SimulationEngine:
             sentiment_delta=round(sentiment_delta, 4),
             trust_before=round(trust_before, 4),
             trust_after=round(trust_after, 4),
+            outcome="success" if success else "failure",
+            trust_driver=self._classify_trust_driver(
+                protocol=protocol,
+                success=success,
+                ecosystem_pressure=ecosystem_pressure,
+                merchant=merchant,
+            ),
+            ecosystem_pressure=round(ecosystem_pressure, 4),
             amount_cents=amount_cents,
             merchant_id=merchant.merchant_id if merchant else None,
             merchant_name=merchant.name if merchant else None,
+            merchant_reputation=round(merchant.reputation, 4) if merchant else None,
             product_name=product_name,
             route_id=route_id,
             reason=reason,
@@ -808,6 +845,8 @@ class SimulationEngine:
                 product_name=product["name"],
                 route_id=route.route_id,
                 reason="payment_settled",
+                success=True,
+                ecosystem_pressure=ecosystem_pressure,
             )
             summary.success_count += 1
             summary.total_volume += record.amount
@@ -884,6 +923,8 @@ class SimulationEngine:
                 product_name=product["name"],
                 route_id=route.route_id,
                 reason=record.error or "payment_failed",
+                success=False,
+                ecosystem_pressure=ecosystem_pressure,
             )
             summary.fail_count += 1
             self._emit(

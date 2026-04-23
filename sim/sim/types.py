@@ -369,9 +369,13 @@ class AgentMemoryEvent:
     sentiment_delta: float
     trust_before: float
     trust_after: float
+    outcome: str = ""
+    trust_driver: str = ""
+    ecosystem_pressure: float = 0.0
     amount_cents: int = 0
     merchant_id: Optional[str] = None
     merchant_name: Optional[str] = None
+    merchant_reputation: Optional[float] = None
     product_name: Optional[str] = None
     route_id: Optional[str] = None
     reason: str = ""
