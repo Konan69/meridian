@@ -589,14 +589,14 @@ def test_report_explains_route_score_driven_merchant_protocol_change():
     assert (
         "  merchant_alpha:\n"
         "    R7: added AP2 after route-score evidence\n"
-        "      score 0.90; pressure drag -0.20; sustainability lift +0.60; "
+        "      score 0.90; pressure -0.20; sustain +0.60; "
         "reason ecosystem_evidence\n"
         "  merchant_test:\n"
         "    R8: removed Stripe MPP after route-score evidence\n"
-        "      score 0.10; pressure drag 1.80; sustainability lift -0.40; "
+        "      score 0.10; pressure 1.80; sustain -0.40; "
         "reason ecosystem_evidence\n"
         "    R9: added AP2 after route-score evidence\n"
-        "      score 0.80; pressure drag -0.10; sustainability lift +0.50; "
+        "      score 0.80; pressure -0.10; sustain +0.50; "
         "reason ecosystem_evidence"
     ) in emergent["content"]
 

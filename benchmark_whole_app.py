@@ -42,6 +42,7 @@ ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS = [
     "avg_route_pressure_penalty",
     "avg_sustainability_bias",
 ]
+ROUTE_SCORE_DRIVER_TOKEN_LABELS = ["score", "pressure", "sustain"]
 INHERITED_GATE_GUIDANCE = [
     {
         "name": "whole_app_contract_gate",
@@ -76,6 +77,13 @@ INHERITED_GATE_GUIDANCE = [
         "command": "cd {target}/services/cdp && CACHE_ROOT=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench\" && PNPM_STORE_DIR=\"$CACHE_ROOT/pnpm-store-v10\" && pnpm install --store-dir \"$PNPM_STORE_DIR\" --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run test:offline",
         "scope": "CDP offline treasury transfer route request and response contract",
         "related_task_ids": ["service_offline_cdp", "service_offline_protocol_tests"],
+        "preserve_when_combining": True,
+    },
+    {
+        "name": "route_score_merchant_switch_report_readout",
+        "command": "cd {target}/sim && CACHE_ROOT=\"${XDG_CACHE_HOME:-/tmp}/meridian-evo-bench\" && PIP_CACHE_DIR=\"$CACHE_ROOT/pip-cache\" && export PIP_CACHE_DIR && PY_TAG=\"$(python3 -c 'import sys; print(sys.implementation.cache_tag)')\" && DEPS_KEY=\"$(sha256sum pyproject.toml uv.lock | sha256sum | cut -d \" \" -f 1)\" && SHORT_KEY=\"$(printf \"%s\" \"$DEPS_KEY\" | cut -c 1-16)\" && VENVDIR=\"$CACHE_ROOT/python-sim-venv-$PY_TAG-$SHORT_KEY\" && READY=\"$VENVDIR/.ready-$SHORT_KEY\" && if [ ! -f \"$READY\" ]; then rm -rf \"$VENVDIR\" && python3 -m venv \"$VENVDIR\" && \"$VENVDIR/bin/python3\" -m pip install -q --disable-pip-version-check --prefer-binary \"aiohttp>=3.9.0\" \"pytest>=8.0\" \"pytest-asyncio>=0.23\" && touch \"$READY\"; fi && PYTHONPATH=\"$PWD${PYTHONPATH:+:$PYTHONPATH}\" \"$VENVDIR/bin/python3\" -m pytest tests/test_engine.py::test_report_explains_route_score_driven_merchant_protocol_change -q",
+        "scope": "Route-score merchant switch report readout",
+        "related_task_ids": ["python_sim_tests"],
         "preserve_when_combining": True,
     },
 ]
@@ -113,6 +121,24 @@ FOCUSED_GATE_DUPLICATE_VALIDATION = [
         "reason": "The full benchmark already runs CDP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited treasury transfer semantics.",
     },
 ]
+PROTECTED_SURFACES_CHECKPOINT = {
+    "label": "protected_surfaces_checkpoint",
+    "version": 1,
+    "docs_anchor": "Current protected surfaces checkpoint",
+    "related_task_ids": [
+        "static_contracts",
+        "service_offline_protocol_tests",
+        "service_offline_cdp",
+        "service_offline_stripe",
+        "service_offline_atxp",
+        "service_offline_ap2",
+        "python_compile",
+    ],
+    "related_gate_names": [
+        *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+    ],
+    "protects": "Compact label for the current docs-defined checkpoint of inherited protected surfaces.",
+}
 LIST_TASKS_METADATA_SCHEMA_VERSION = 1
 LIST_TASKS_METADATA_SCHEMA = {
     "kind": "list_tasks_metadata_schema",
@@ -233,6 +259,7 @@ def merge_trace_metadata(*items: dict[str, Any] | None) -> dict[str, Any] | None
 def inherited_gate_guidance_metadata() -> dict[str, Any]:
     return {
         "kind": "inherited_gate_guidance",
+        "protected_surfaces_checkpoint": PROTECTED_SURFACES_CHECKPOINT,
         "source_of_truth": "evo gate list <parent-or-checkpoint>",
         "combine_rule": "Before manual combines, compare source and destination gate lists and reattach every missing gate listed here.",
         "default_profile_changed": False,
@@ -252,6 +279,14 @@ def focused_gate_duplicate_validation_metadata() -> dict[str, Any]:
         "entries": FOCUSED_GATE_DUPLICATE_VALIDATION,
         "note": "Duplicate offline service validation is intentional correctness cost, not stale cache work. Do not remove, skip, merge, or weaken focused gates to save this time.",
     }
+
+
+def inherited_gate_names() -> list[str]:
+    return [gate["name"] for gate in INHERITED_GATE_GUIDANCE]
+
+
+def service_readme_paths() -> list[str]:
+    return [f"services/{service}/README.md" for service in SERVICE_OFFLINE_COVERAGE]
 
 
 def shared_cache_root() -> Path:
@@ -989,6 +1024,17 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
                 "protocol-level route evidence",
                 "frontend route-score",
                 *ROUTE_SCORE_RATIONALE_FIELDS,
+                *ROUTE_SCORE_DRIVER_TOKEN_LABELS,
+            ],
+        ),
+        (
+            "report_route_score_readout",
+            root / "sim/sim/report.py",
+            [
+                "Route-score merchant changes:",
+                "route_score_pressure_drag",
+                "route_score_sustainability_lift",
+                *ROUTE_SCORE_DRIVER_TOKEN_LABELS,
             ],
         ),
         (
@@ -1007,9 +1053,7 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
             root / "web/src/lib/routeScoreDrivers.ts",
             [
                 "routeScoreDriverDisplay",
-                "score",
-                "pressure",
-                "sustain",
+                *ROUTE_SCORE_DRIVER_TOKEN_LABELS,
             ],
         ),
         (
@@ -1056,6 +1100,7 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
         "kind": "route_score_rationale_contract",
         "source_fields": ROUTE_SCORE_RATIONALE_FIELDS,
         "frontend_display_fields": ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
+        "driver_token_labels": ROUTE_SCORE_DRIVER_TOKEN_LABELS,
         "checked_paths": checked_paths,
         "missing_needles": missing_needles,
         "protects": "Route-score docs and frontend displays stay tied to exact payload fields for buyer choice, protocol summary, merchant switch evidence, and self-sustainable protocol evolution.",
@@ -1068,8 +1113,10 @@ def check_inherited_gate_guidance_contract(
     checked_paths = ["AGENTS.md", "docs/simulation-architecture.md"]
     required_needles = [
         "benchmark_whole_app.py --list-tasks",
+        PROTECTED_SURFACES_CHECKPOINT["label"],
+        f"version: {PROTECTED_SURFACES_CHECKPOINT['version']}",
         "duplicate focused gate validation",
-        *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+        *inherited_gate_names(),
     ]
     missing_needles = []
     for rel_path in checked_paths:
@@ -1090,8 +1137,9 @@ def check_inherited_gate_guidance_contract(
     return {
         "kind": "inherited_gate_guidance_docs",
         "source": "INHERITED_GATE_GUIDANCE",
+        "protected_surfaces_checkpoint": PROTECTED_SURFACES_CHECKPOINT,
         "checked_paths": checked_paths,
-        "required_gate_names": [gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+        "required_gate_names": inherited_gate_names(),
         "duplicate_validation": focused_gate_duplicate_validation_metadata(),
         "missing_needles": missing_needles,
         "protects": "Gate hygiene docs and list-task metadata keep inherited focused gate names discoverable without source hunting.",
@@ -1254,6 +1302,9 @@ def static_contract_trace_metadata(
                 {
                     "kind": "service_readme_semantic_surface_contracts",
                     "source": "SERVICE_OFFLINE_COVERAGE",
+                    "source_task_id": "service_offline_protocol_tests",
+                    "source_task_metadata_fields": ["semantic_surfaces"],
+                    "source_fields": ["semantic_surfaces"],
                     "checked_paths": [
                         item["readme_path"] for item in service_offline_coverage_files
                     ],
@@ -1261,10 +1312,24 @@ def static_contract_trace_metadata(
                         item["semantic_surface_count"]
                         for item in service_offline_coverage_files
                     ),
+                    "surface_check_count": sum(
+                        len(item["readme_semantic_surface_checks"])
+                        for item in service_offline_coverage_files
+                    ),
+                    "expected_semantic_surfaces": [
+                        check
+                        for item in service_offline_coverage_files
+                        for check in item["readme_semantic_surface_checks"]
+                    ],
                     "missing_surface_count": sum(
                         len(item["missing_readme_semantic_surfaces"])
                         for item in service_offline_coverage_files
                     ),
+                    "missing_semantic_surfaces": [
+                        detail
+                        for item in service_offline_coverage_files
+                        for detail in item["missing_readme_semantic_surface_details"]
+                    ],
                     "protects": "Service READMEs must mention each offline semantic surface named by service protocol trace metadata.",
                 },
                 {
@@ -1443,11 +1508,7 @@ def task_static_contracts(root: Path) -> float:
             [
                 "evo gate list <parent-or-checkpoint>",
                 "preserve every focused gate",
-                "whole_app_contract_gate",
-                "ap2_offline_settlement_semantics",
-                "stripe_mpp_offline_semantics",
-                "atxp_offline_direct_transfer_topup_contract",
-                "cdp_offline_treasury_transfer_contract",
+                *inherited_gate_names(),
                 "benchmark_whole_app.py --list-tasks",
                 "Manual diff combines do not automatically carry gate metadata",
                 "duplicate focused gate validation",
@@ -1461,19 +1522,12 @@ def task_static_contracts(root: Path) -> float:
                 "evo gate list <source>",
                 "evo gate list <destination>",
                 "reattach any focused gates",
-                "whole_app_contract_gate",
-                "ap2_offline_settlement_semantics",
-                "stripe_mpp_offline_semantics",
-                "atxp_offline_direct_transfer_topup_contract",
-                "cdp_offline_treasury_transfer_contract",
+                *inherited_gate_names(),
                 "benchmark_whole_app.py --list-tasks",
                 "service_offline_ap2",
                 "duplicate focused gate validation",
                 "SERVICE_OFFLINE_COVERAGE",
-                "services/cdp/README.md",
-                "services/stripe/README.md",
-                "services/atxp/README.md",
-                "services/ap2/README.md",
+                *service_readme_paths(),
                 "`static_contracts` protects this architecture cross-reference",
             ],
         ),
@@ -1536,6 +1590,25 @@ def task_static_contracts(root: Path) -> float:
             for surface in coverage["semantic_surfaces"]
             if surface not in readme_text
         ]
+        readme_semantic_surface_checks = [
+            {
+                "service": service,
+                "readme_path": readme_path,
+                "source": "SERVICE_OFFLINE_COVERAGE",
+                "source_task_id": f"service_offline_{service}",
+                "source_field": "semantic_surfaces",
+                "source_index": index,
+                "expected_surface": surface,
+                "readme_exists": readme.exists(),
+                "readme_reference_present": surface in readme_text,
+            }
+            for index, surface in enumerate(coverage["semantic_surfaces"])
+        ]
+        missing_readme_semantic_surface_details = [
+            check
+            for check in readme_semantic_surface_checks
+            if not check["readme_reference_present"]
+        ]
         missing_readme_file_references = [
             check["expected_path"]
             for check in readme_file_reference_checks
@@ -1584,8 +1657,10 @@ def task_static_contracts(root: Path) -> float:
                 "empty_required_fields": empty_required_fields,
                 "file_count": len(checked_paths),
                 "missing_files": missing_paths,
+                "readme_semantic_surface_checks": readme_semantic_surface_checks,
                 "readme_file_reference_checks": readme_file_reference_checks,
                 "missing_readme_semantic_surfaces": missing_readme_semantic_surfaces,
+                "missing_readme_semantic_surface_details": missing_readme_semantic_surface_details,
                 "missing_readme_file_references": missing_readme_file_references,
                 "missing_readme_file_reference_details": missing_readme_file_reference_details,
             }
@@ -1650,7 +1725,7 @@ def task_static_contracts(root: Path) -> float:
                 "AGENTS.md",
                 "docs/simulation-architecture.md",
             ],
-            "protects": "Manual Evo combines keep inherited focused gates visible, including AP2, Stripe MPP, ATXP, and CDP offline protocol gates.",
+            "protects": "Manual Evo combines keep inherited focused gates visible from benchmark-owned metadata.",
         },
         {
             "surface": "list_tasks_metadata_schema",
@@ -1662,12 +1737,7 @@ def task_static_contracts(root: Path) -> float:
         },
         {
             "surface": "service_offline_protocol_docs",
-            "paths": [
-                "services/cdp/README.md",
-                "services/stripe/README.md",
-                "services/atxp/README.md",
-                "services/ap2/README.md",
-            ],
+            "paths": service_readme_paths(),
             "protects": "Service docs expose the offline protocol helper contracts named by service trace metadata.",
         },
     ]

@@ -167,8 +167,8 @@ def _merchant_switch_route_score_lines(events: list[object], limit: int = 5) -> 
         lines.extend(
             [
                 f"    R{round_num}: {action} {protocol} after route-score evidence",
-                f"      score {route_score:.2f}; pressure drag {pressure_drag:.2f}; "
-                f"sustainability lift {sustainability_lift:+.2f}; reason {reason}",
+                f"      score {route_score:.2f}; pressure {pressure_drag:.2f}; "
+                f"sustain {sustainability_lift:+.2f}; reason {reason}",
             ]
         )
     return lines

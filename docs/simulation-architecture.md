@@ -116,6 +116,11 @@ checks, or build/test commands.
 
 Current protected surfaces checkpoint:
 
+Metadata label: `protected_surfaces_checkpoint`, version: 1. This is a compact
+identifier in `benchmark_whole_app.py --list-tasks` gate guidance for workers
+that need to preserve the docs-defined protected-surface set without parsing
+this section.
+
 - `static_contracts` / `whole_app_contract_gate`: static runtime, funding,
   trace metadata, docs, and Python compile contracts. Validate with
   `evo gate list <checkpoint>` and

@@ -75,7 +75,9 @@ Report grounding:
   self-sustainability changed protocol adoption. The frontend route-score
   display contract maps the protocol summary fields through
   `routeScoreDriverDisplay` in the economy observability and market chart
-  panels, so docs and payload names cannot drift away from rendered evidence.
+  panels. Grouped merchant switch reports use the same compact driver tokens,
+  `score`, `pressure`, and `sustain`, so docs, payload names, reports, and
+  rendered evidence cannot drift apart.
 
 ## MiroFish Adaptation
 
