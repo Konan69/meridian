@@ -58,6 +58,9 @@ The simulation API streams NDJSON. Important event types:
 - `agent_preference_shift`: agent preference changed from memory.
 - `simulation_complete`: final summaries, balances, memory log, world events.
 
+For field-level payload details, frontend normalization helpers, and the
+MiroFish adaptation boundary, see `docs/simulation-payload-contract.md`.
+
 ## Optimization Target
 
 Future Evo work should optimize for believable ecosystem behavior:
