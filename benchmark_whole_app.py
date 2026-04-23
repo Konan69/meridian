@@ -8,8 +8,10 @@ without starting live services or using credentials.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -111,6 +113,187 @@ def pnpm_cached_install_command(after_install: str) -> str:
     )
 
 
+PNPM_DEPENDENCY_FIELDS = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "pnpm",
+    "packageManager",
+)
+
+
+def file_digest(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def package_dependency_fingerprint(package_root: Path) -> str | None:
+    package_json = package_root / "package.json"
+    lockfile = package_root / "pnpm-lock.yaml"
+    if not package_json.exists() or not lockfile.exists():
+        return None
+    try:
+        package_data = json.loads(package_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    dependency_data = {
+        field: package_data.get(field)
+        for field in PNPM_DEPENDENCY_FIELDS
+        if field in package_data
+    }
+    payload = {
+        "dependencies": dependency_data,
+        "lockfile": file_digest(lockfile),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def pnpm_store_dir_with_version() -> Path:
+    return shared_cache_root() / "pnpm-store-v10" / "v10"
+
+
+def modules_store_dir(node_modules: Path) -> str | None:
+    modules_yaml = node_modules / ".modules.yaml"
+    if not modules_yaml.exists():
+        return None
+    text = modules_yaml.read_text(encoding="utf-8", errors="replace")
+    try:
+        parsed = json.loads(text)
+        value = parsed.get("storeDir")
+        if isinstance(value, str):
+            return value
+    except json.JSONDecodeError:
+        pass
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('"storeDir":') or stripped.startswith("storeDir:"):
+            return stripped.split(":", 1)[1].strip().strip('",')
+    return None
+
+
+def evo_run_root(root: Path) -> Path | None:
+    if root.parent.name == "worktrees" and root.parent.parent.name.startswith("run_"):
+        return root.parent.parent
+    return None
+
+
+def candidate_worktree_roots(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    env_source = os.environ.get("MERIDIAN_NODE_MODULES_SOURCE_ROOT")
+    if env_source:
+        candidates.append(Path(env_source).expanduser().resolve())
+
+    run_root = evo_run_root(root)
+    if run_root is not None:
+        worktrees = run_root / "worktrees"
+        if worktrees.exists():
+            candidates.extend(
+                sorted(
+                    (path for path in worktrees.iterdir() if path.is_dir()),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )
+            )
+        candidates.append(run_root.parent.parent)
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved == root or resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def matching_node_modules_sources(root: Path, package_root: Path) -> list[Path]:
+    try:
+        package_rel = package_root.relative_to(root)
+    except ValueError:
+        return []
+    target_fingerprint = package_dependency_fingerprint(package_root)
+    if target_fingerprint is None:
+        return []
+
+    expected_store = str(pnpm_store_dir_with_version())
+    sources: list[Path] = []
+    for candidate_root in candidate_worktree_roots(root):
+        candidate_package = candidate_root / package_rel
+        candidate_node_modules = candidate_package / "node_modules"
+        if not candidate_node_modules.exists():
+            continue
+        if package_dependency_fingerprint(candidate_package) != target_fingerprint:
+            continue
+        if modules_store_dir(candidate_node_modules) != expected_store:
+            continue
+        sources.append(candidate_node_modules)
+    return sources
+
+
+def seed_node_modules(root: Path, package_root: Path) -> dict[str, Any]:
+    node_modules = package_root / "node_modules"
+    expected_store = str(pnpm_store_dir_with_version())
+    package_label = rel(root, package_root)
+    existing_store = modules_store_dir(node_modules)
+    if node_modules.exists() and existing_store == expected_store:
+        return {
+            "status": "present",
+            "package_root": package_label,
+            "store_dir": expected_store,
+        }
+
+    if node_modules.exists():
+        shutil.rmtree(node_modules)
+
+    for source in matching_node_modules_sources(root, package_root):
+        started = time.perf_counter()
+        hardlink_result = subprocess.run(
+            ["cp", "-a", "-l", str(source), str(node_modules)],
+            capture_output=True,
+            text=True,
+        )
+        copy_mode = "hardlink"
+        if hardlink_result.returncode != 0:
+            if node_modules.exists():
+                shutil.rmtree(node_modules)
+            hardlink_result = subprocess.run(
+                ["cp", "-a", str(source), str(node_modules)],
+                capture_output=True,
+                text=True,
+            )
+            copy_mode = "copy"
+        elapsed = time.perf_counter() - started
+        if hardlink_result.returncode == 0 and modules_store_dir(node_modules) == expected_store:
+            return {
+                "status": "seeded",
+                "package_root": package_label,
+                "source": str(source),
+                "store_dir": expected_store,
+                "copy_mode": copy_mode,
+                "elapsed_seconds": round(elapsed, 3),
+            }
+        if node_modules.exists():
+            shutil.rmtree(node_modules)
+
+    return {
+        "status": "miss",
+        "package_root": package_label,
+        "store_dir": expected_store,
+    }
+
+
 def cargo_cached_test_command() -> str:
     return (
         'CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench" && '
@@ -161,7 +344,12 @@ def command_trace_metadata(
     }
 
 
-def pnpm_trace_metadata(root: Path, package_root: Path, validation_commands: list[str]) -> dict[str, Any]:
+def pnpm_trace_metadata(
+    root: Path,
+    package_root: Path,
+    validation_commands: list[str],
+    node_modules_seed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "validation": {
             "kind": "pnpm_frozen_build_pipeline",
@@ -184,6 +372,7 @@ def pnpm_trace_metadata(root: Path, package_root: Path, validation_commands: lis
                 "--prefer-offline",
                 "--ignore-scripts",
             ],
+            "node_modules_seed": node_modules_seed,
         }
     }
 
@@ -625,12 +814,15 @@ def task_service_builds(root: Path) -> float:
     service_targets = [("cdp", 22), ("stripe", 22), ("atxp", 35)]
     for service, target_seconds in service_targets:
         task_id = f"service_build_{service}"
+        package_root = root / "services" / service
+        node_modules_seed = seed_node_modules(root, package_root)
         component_tasks.append(
             {
                 "task_id": task_id,
                 "service": service,
                 "package_root": f"services/{service}",
                 "target_seconds": target_seconds,
+                "node_modules_seed": node_modules_seed,
             }
         )
         scores.append(
@@ -638,13 +830,14 @@ def task_service_builds(root: Path) -> float:
                 root,
                 task_id,
                 pnpm_cached_install_command("pnpm run build"),
-                cwd=root / "services" / service,
+                cwd=package_root,
                 timeout=180,
                 target_seconds=target_seconds,
                 trace_metadata=pnpm_trace_metadata(
                     root,
-                    root / "services" / service,
+                    package_root,
                     ["pnpm run build"],
+                    node_modules_seed,
                 ),
             )
         )
@@ -660,17 +853,20 @@ def task_service_builds(root: Path) -> float:
 
 
 def task_web_check(root: Path) -> float:
+    package_root = root / "web"
+    node_modules_seed = seed_node_modules(root, package_root)
     return run_command(
         root,
         "web_check_build",
         pnpm_cached_install_command("pnpm run check && pnpm run build"),
-        cwd=root / "web",
+        cwd=package_root,
         timeout=240,
         target_seconds=70,
         trace_metadata=pnpm_trace_metadata(
             root,
-            root / "web",
+            package_root,
             ["pnpm run check", "pnpm run build"],
+            node_modules_seed,
         ),
     )
 

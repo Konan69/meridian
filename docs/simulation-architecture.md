@@ -110,6 +110,9 @@ readiness.
 For synthetic summary tasks such as `service_builds_summary`, inspect
 `trace_metadata.aggregation.component_tasks`; the summary is only an average,
 and the component task traces show the real commands and caches.
+For pnpm build tasks, `trace_metadata.cache.node_modules_seed` reports whether
+the benchmark hardlinked a compatible `node_modules` tree from another Evo
+worktree before running the frozen install.
 
 ## Optimization Target
 
