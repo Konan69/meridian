@@ -5,6 +5,7 @@ from sim.agents import generate_agents
 from sim.economy import StablecoinEconomy
 from sim.engine import SimulationEngine
 from sim.types import (
+    AgentMemoryEvent,
     AgentProfile,
     AgentRole,
     BalanceDomain,
@@ -294,6 +295,108 @@ def test_protocol_trust_summary_covers_active_protocols_with_defaults():
     assert set(summary) == {"x402", "atxp"}
     assert summary["x402"] == {"avg": 0.6, "min": 0.5, "max": 0.7}
     assert summary["atxp"] == {"avg": 0.575, "min": 0.55, "max": 0.6}
+
+
+def test_social_memory_diffusion_uses_recent_success_for_peers(capsys):
+    config = SimulationConfig(
+        seed=22,
+        protocols=[Protocol.X402],
+        social_memory_strength=0.5,
+    )
+    engine = SimulationEngine(config)
+    source = _agent("agent_001", trust={"x402": 0.6})
+    peer = _agent("agent_002", trust={"x402": 0.6})
+    quiet_peer = _agent("agent_003", trust={"x402": 0.6})
+    peer.social_influence = 0.75
+    quiet_peer.social_influence = 0.0
+    engine.agents = [source, peer, quiet_peer]
+    merchant = _merchant()
+    merchant.reputation = 0.84
+
+    round_one = RoundSummary(round_num=1)
+    engine._record_agent_memory(
+        round_one,
+        round_num=1,
+        agent=source,
+        protocol=Protocol.X402,
+        workload_type=WorkloadType.API_MICRO,
+        sentiment_delta=0.08,
+        trust_before=0.6,
+        trust_after=0.68,
+        amount_cents=250,
+        merchant=merchant,
+        product_name="API credits",
+        route_id="base-direct",
+        reason="payment_settled",
+        success=True,
+        ecosystem_pressure=0.0,
+    )
+    capsys.readouterr()
+
+    round_two = RoundSummary(round_num=2)
+    adjustments = engine._diffuse_social_memory(2, round_two)
+
+    assert len(adjustments) == 1
+    assert adjustments[0]["agent_id"] == "agent_002"
+    assert adjustments[0]["protocol"] == "x402"
+    assert adjustments[0]["source_events"] == 1
+    assert source.protocol_trust["x402"] == 0.6
+    assert peer.protocol_trust["x402"] > 0.6
+    assert quiet_peer.protocol_trust["x402"] == 0.6
+    assert round_two.world_events[0].event_type == "social_memory_diffusion"
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["type"] == "world_event"
+    assert emitted["event_type"] == "social_memory_diffusion"
+    assert emitted["data"]["memory_events"] == 1
+    assert emitted["data"]["adjustments"][0]["agent_id"] == "agent_002"
+
+
+def test_social_memory_diffusion_discounts_old_events_and_caps_failure():
+    config = SimulationConfig(
+        seed=23,
+        protocols=[Protocol.X402],
+        social_memory_strength=1.0,
+    )
+    engine = SimulationEngine(config)
+    source = _agent("agent_001", trust={"x402": 0.6})
+    peer = _agent("agent_002", trust={"x402": 0.6})
+    peer.social_influence = 1.0
+    engine.agents = [source, peer]
+    engine.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=0.14,
+            trust_before=0.6,
+            trust_after=0.74,
+            outcome="success",
+            trust_driver="settled_on_reliable_protocol",
+        ),
+        AgentMemoryEvent(
+            round_num=3,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=-1.0,
+            trust_before=0.74,
+            trust_after=0.2,
+            outcome="failure",
+            trust_driver="failed_low_protocol_reliability",
+        ),
+    ]
+
+    adjustments = engine._diffuse_social_memory(4, RoundSummary(round_num=4))
+
+    assert len(adjustments) == 1
+    assert adjustments[0]["trust_delta"] == -0.025
+    assert round(peer.protocol_trust["x402"], 4) == 0.575
 
 
 class _OfflineEconomy:

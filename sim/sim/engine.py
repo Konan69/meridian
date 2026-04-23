@@ -185,6 +185,121 @@ class SimulationEngine:
         agent.protocol_trust[protocol.value] = after
         return before, after, after - before
 
+    def _social_memory_signal(self, event: AgentMemoryEvent) -> float:
+        if event.event_type != "protocol_experience":
+            return 0.0
+
+        raw_delta = event.sentiment_delta
+        if raw_delta == 0:
+            if event.outcome == "success":
+                raw_delta = 0.04
+            elif event.outcome == "failure":
+                raw_delta = -0.06
+            else:
+                return 0.0
+
+        sign = 1.0 if raw_delta > 0 else -1.0
+        driver_weight = {
+            "settled_on_reliable_protocol": 1.1,
+            "settled_with_reputable_merchant": 1.05,
+            "settled_despite_route_pressure": 1.15,
+            "settled_payment": 1.0,
+            "failed_low_protocol_reliability": 1.2,
+            "failed_payment_error": 1.0,
+            "failed_under_route_pressure": 0.55,
+        }.get(event.trust_driver, 1.0)
+
+        pressure = max(0.0, min(1.0, event.ecosystem_pressure))
+        if sign < 0 and event.trust_driver != "failed_low_protocol_reliability":
+            driver_weight *= max(0.65, 1.0 - pressure * 0.25)
+        if sign > 0 and event.merchant_reputation is not None and event.merchant_reputation >= 0.8:
+            driver_weight += 0.05
+
+        return sign * min(abs(raw_delta), 0.14) * driver_weight
+
+    def _diffuse_social_memory(
+        self,
+        round_num: int,
+        summary: RoundSummary,
+    ) -> list[dict]:
+        strength = self.config.social_memory_strength
+        if strength <= 0 or len(self.agents) < 2:
+            return []
+
+        recent_events = [
+            event
+            for event in self.agent_memory_log
+            if round_num - 2 <= event.round_num < round_num
+        ][-30:]
+        if not recent_events:
+            return []
+
+        pending_deltas: dict[tuple[str, str], float] = defaultdict(float)
+        source_counts: dict[tuple[str, str], int] = defaultdict(int)
+        for event in recent_events:
+            try:
+                protocol = Protocol(event.protocol)
+            except ValueError:
+                continue
+            if protocol not in self.active_protocols:
+                continue
+
+            signal = self._social_memory_signal(event)
+            if signal == 0:
+                continue
+            recency = 1.0 / max(1, round_num - event.round_num)
+
+            for peer in self.agents:
+                if peer.agent_id == event.agent_id:
+                    continue
+                influence = max(0.0, min(1.0, peer.social_influence))
+                if influence == 0:
+                    continue
+                key = (peer.agent_id, protocol.value)
+                delta = signal * strength * influence * recency * 0.16
+                if abs(delta) < 0.00005:
+                    continue
+                pending_deltas[key] += delta
+                source_counts[key] += 1
+
+        adjustments: list[dict] = []
+        agents_by_id = {agent.agent_id: agent for agent in self.agents}
+        for (agent_id, protocol), raw_delta in sorted(pending_deltas.items()):
+            agent = agents_by_id.get(agent_id)
+            if agent is None:
+                continue
+            capped_delta = max(-0.025, min(0.025, raw_delta))
+            before = agent.protocol_trust.get(protocol, 0.6)
+            after = max(0.05, min(1.0, before + capped_delta))
+            applied_delta = after - before
+            if abs(applied_delta) < 0.0001:
+                continue
+            agent.protocol_trust[protocol] = after
+            adjustments.append(
+                {
+                    "agent_id": agent.agent_id,
+                    "agent": agent.name,
+                    "protocol": protocol,
+                    "trust_before": round(before, 4),
+                    "trust_after": round(after, 4),
+                    "trust_delta": round(applied_delta, 4),
+                    "source_events": source_counts[(agent_id, protocol)],
+                }
+            )
+
+        if adjustments:
+            self._record_world_event(
+                summary,
+                round_num,
+                "social_memory_diffusion",
+                f"{len(adjustments)} peer trust adjustments from recent agent memories.",
+                data={
+                    "memory_events": len(recent_events),
+                    "adjustments": adjustments[:12],
+                },
+            )
+        return adjustments
+
     def _classify_trust_driver(
         self,
         *,
@@ -1342,6 +1457,7 @@ class SimulationEngine:
         self.economy.start_round(round_num)
 
         summary = RoundSummary(round_num=round_num)
+        self._diffuse_social_memory(round_num, summary)
         active_agents = self._choose_active_agents()
         summary.active_agents = len(active_agents)
 
