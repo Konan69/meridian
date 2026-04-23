@@ -56,6 +56,9 @@ Report grounding:
 - If unroutable rebalance attempts are also present in `route_pressure_summary`,
   reports may use `treasury_rebalance_unroutable:<source>-><target>` rows to
   explain blocked demand and repeated no-route pressure.
+- When only raw `world_events` entries with `event_type="route_pressure"` are
+  available, reports should preserve the same visible no-route fields:
+  `reason`, `failure_count`, and `pressure_level`.
 - Do not add a compact `self_sustainability_summary`. Keeping the report tied
   to source fields makes route capacity, treasury fit, margin, and memory
   drivers auditable in the stream and final payload.

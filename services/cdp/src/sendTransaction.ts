@@ -1,4 +1,4 @@
-import { isHexAddress } from "./treasury.js";
+import { makeRequestValidator } from "./requestValidation.js";
 
 export type CdpNetwork = "base-sepolia" | "base";
 
@@ -16,8 +16,6 @@ export type SendTransactionOptions = {
   };
 };
 
-type JsonRecord = Record<string, unknown>;
-
 export class SendTransactionRequestError extends Error {
   constructor(message: string) {
     super(message);
@@ -25,20 +23,9 @@ export class SendTransactionRequestError extends Error {
   }
 }
 
-function asRecord(value: unknown, name: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new SendTransactionRequestError(`${name} must be an object`);
-  }
-  return value as JsonRecord;
-}
-
-function requiredAddress(value: unknown, name: string): `0x${string}` {
-  const address = typeof value === "string" ? value.trim() : "";
-  if (!isHexAddress(address)) {
-    throw new SendTransactionRequestError(`${name} must be an EVM address`);
-  }
-  return address;
-}
+const { asRecord, requiredAddress } = makeRequestValidator(
+  (message) => new SendTransactionRequestError(message),
+);
 
 function normalizeNetwork(value: unknown): CdpNetwork {
   if (value === "base-sepolia" || value === "base") {

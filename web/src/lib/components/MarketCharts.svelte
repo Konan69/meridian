@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { PROTOCOL_COLORS } from '$lib/constants';
+	import type { RoutePressureSummary } from '$lib/stores/simulation.svelte';
 
 	interface ProtoMetric {
 		protocol: string;
@@ -21,15 +22,33 @@
 		route_mix?: Record<string, number>;
 	}
 
+	interface NoRoutePressureRow {
+		route: string;
+		domains: string;
+		capacityRatio: number;
+		pressureRounds: number;
+		failureCount: number | null;
+		merchant: string | null;
+		protocols: string[];
+	}
+
 	interface Props {
 		metrics: ProtoMetric[];
 		ecosystem?: Record<string, ProtocolEcosystem>;
 		routeUsage?: Record<string, number>;
+		routePressureSummary?: RoutePressureSummary[];
 		floatSummary?: Record<string, number>;
 		railPnlHistory?: Record<string, number[]>;
 	}
 
-	let { metrics, ecosystem = {}, routeUsage = {}, floatSummary = {}, railPnlHistory = {} }: Props = $props();
+	let {
+		metrics,
+		ecosystem = {},
+		routeUsage = {},
+		routePressureSummary = [],
+		floatSummary = {},
+		railPnlHistory = {},
+	}: Props = $props();
 
 	function color(protocol: string): string {
 		return PROTOCOL_COLORS[protocol.toLowerCase()] ?? '#6b7280';
@@ -131,6 +150,8 @@
 			.slice(0, 8)
 	);
 	let routeMax = $derived(Math.max(...routeData.map(([, count]) => count), 1));
+	let noRoutePressureRows = $derived(buildNoRoutePressureRows(routePressureSummary));
+	let visibleNoRoutePressureRows = $derived(noRoutePressureRows.slice(0, 4));
 
 	const barHeight = 26;
 	const labelWidth = 118;
@@ -162,6 +183,19 @@
 
 	function compactLabel(value: string, max = 18): string {
 		return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+	}
+
+	function textFrom(...values: unknown[]) {
+		for (const value of values) {
+			if (typeof value !== 'string') continue;
+			const trimmed = value.trim();
+			if (trimmed) return trimmed;
+		}
+		return null;
+	}
+
+	function formatLabel(value: string) {
+		return value.replaceAll('_', ' ');
 	}
 
 	function cleanMetric(metric: ProtoMetric): ProtoMetric {
@@ -202,6 +236,42 @@
 			const numeric = numberFrom(value);
 			return numeric == null ? [] : [numeric];
 		});
+	}
+
+	function buildNoRoutePressureRows(summaries: RoutePressureSummary[]): NoRoutePressureRow[] {
+		return summaries
+			.flatMap((summary) => {
+				const reason = textFrom(summary.reason);
+				const failureCount = numberFrom(summary.failure_count);
+				if (reason !== 'no_feasible_rebalance_route' && (failureCount ?? 0) <= 0) return [];
+
+				const route = textFrom(summary.route_id);
+				if (!route) return [];
+
+				const source = textFrom(summary.source_domain) ?? 'unknown';
+				const target = textFrom(summary.target_domain) ?? 'unknown';
+				const protocols = Array.isArray(summary.protocols)
+					? summary.protocols.flatMap((protocol) => {
+						const label = textFrom(protocol);
+						return label ? [label] : [];
+					})
+					: [];
+
+				return [{
+					route,
+					domains: `${source} to ${target}`,
+					capacityRatio: nonNegativeNumber(summary.max_capacity_ratio),
+					pressureRounds: wholeNonNegative(summary.pressure_rounds),
+					failureCount: failureCount == null ? null : wholeNonNegative(failureCount),
+					merchant: textFrom(summary.merchant, summary.merchant_id),
+					protocols,
+				}];
+			})
+			.sort((a, b) =>
+				b.capacityRatio - a.capacityRatio
+				|| (b.failureCount ?? 0) - (a.failureCount ?? 0)
+				|| b.pressureRounds - a.pressureRounds
+			);
 	}
 </script>
 
@@ -396,6 +466,40 @@
 				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No positive route principal yet</text>
 			{/each}
 		</svg>
+		{#if visibleNoRoutePressureRows.length > 0}
+			<div class="route-pressure-chips" aria-label="No-route treasury pressure">
+				<div class="chip-heading">
+					<span>No-route treasury pressure</span>
+					<strong>{noRoutePressureRows.length}</strong>
+				</div>
+				{#each visibleNoRoutePressureRows as row}
+					<div class="pressure-chip-row">
+						<div class="pressure-main">
+							<span class="pressure-route">{compactLabel(row.route, 24)}</span>
+							<strong>{(row.capacityRatio * 100).toFixed(0)}%</strong>
+						</div>
+						<div class="pressure-meta">
+							<span>{compactLabel(row.domains, 28)}</span>
+							<span>{row.pressureRounds}r</span>
+							{#if row.failureCount != null}
+								<span>{row.failureCount} fail</span>
+							{/if}
+							{#if row.merchant}
+								<span>{compactLabel(row.merchant, 20)}</span>
+							{/if}
+						</div>
+						<div class="pressure-tags">
+							<span class="pressure-tag pressure-critical">{formatLabel('no_feasible_rebalance_route')}</span>
+							{#each row.protocols.slice(0, 3) as protocol}
+								<span class="pressure-tag" style={`border-color:${color(protocol)}; color:${color(protocol)}`}>
+									{protocol.toUpperCase()}
+								</span>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -414,5 +518,95 @@
 		border-radius: 6px;
 		background: var(--bg-2);
 		padding: 14px;
+	}
+
+	.route-pressure-chips {
+		display: grid;
+		gap: 8px;
+		margin-top: 10px;
+		padding-top: 10px;
+		border-top: 1px solid var(--bd);
+	}
+
+	.chip-heading,
+	.pressure-main,
+	.pressure-meta,
+	.pressure-tags {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.chip-heading,
+	.pressure-main {
+		justify-content: space-between;
+	}
+
+	.chip-heading {
+		color: var(--tx-3);
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: uppercase;
+	}
+
+	.chip-heading strong,
+	.pressure-main strong {
+		font-family: var(--mono);
+	}
+
+	.pressure-chip-row {
+		min-width: 0;
+		border: 1px solid color-mix(in srgb, var(--ap2) 28%, var(--bd));
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--ap2) 8%, var(--bg-2));
+		padding: 8px;
+	}
+
+	.pressure-main {
+		color: var(--tx-1);
+		font-family: var(--mono);
+		font-size: 11px;
+	}
+
+	.pressure-route,
+	.pressure-meta span {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.pressure-meta {
+		flex-wrap: wrap;
+		margin-top: 5px;
+		color: var(--tx-3);
+		font-family: var(--mono);
+		font-size: 10px;
+	}
+
+	.pressure-tags {
+		flex-wrap: wrap;
+		margin-top: 7px;
+	}
+
+	.pressure-tag {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		border: 1px solid var(--bd);
+		border-radius: 999px;
+		padding: 3px 7px;
+		color: var(--tx-2);
+		font-family: var(--mono);
+		font-size: 10px;
+	}
+
+	.pressure-critical {
+		border-color: color-mix(in srgb, var(--ap2) 55%, var(--bd));
+		background: color-mix(in srgb, var(--ap2) 12%, transparent);
+		color: var(--ap2);
 	}
 </style>

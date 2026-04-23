@@ -1,4 +1,4 @@
-import { isHexAddress } from "./treasury.js";
+import { makeRequestValidator } from "./requestValidation.js";
 
 export type SignTypedDataOptions = {
   address: `0x${string}`;
@@ -15,8 +15,6 @@ export type SignTypedDataOptions = {
   idempotencyKey?: string;
 };
 
-type JsonRecord = Record<string, unknown>;
-
 const DOMAIN_FIELDS = new Set([
   "name",
   "version",
@@ -32,20 +30,9 @@ export class SignTypedDataRequestError extends Error {
   }
 }
 
-function asRecord(value: unknown, name: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new SignTypedDataRequestError(`${name} must be an object`);
-  }
-  return value as JsonRecord;
-}
-
-function requiredAddress(value: unknown, name: string): `0x${string}` {
-  const address = typeof value === "string" ? value.trim() : "";
-  if (!isHexAddress(address)) {
-    throw new SignTypedDataRequestError(`${name} must be an EVM address`);
-  }
-  return address;
-}
+const { asRecord, requiredAddress } = makeRequestValidator(
+  (message) => new SignTypedDataRequestError(message),
+);
 
 function requiredNonEmptyString(value: unknown, name: string): string {
   const text = typeof value === "string" ? value.trim() : "";

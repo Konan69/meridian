@@ -36,6 +36,76 @@ def _list_label(value: object, default: str = "unknown") -> str:
     return default
 
 
+def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
+    rows: dict[str, dict] = {}
+    for event in route_events:
+        data = getattr(event, "data", None)
+        if not isinstance(data, dict):
+            continue
+
+        route_id = str(data.get("route_id") or "")
+        if not route_id:
+            continue
+
+        row = rows.setdefault(
+            route_id,
+            {
+                "route_id": route_id,
+                "source_domain": data.get("source_domain") or "unknown_source",
+                "target_domain": data.get("target_domain") or "unknown_target",
+                "primitive": data.get("primitive") or "unknown",
+                "protocols": data.get("protocols") if isinstance(data.get("protocols"), list) else [],
+                "total_usage_cents": 0,
+                "max_capacity_ratio": 0.0,
+                "pressure_rounds": 0,
+                "last_pressure_level": "observed",
+                "_source": "world_events.route_pressure",
+            },
+        )
+        row["total_usage_cents"] += _as_int(
+            data.get("total_usage_cents", data.get("usage_cents", 0))
+        )
+        row["max_capacity_ratio"] = max(
+            _as_float(row.get("max_capacity_ratio", 0)),
+            _as_float(data.get("max_capacity_ratio", data.get("capacity_ratio", 0))),
+        )
+
+        pressure_level = str(
+            data.get("last_pressure_level")
+            or data.get("pressure_level")
+            or row.get("last_pressure_level")
+            or "observed"
+        )
+        if pressure_level != "low":
+            row["pressure_rounds"] += 1
+        row["last_pressure_level"] = pressure_level
+
+        reason = str(data.get("reason") or row.get("reason") or "")
+        if reason:
+            row["reason"] = reason
+
+        failure_count = max(
+            _as_int(row.get("failure_count", 0)),
+            _as_int(data.get("failure_count", 0)),
+        )
+        if failure_count:
+            row["failure_count"] = failure_count
+
+        merchant = data.get("merchant") or data.get("merchant_id") or row.get("merchant")
+        if merchant:
+            row["merchant"] = merchant
+
+    return sorted(
+        rows.values(),
+        key=lambda route: (
+            _as_float(route.get("max_capacity_ratio", 0)),
+            _as_int(route.get("total_usage_cents", 0)),
+            str(route.get("route_id", "")),
+        ),
+        reverse=True,
+    )
+
+
 # Canonical protocol display order
 _PROTO_ORDER = ["acp", "ap2", "x402", "mpp", "atxp"]
 
@@ -195,10 +265,14 @@ class ReportGenerator:
             f"Treasury posture events: {len(treasury_posture_events)}",
             f"Route pressure events: {len(route_events)}",
         ]
+        route_pressure_rows = (
+            self.result.route_pressure_summary
+            or _route_pressure_rows_from_events(route_events)
+        )
 
-        if self.result.route_pressure_summary:
+        if route_pressure_rows:
             peak_route = sorted(
-                self.result.route_pressure_summary,
+                route_pressure_rows,
                 key=lambda route: (
                     -_as_float(route.get("max_capacity_ratio", 0)),
                     str(route.get("route_id", "")),
@@ -228,7 +302,7 @@ class ReportGenerator:
                 f"{_cents_to_dollars(usage_cents)} reserved principal; {route_action}."
             )
             unroutable = [
-                route for route in self.result.route_pressure_summary
+                route for route in route_pressure_rows
                 if (
                     str(route.get("route_id", "")).startswith("treasury_rebalance_unroutable:")
                     or route.get("reason") == "no_feasible_rebalance_route"
@@ -250,12 +324,24 @@ class ReportGenerator:
                 pressure_rounds = _as_int(blocked.get("pressure_rounds", blocked.get("failure_count", 0)))
                 round_label = "pressure round" if pressure_rounds == 1 else "pressure rounds"
                 blocked_cents = _as_int(blocked.get("total_usage_cents", blocked.get("usage_cents", 0)))
+                raw_parts = []
+                if blocked.get("_source") == "world_events.route_pressure":
+                    reason = str(blocked.get("reason") or "")
+                    failure_count = _as_int(blocked.get("failure_count", 0))
+                    level = str(blocked.get("last_pressure_level") or "observed")
+                    if reason:
+                        raw_parts.append(f"reason {reason}")
+                    if failure_count:
+                        raw_parts.append(f"failure_count {failure_count}")
+                    if level != "observed":
+                        raw_parts.append(f"level {level}")
+                raw_suffix = f"; {', '.join(raw_parts)}" if raw_parts else ""
                 lines.append(
                     f"Unroutable treasury pressure: {blocked_route} reached "
                     f"{_as_float(blocked.get('max_capacity_ratio', 0)) * 100:.1f}% capacity "
                     f"across {pressure_rounds} {round_label} with "
                     f"{_cents_to_dollars(blocked_cents)} blocked demand; protocols "
-                    f"{protocols} had no feasible {source} -> {target} route."
+                    f"{protocols} had no feasible {source} -> {target} route{raw_suffix}."
                 )
 
         if treasury_failed:
@@ -386,10 +472,10 @@ class ReportGenerator:
                     f"ready_rounds={merchant['rebalance_ready_rounds']}"
                 )
 
-        if self.result.route_pressure_summary:
+        if route_pressure_rows:
             lines.append("")
             lines.append("Most pressured routes:")
-            for route in self.result.route_pressure_summary[:5]:
+            for route in route_pressure_rows[:5]:
                 lines.append(
                     f"  {route['route_id']}: max={float(route['max_capacity_ratio']) * 100:.1f}%, "
                     f"usage={_cents_to_dollars(int(route['total_usage_cents']))}, "
@@ -444,7 +530,7 @@ class ReportGenerator:
 
         status = "warn" if treasury_failed or any(
             _as_float(route.get("max_capacity_ratio", 0)) >= 1.0
-            for route in self.result.route_pressure_summary
+            for route in route_pressure_rows
         ) else "ok"
         return {"title": "Self-Sustainability Signals", "content": "\n".join(lines), "status": status}
 

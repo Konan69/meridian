@@ -121,10 +121,10 @@ Those traces list `trace_metadata.validation.covered_test_files`,
 `covered_helper_files`, and `coverage_points` so coverage gaps are visible
 without scraping command output. The Node service tasks use the same frozen pnpm
 install and node_modules seeding metadata as build tasks; AP2 runs its pure
-Python unittest contract directly. The static benchmark contract also checks
-that every offline service test/helper path listed in trace coverage metadata
-still exists, so deleting or renaming one of those files requires updating the
-metadata in the same change.
+Python unittest contract directly. The static benchmark contract also requires
+each service coverage entry to list at least one test file and one helper file,
+then checks that every listed path still exists. Deleting or renaming one of
+those files requires updating the metadata in the same change.
 
 ## Optimization Target
 

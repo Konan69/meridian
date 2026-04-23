@@ -1,11 +1,9 @@
-import { isHexAddress } from "./treasury.js";
+import { makeRequestValidator } from "./requestValidation.js";
 
 export type SignMessageOptions = {
   address: `0x${string}`;
   message: string;
 };
-
-type JsonRecord = Record<string, unknown>;
 
 export class SignMessageRequestError extends Error {
   constructor(message: string) {
@@ -14,20 +12,9 @@ export class SignMessageRequestError extends Error {
   }
 }
 
-function asRecord(value: unknown, name: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new SignMessageRequestError(`${name} must be an object`);
-  }
-  return value as JsonRecord;
-}
-
-function requiredAddress(value: unknown, name: string): `0x${string}` {
-  const address = typeof value === "string" ? value.trim() : "";
-  if (!isHexAddress(address)) {
-    throw new SignMessageRequestError(`${name} must be an EVM address`);
-  }
-  return address;
-}
+const { asRecord, requiredAddress } = makeRequestValidator(
+  (message) => new SignMessageRequestError(message),
+);
 
 function requiredMessage(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {

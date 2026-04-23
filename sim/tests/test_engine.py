@@ -682,6 +682,81 @@ def test_self_sustainability_report_explains_rebalance_failure_event():
     ) in signals["content"]
 
 
+def test_self_sustainability_report_uses_raw_route_pressure_events_without_summary():
+    """Report keeps raw no-route pressure fields visible if no aggregate exists."""
+    config = SimulationConfig(
+        num_agents=1,
+        num_rounds=1,
+        protocols=[Protocol.MPP],
+    )
+    result = SimulationResult(config=config)
+    route_id = "treasury_rebalance_unroutable:tempo_usd->base_usdc"
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=4,
+            event_type="route_pressure",
+            summary=f"{route_id} ran at 84.0% of round capacity.",
+            actor_id="mpp",
+            data={
+                "route_id": route_id,
+                "source_domain": "tempo_usd",
+                "target_domain": "base_usdc",
+                "primitive": "treasury_rebalance",
+                "protocols": ["mpp"],
+                "usage_cents": 12_000,
+                "capacity_ratio": 0.84,
+                "pressure_level": "elevated",
+                "reason": "no_feasible_rebalance_route",
+                "merchant_id": "merchant_test",
+                "failure_count": 1,
+            },
+        ),
+        EconomyWorldEvent(
+            round_num=5,
+            event_type="route_pressure",
+            summary=f"{route_id} ran at 106.0% of round capacity.",
+            actor_id="mpp",
+            data={
+                "route_id": route_id,
+                "source_domain": "tempo_usd",
+                "target_domain": "base_usdc",
+                "primitive": "treasury_rebalance",
+                "protocols": ["mpp"],
+                "usage_cents": 24_000,
+                "capacity_ratio": 1.06,
+                "pressure_level": "critical",
+                "reason": "no_feasible_rebalance_route",
+                "merchant_id": "merchant_test",
+                "failure_count": 2,
+            },
+        ),
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    signals = next((s for s in sections if s["title"] == "Self-Sustainability Signals"), None)
+
+    assert signals is not None
+    assert signals["status"] == "warn"
+    assert "Treasury rebalances: 0 succeeded, 0 failed" in signals["content"]
+    assert "Route pressure events: 2" in signals["content"]
+    assert (
+        "Readout: treasury_rebalance_unroutable:tempo_usd->base_usdc peaked "
+        "at 106.0% capacity (critical) across 2 pressure rounds with $360.00 "
+        "reserved principal"
+    ) in signals["content"]
+    assert (
+        "Unroutable treasury pressure: "
+        "treasury_rebalance_unroutable:tempo_usd->base_usdc reached "
+        "106.0% capacity across 2 pressure rounds with $360.00 blocked "
+        "demand; protocols MPP had no feasible tempo_usd -> base_usdc route; "
+        "reason no_feasible_rebalance_route, failure_count 2, level critical."
+    ) in signals["content"]
+    assert (
+        "  treasury_rebalance_unroutable:tempo_usd->base_usdc: max=106.0%, "
+        "usage=$360.00, rounds=2"
+    ) in signals["content"]
+
+
 # ------------------------------------------------------------------
 # l. Report generation
 # ------------------------------------------------------------------

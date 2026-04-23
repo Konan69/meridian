@@ -702,15 +702,20 @@ def static_contract_trace_metadata(
             ],
             "metadata_drift_checks": [
                 {
-                    "kind": "service_offline_coverage_files_exist",
+                    "kind": "service_offline_coverage_files_exist_and_nonempty",
                     "source": "SERVICE_OFFLINE_COVERAGE",
+                    "required_nonempty_fields": ["test_files", "helper_files"],
                     "file_count": sum(
                         item["file_count"] for item in service_offline_coverage_files
+                    ),
+                    "empty_required_field_count": sum(
+                        len(item["empty_required_fields"])
+                        for item in service_offline_coverage_files
                     ),
                     "services": [
                         item["service"] for item in service_offline_coverage_files
                     ],
-                    "protects": "Offline service trace coverage file lists stay tied to files that still exist in the repository.",
+                    "protects": "Offline service trace coverage must name at least one test file and helper file per service, and every listed path must exist.",
                 }
             ],
             "service_offline_coverage_files": service_offline_coverage_files,
@@ -847,6 +852,14 @@ def task_static_contracts(root: Path) -> float:
 
     service_offline_coverage_files = []
     for service, coverage in SERVICE_OFFLINE_COVERAGE.items():
+        required_fields = ["test_files", "helper_files"]
+        empty_required_fields = [
+            field for field in required_fields if len(coverage[field]) == 0
+        ]
+        for field in empty_required_fields:
+            failures.append(
+                f"SERVICE_OFFLINE_COVERAGE[{service}]: {field} must list at least one file"
+            )
         checked_paths = [
             *coverage["test_files"],
             *coverage["helper_files"],
@@ -862,6 +875,10 @@ def task_static_contracts(root: Path) -> float:
                 "checked_fields": ["test_files", "helper_files"],
                 "test_files": coverage["test_files"],
                 "helper_files": coverage["helper_files"],
+                "field_counts": {
+                    field: len(coverage[field]) for field in required_fields
+                },
+                "empty_required_fields": empty_required_fields,
                 "file_count": len(checked_paths),
                 "missing_files": missing_paths,
             }
