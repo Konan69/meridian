@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from sim.agents import generate_agents
@@ -261,3 +262,103 @@ def test_protocol_trust_summary_covers_active_protocols_with_defaults():
     assert set(summary) == {"x402", "atxp"}
     assert summary["x402"] == {"avg": 0.6, "min": 0.5, "max": 0.7}
     assert summary["atxp"] == {"avg": 0.575, "min": 0.55, "max": 0.6}
+
+
+class _OfflineEconomy:
+    total_route_usage = {"base-direct": 1}
+
+    def snapshot_float_summary(self) -> dict[str, int]:
+        return {"base_usdc": 10_000}
+
+    def snapshot_treasury_distribution(self) -> dict[str, dict[str, int]]:
+        return {"merchant_test": {"base_usdc": 10_000}}
+
+    def snapshot_balances(self) -> dict[str, dict[str, int]]:
+        return {"agent_001": {"base_usdc": 8_500}}
+
+
+def test_simulation_complete_payload_preserves_world_contract(capsys):
+    config = SimulationConfig(
+        num_rounds=1,
+        seed=13,
+        protocols=[Protocol.X402],
+        world_seed="offline-complete-world",
+        scenario_prompt="complete payload includes memory",
+    )
+    engine = SimulationEngine(config)
+    agent = _agent("agent_001", trust={"x402": 0.6})
+    merchant = _merchant()
+
+    async def fake_setup():
+        engine.agents = [agent]
+        engine.merchants = [merchant]
+        engine.economy = _OfflineEconomy()
+
+    async def fake_run_round(round_num: int) -> RoundSummary:
+        summary = RoundSummary(
+            round_num=round_num,
+            active_agents=1,
+            success_count=1,
+            total_volume=125,
+            total_fees=1,
+        )
+        before, after, sentiment_delta = engine._apply_protocol_experience(
+            agent,
+            Protocol.X402,
+            success=True,
+            ecosystem_pressure=0.0,
+        )
+        engine._record_agent_memory(
+            summary,
+            round_num=round_num,
+            agent=agent,
+            protocol=Protocol.X402,
+            workload_type=WorkloadType.API_MICRO,
+            sentiment_delta=sentiment_delta,
+            trust_before=before,
+            trust_after=after,
+            amount_cents=125,
+            merchant=merchant,
+            product_name="API credits",
+            route_id="base-direct",
+            reason="payment_settled",
+        )
+        engine._record_world_event(
+            summary,
+            round_num,
+            "round_closed",
+            "Round 1 closed with offline memory.",
+            data={"trust_summary": engine._protocol_trust_summary()},
+        )
+        return summary
+
+    engine.setup = fake_setup
+    engine.run_round = fake_run_round
+
+    result = asyncio.run(engine.run())
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    complete = emitted[-1]
+
+    assert result.total_transactions == 1
+    assert result.trust_summary["x402"]["avg"] > 0.6
+    assert len(result.agent_memory_log) == 1
+    assert len(result.world_events) == 1
+
+    assert complete["type"] == "simulation_complete"
+    assert complete["world_id"] == engine.world_id
+    assert complete["simulation_world"] == {
+        "world_id": engine.world_id,
+        "world_seed": "offline-complete-world",
+        "scenario_prompt": "complete payload includes memory",
+        "stable_universe": "usdc_centric",
+        "agents": 1,
+        "merchants": 1,
+        "protocols": ["x402"],
+        "memory_events": 1,
+        "world_events": 1,
+    }
+    assert complete["trust_summary"] == result.trust_summary
+    assert complete["agent_memory_log"][0]["reason"] == "payment_settled"
+    assert complete["agent_memory_log"][0]["trust_after"] > complete["agent_memory_log"][0]["trust_before"]
+    assert complete["world_events"][0]["event_type"] == "round_closed"
+    assert complete["balances"] == {"agent_001": {"base_usdc": 8_500}}
