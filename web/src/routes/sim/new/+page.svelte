@@ -837,6 +837,7 @@
 									metrics={simState.metrics}
 									ecosystem={simState.ecosystem}
 									routeUsage={simState.routeUsage}
+									routePressureSummary={simState.routePressureSummary}
 									railPnlHistory={simState.railPnlHistory}
 									worldEvents={simState.worldEvents}
 									events={simState.events}

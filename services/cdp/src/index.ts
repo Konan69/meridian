@@ -8,6 +8,10 @@ import {
   type SendTransactionOptions,
 } from "./sendTransaction.js";
 import {
+  SignMessageRequestError,
+  normalizeSignMessageRequest,
+} from "./signMessage.js";
+import {
   SignTypedDataRequestError,
   normalizeSignTypedDataRequest,
 } from "./signTypedData.js";
@@ -242,15 +246,14 @@ app.post("/evm/transfer-native", async (req: Request, res: Response) => {
 
 app.post("/evm/sign-message", async (req: Request, res: Response) => {
   try {
-    const address = String(req.body?.address || "").trim();
-    const message = String(req.body?.message || "");
-    if (!address || !message) {
-      res.status(400).json({ error: "address and message are required" });
-      return;
-    }
-    const result = await cdp.evm.signMessage({ address: address as `0x${string}`, message });
+    const signMessageRequest = normalizeSignMessageRequest(req.body);
+    const result = await cdp.evm.signMessage(signMessageRequest);
     res.json(result);
   } catch (error) {
+    if (error instanceof SignMessageRequestError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String((error as Error)?.message || error) });
   }
 });

@@ -152,6 +152,59 @@ def _agent(agent_id: str, *, trust: dict[str, float] | None = None) -> AgentProf
     )
 
 
+def _engine_with_treasury_shortfall(
+    *,
+    seed: int,
+    protocols: list[Protocol],
+    merchant_protocols: list[Protocol],
+    agents: list[AgentProfile],
+    max_active_ratio: float | None = None,
+    zero_agent_budgets: bool = False,
+) -> tuple[SimulationEngine, MerchantProfile]:
+    config_kwargs = {
+        "seed": seed,
+        "protocols": protocols,
+        "social_memory_strength": 0.0,
+    }
+    if max_active_ratio is not None:
+        config_kwargs["max_active_ratio"] = max_active_ratio
+    engine = SimulationEngine(SimulationConfig(**config_kwargs))
+    merchant = _merchant()
+    merchant.accepted_protocols = merchant_protocols
+    merchant.accepted_settlement_domains = [
+        BalanceDomain.BASE_USDC,
+        BalanceDomain.TEMPO_USD,
+    ]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = agents
+    if zero_agent_budgets:
+        for agent in engine.agents:
+            agent.budget = 0
+    for state in engine.protocol_state.values():
+        state.reliability = 0.96
+        state.network_effect = 0.55
+        state.operator_margin_cents = 0
+
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+    return engine, merchant
+
+
 def test_protocol_option_sustainability_bias_uses_margin_pressure_and_treasury_fit():
     config = SimulationConfig(protocols=[Protocol.AP2, Protocol.ATXP])
     engine = SimulationEngine(config)
@@ -409,45 +462,15 @@ def test_rebalance_without_feasible_protocol_route_records_world_event(capsys):
 
 
 def test_repeated_rebalance_infeasibility_becomes_market_evidence():
-    config = SimulationConfig(
+    engine, merchant = _engine_with_treasury_shortfall(
         seed=31,
         protocols=[Protocol.AP2, Protocol.ATXP, Protocol.MPP, Protocol.ACP],
-        social_memory_strength=0.0,
+        merchant_protocols=[Protocol.MPP, Protocol.ACP, Protocol.AP2],
+        agents=[
+            _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+            _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+        ],
     )
-    engine = SimulationEngine(config)
-    merchant = _merchant()
-    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP, Protocol.AP2]
-    merchant.accepted_settlement_domains = [
-        BalanceDomain.BASE_USDC,
-        BalanceDomain.TEMPO_USD,
-    ]
-    merchant.working_capital_cents = 20_000
-    engine.merchants = [merchant]
-    engine.agents = [
-        _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
-        _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
-    ]
-    for state in engine.protocol_state.values():
-        state.reliability = 0.96
-        state.network_effect = 0.55
-        state.operator_margin_cents = 0
-
-    engine.economy = StablecoinEconomy(
-        agents=engine.agents,
-        merchants=[merchant],
-        protocols=config.protocols,
-        rng=engine.rng,
-    )
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.BASE_USDC,
-    ).available_cents = 0
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.TEMPO_USD,
-    ).available_cents = 12_000
 
     first = RoundSummary(round_num=4)
     asyncio.run(engine._handle_rebalances(4, first))
@@ -488,48 +511,17 @@ def test_repeated_rebalance_infeasibility_becomes_market_evidence():
 
 
 def test_run_round_carries_rebalance_infeasibility_pressure_into_market_evolution():
-    config = SimulationConfig(
+    engine, merchant = _engine_with_treasury_shortfall(
         seed=31,
         protocols=[Protocol.AP2, Protocol.ATXP, Protocol.MPP, Protocol.ACP],
-        social_memory_strength=0.0,
+        merchant_protocols=[Protocol.MPP, Protocol.ACP, Protocol.AP2],
+        agents=[
+            _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+            _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+        ],
         max_active_ratio=1.0,
+        zero_agent_budgets=True,
     )
-    engine = SimulationEngine(config)
-    merchant = _merchant()
-    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP, Protocol.AP2]
-    merchant.accepted_settlement_domains = [
-        BalanceDomain.BASE_USDC,
-        BalanceDomain.TEMPO_USD,
-    ]
-    merchant.working_capital_cents = 20_000
-    engine.merchants = [merchant]
-    engine.agents = [
-        _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
-        _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
-    ]
-    for agent in engine.agents:
-        agent.budget = 0
-    for state in engine.protocol_state.values():
-        state.reliability = 0.96
-        state.network_effect = 0.55
-        state.operator_margin_cents = 0
-
-    engine.economy = StablecoinEconomy(
-        agents=engine.agents,
-        merchants=[merchant],
-        protocols=config.protocols,
-        rng=engine.rng,
-    )
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.BASE_USDC,
-    ).available_cents = 0
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.TEMPO_USD,
-    ).available_cents = 12_000
 
     summary = asyncio.run(engine.run_round(5))
 
@@ -578,44 +570,14 @@ def test_run_round_carries_rebalance_infeasibility_pressure_into_market_evolutio
 
 
 def test_consecutive_run_rounds_escalate_rebalance_infeasibility_pressure():
-    config = SimulationConfig(
+    engine, _ = _engine_with_treasury_shortfall(
         seed=32,
         protocols=[Protocol.MPP, Protocol.ACP],
-        social_memory_strength=0.0,
+        merchant_protocols=[Protocol.MPP, Protocol.ACP],
+        agents=[_agent("agent_001", trust={"mpp": 0.74, "acp": 0.74})],
         max_active_ratio=1.0,
+        zero_agent_budgets=True,
     )
-    engine = SimulationEngine(config)
-    merchant = _merchant()
-    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP]
-    merchant.accepted_settlement_domains = [
-        BalanceDomain.BASE_USDC,
-        BalanceDomain.TEMPO_USD,
-    ]
-    merchant.working_capital_cents = 20_000
-    engine.merchants = [merchant]
-    engine.agents = [_agent("agent_001", trust={"mpp": 0.74, "acp": 0.74})]
-    engine.agents[0].budget = 0
-    for state in engine.protocol_state.values():
-        state.reliability = 0.96
-        state.network_effect = 0.55
-        state.operator_margin_cents = 0
-
-    engine.economy = StablecoinEconomy(
-        agents=engine.agents,
-        merchants=[merchant],
-        protocols=config.protocols,
-        rng=engine.rng,
-    )
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.BASE_USDC,
-    ).available_cents = 0
-    engine.economy._get_or_create_bucket(
-        AgentRole.MERCHANT,
-        merchant.merchant_id,
-        BalanceDomain.TEMPO_USD,
-    ).available_cents = 12_000
 
     first = asyncio.run(engine.run_round(4))
     second = asyncio.run(engine.run_round(5))

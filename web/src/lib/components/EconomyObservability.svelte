@@ -4,6 +4,7 @@
 		EconomyWorldEvent,
 		ProtoMetrics,
 		ProtocolEcosystem,
+		RoutePressureSummary,
 		SimEvent,
 	} from '$lib/stores/simulation.svelte';
 
@@ -31,6 +32,19 @@
 		protocols: RouteMixPart[];
 	}
 
+	interface PressureRow {
+		route: string;
+		usageCents: number;
+		capacityRatio: number;
+		pressureRounds: number;
+		level: string;
+		reason: string | null;
+		failureCount: number | null;
+		merchant: string | null;
+		domains: string;
+		protocols: string[];
+	}
+
 	interface RailRow {
 		protocol: string;
 		marginCents: number;
@@ -44,6 +58,7 @@
 		metrics: ProtoMetrics[];
 		ecosystem?: Record<string, ProtocolEcosystem>;
 		routeUsage?: Record<string, number>;
+		routePressureSummary?: RoutePressureSummary[];
 		railPnlHistory?: Record<string, number[]>;
 		worldEvents?: EconomyWorldEvent[];
 		events?: SimEvent[];
@@ -53,6 +68,7 @@
 		metrics,
 		ecosystem = {},
 		routeUsage = {},
+		routePressureSummary = [],
 		railPnlHistory = {},
 		worldEvents = [],
 		events = [],
@@ -74,6 +90,8 @@
 	let routeTotalCents = $derived(routeRows.reduce((sum, row) => sum + row.usageCents, 0));
 	let routeMaxCents = $derived(Math.max(...routeRows.map((row) => row.usageCents), 1));
 	let visibleRouteRows = $derived(routeRows.slice(0, 5));
+	let pressureRows = $derived(buildPressureRows(routePressureSummary));
+	let visiblePressureRows = $derived(pressureRows.slice(0, 4));
 	let routeCoverage = $derived({
 		withLedger: routeRows.filter((row) => row.usageCents > 0).length,
 		mixOnly: routeRows.filter((row) => row.usageCents === 0 && row.attempts > 0).length,
@@ -123,6 +141,40 @@
 				};
 			})
 			.sort((a, b) => b.usageCents - a.usageCents || b.attempts - a.attempts);
+	}
+
+	function buildPressureRows(summaries: RoutePressureSummary[]): PressureRow[] {
+		return summaries
+			.map((summary) => {
+				const route = textFrom(summary.route_id);
+				if (!route) return null;
+				return {
+					route,
+					usageCents: nonNegativeNumber(summary.total_usage_cents),
+					capacityRatio: nonNegativeNumber(summary.max_capacity_ratio),
+					pressureRounds: wholeNonNegative(summary.pressure_rounds),
+					level: textFrom(summary.last_pressure_level) ?? 'unknown',
+					reason: textFrom(summary.reason),
+					failureCount: numberFrom(summary.failure_count) == null
+						? null
+						: wholeNonNegative(summary.failure_count),
+					merchant: textFrom(summary.merchant, summary.merchant_id),
+					domains: `${summary.source_domain} to ${summary.target_domain}`,
+					protocols: Array.isArray(summary.protocols) ? summary.protocols.flatMap((protocol) => {
+						const label = textFrom(protocol);
+						return label ? [label] : [];
+					}) : [],
+				};
+			})
+			.filter((row): row is PressureRow => row != null)
+			.sort((a, b) => {
+				const aNoRoute = a.reason === 'no_feasible_rebalance_route' ? 1 : 0;
+				const bNoRoute = b.reason === 'no_feasible_rebalance_route' ? 1 : 0;
+				return bNoRoute - aNoRoute
+					|| b.capacityRatio - a.capacityRatio
+					|| (b.failureCount ?? 0) - (a.failureCount ?? 0)
+					|| b.usageCents - a.usageCents;
+			});
 	}
 
 	function buildRailRows(
@@ -257,6 +309,12 @@
 		return reason === 'ecosystem_evidence' ? 'reason-ecosystem' : 'reason-rail';
 	}
 
+	function pressureClass(level: string, reason: string | null) {
+		if (reason === 'no_feasible_rebalance_route' || level === 'critical') return 'pressure-critical';
+		if (level === 'elevated') return 'pressure-elevated';
+		return 'pressure-normal';
+	}
+
 	function formatLabel(value: string) {
 		return value.replaceAll('_', ' ');
 	}
@@ -310,36 +368,69 @@
 			</div>
 			<div class="panel-total">
 				<span>{money(routeTotalCents)}</span>
-				<small>{routeCoverage.withLedger} ledger · {routeCoverage.mixOnly} mix only · {routeCoverage.ledgerOnly} ledger only</small>
+				<small>{routeCoverage.withLedger} ledger · {pressureRows.length} pressure · {routeCoverage.mixOnly} mix only</small>
 			</div>
 		</div>
 
 		<div class="route-list">
-			{#each visibleRouteRows as row}
-				<div class="route-row">
-					<div class="route-line">
-						<span class="route-name">{row.route}</span>
-						<strong>{money(row.usageCents)}</strong>
+			{#if visibleRouteRows.length > 0 || visiblePressureRows.length > 0}
+				{#each visibleRouteRows as row}
+					<div class="route-row">
+						<div class="route-line">
+							<span class="route-name">{row.route}</span>
+							<strong>{money(row.usageCents)}</strong>
+						</div>
+						<div class="usage-track" aria-hidden="true">
+							<span style={`width:${barWidth(row.usageCents, routeMaxCents)}`}></span>
+						</div>
+						<div class="mix-line">
+							<span>{row.attempts} route-mix attempts</span>
+							<div class="mix-chips">
+								{#each row.protocols.slice(0, 4) as part}
+									<span class="mix-chip" style={`border-color:${protocolColor(part.protocol)}; color:${protocolColor(part.protocol)}`}>
+										{part.protocol.toUpperCase()} {part.count}
+									</span>
+								{:else}
+									<span class="muted">No attempt mix</span>
+								{/each}
+							</div>
+						</div>
 					</div>
-					<div class="usage-track" aria-hidden="true">
-						<span style={`width:${barWidth(row.usageCents, routeMaxCents)}`}></span>
-					</div>
-					<div class="mix-line">
-						<span>{row.attempts} route-mix attempts</span>
-						<div class="mix-chips">
-							{#each row.protocols.slice(0, 4) as part}
-								<span class="mix-chip" style={`border-color:${protocolColor(part.protocol)}; color:${protocolColor(part.protocol)}`}>
-									{part.protocol.toUpperCase()} {part.count}
+				{/each}
+
+				{#each visiblePressureRows as row}
+					<div class="route-row pressure-row">
+						<div class="route-line">
+							<span class="route-name">{row.route}</span>
+							<strong>{pct(row.capacityRatio)}</strong>
+						</div>
+						<div class="pressure-meta">
+							<span>{row.domains}</span>
+							<span>{money(row.usageCents)}</span>
+							<span>{row.pressureRounds}r</span>
+							{#if row.merchant}
+								<span>{row.merchant}</span>
+							{/if}
+						</div>
+						<div class="pressure-chips">
+							<span class={`pressure-chip ${pressureClass(row.level, row.reason)}`}>{formatLabel(row.level)}</span>
+							{#if row.reason}
+								<span class="pressure-chip">reason {formatLabel(row.reason)}</span>
+							{/if}
+							{#if row.failureCount != null}
+								<span class="pressure-chip">failure_count {row.failureCount}</span>
+							{/if}
+							{#each row.protocols.slice(0, 3) as protocol}
+								<span class="pressure-chip" style={`border-color:${protocolColor(protocol)}; color:${protocolColor(protocol)}`}>
+									{protocol.toUpperCase()}
 								</span>
-							{:else}
-								<span class="muted">No attempt mix</span>
 							{/each}
 						</div>
 					</div>
-				</div>
+				{/each}
 			{:else}
 				<div class="empty-line">No reserved route principal recorded.</div>
-			{/each}
+			{/if}
 		</div>
 	</section>
 
@@ -551,6 +642,7 @@
 	}
 
 	.mix-chips,
+	.pressure-chips,
 	.evidence-line {
 		display: flex;
 		flex-wrap: wrap;
@@ -559,6 +651,7 @@
 	}
 
 	.mix-chip,
+	.pressure-chip,
 	.reason,
 	.evidence-line span {
 		border: 1px solid var(--bd);
@@ -568,6 +661,38 @@
 		font-size: 10px;
 		line-height: 1.3;
 		white-space: nowrap;
+	}
+
+	.pressure-row {
+		background: color-mix(in srgb, var(--bg-3) 34%, transparent);
+		border-radius: 4px;
+		padding: 10px;
+	}
+
+	.pressure-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 7px;
+		margin: 7px 0;
+		color: var(--tx-3);
+		font-family: var(--mono);
+		font-size: 10px;
+	}
+
+	.pressure-critical {
+		color: var(--ap2);
+		border-color: color-mix(in srgb, var(--ap2) 50%, var(--bd));
+		background: color-mix(in srgb, var(--ap2) 12%, transparent);
+	}
+
+	.pressure-elevated {
+		color: var(--atxp);
+		border-color: color-mix(in srgb, var(--atxp) 50%, var(--bd));
+		background: color-mix(in srgb, var(--atxp) 12%, transparent);
+	}
+
+	.pressure-normal {
+		color: var(--tx-2);
 	}
 
 	.evidence-line span {

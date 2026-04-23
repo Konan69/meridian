@@ -380,15 +380,21 @@ def pnpm_trace_metadata(
 SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
     "cdp": {
         "test_files": [
+            "services/cdp/src/signMessage.test.ts",
             "services/cdp/src/sendTransaction.test.ts",
+            "services/cdp/src/signTypedData.test.ts",
             "services/cdp/src/treasury.test.ts",
         ],
         "helper_files": [
+            "services/cdp/src/signMessage.ts",
             "services/cdp/src/sendTransaction.ts",
+            "services/cdp/src/signTypedData.ts",
             "services/cdp/src/treasury.ts",
         ],
         "coverage_points": [
+            "sign-message request normalization and rejection",
             "send-transaction request normalization and rejection",
+            "sign-typed-data request normalization and rejection",
             "deterministic decimal/native/USDC amount parsing",
             "ERC-20 transfer calldata encoding",
         ],
@@ -671,6 +677,7 @@ def static_contract_trace_metadata(
     required_files: list[str],
     contains_contracts: list[tuple[str, list[str]]],
     contract_surfaces: list[dict[str, Any]],
+    service_offline_coverage_files: list[dict[str, Any]],
 ) -> dict[str, Any]:
     needles_by_path = {path: len(needles) for path, needles in contains_contracts}
     return {
@@ -693,6 +700,20 @@ def static_contract_trace_metadata(
                 }
                 for path, needles in contains_contracts
             ],
+            "metadata_drift_checks": [
+                {
+                    "kind": "service_offline_coverage_files_exist",
+                    "source": "SERVICE_OFFLINE_COVERAGE",
+                    "file_count": sum(
+                        item["file_count"] for item in service_offline_coverage_files
+                    ),
+                    "services": [
+                        item["service"] for item in service_offline_coverage_files
+                    ],
+                    "protects": "Offline service trace coverage file lists stay tied to files that still exist in the repository.",
+                }
+            ],
+            "service_offline_coverage_files": service_offline_coverage_files,
         }
     }
 
@@ -824,6 +845,28 @@ def task_static_contracts(root: Path) -> float:
     for path, needles in contains_contracts:
         require_contains(root / path, needles, failures)
 
+    service_offline_coverage_files = []
+    for service, coverage in SERVICE_OFFLINE_COVERAGE.items():
+        checked_paths = [
+            *coverage["test_files"],
+            *coverage["helper_files"],
+        ]
+        missing_paths = [path for path in checked_paths if not (root / path).exists()]
+        for path in missing_paths:
+            failures.append(
+                f"SERVICE_OFFLINE_COVERAGE[{service}]: missing listed file {path}"
+            )
+        service_offline_coverage_files.append(
+            {
+                "service": service,
+                "checked_fields": ["test_files", "helper_files"],
+                "test_files": coverage["test_files"],
+                "helper_files": coverage["helper_files"],
+                "file_count": len(checked_paths),
+                "missing_files": missing_paths,
+            }
+        )
+
     contract_surfaces = [
         {
             "surface": "local_runtime_bootstrap",
@@ -872,6 +915,7 @@ def task_static_contracts(root: Path) -> float:
             required_files,
             contains_contracts,
             contract_surfaces,
+            service_offline_coverage_files,
         ),
     )
     return score
