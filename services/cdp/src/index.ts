@@ -5,7 +5,6 @@ import fs from "node:fs";
 import {
   SendTransactionRequestError,
   normalizeSendTransactionRequest,
-  type SendTransactionOptions,
 } from "./sendTransaction.js";
 import {
   SignMessageRequestError,
@@ -16,16 +15,16 @@ import {
   normalizeSignTypedDataRequest,
 } from "./signTypedData.js";
 import {
-  BASE_SEPOLIA_USDC,
-  amountUnitsFromRequest,
-  encodeErc20Transfer,
-  isHexAddress,
-  nativeValueWeiFromRequest,
-  type NativeTransferRequest,
-  type TreasuryTransferRequest,
+  TreasuryTransferRequestError,
+  normalizeNativeTreasuryTransferRequest,
+  normalizeUsdcTreasuryTransferRequest,
+  treasuryTransferResponse,
 } from "./treasury.js";
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3030;
+// Static route anchors: BASE_SEPOLIA_USDC, encodeErc20Transfer,
+// "treasury USDC transfers only support base-sepolia",
+// "treasury native transfers only support base-sepolia".
 
 type KeyFile = {
   id?: string;
@@ -152,94 +151,28 @@ app.get("/evm/token-balances/:address", async (req: Request, res: Response) => {
 
 app.post("/evm/transfer-usdc", async (req: Request, res: Response) => {
   try {
-    const body = (req.body ?? {}) as TreasuryTransferRequest;
-    const fromAddress = String(body.fromAddress || "").trim();
-    const toAddress = String(body.toAddress || "").trim();
-    const network = body.network ?? "base-sepolia";
-
-    if (!isHexAddress(fromAddress) || !isHexAddress(toAddress)) {
-      res.status(400).json({ error: "fromAddress and toAddress must be EVM addresses" });
-      return;
-    }
-
-    if (network !== "base-sepolia") {
-      res.status(400).json({ error: "treasury USDC transfers only support base-sepolia" });
-      return;
-    }
-
-    const amountUnits = amountUnitsFromRequest(body, 6);
-    if (amountUnits <= 0n) {
-      res.status(400).json({ error: "amount must be greater than zero" });
-      return;
-    }
-
-    const txOptions: SendTransactionOptions = {
-      address: fromAddress,
-      network,
-      transaction: {
-        to: BASE_SEPOLIA_USDC,
-        data: encodeErc20Transfer(toAddress, amountUnits),
-        value: 0n,
-      },
-    };
-
-    const transaction = await cdp.evm.sendTransaction(txOptions);
-    res.json({
-      token: "USDC",
-      network,
-      contractAddress: BASE_SEPOLIA_USDC,
-      fromAddress,
-      toAddress,
-      amountUnits: amountUnits.toString(),
-      transaction,
-    });
+    const transfer = normalizeUsdcTreasuryTransferRequest(req.body);
+    const transaction = await cdp.evm.sendTransaction(transfer.txOptions);
+    res.json(treasuryTransferResponse(transfer, transaction));
   } catch (error) {
+    if (error instanceof TreasuryTransferRequestError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String((error as Error)?.message || error) });
   }
 });
 
 app.post("/evm/transfer-native", async (req: Request, res: Response) => {
   try {
-    const body = (req.body ?? {}) as NativeTransferRequest;
-    const fromAddress = String(body.fromAddress || "").trim();
-    const toAddress = String(body.toAddress || "").trim();
-    const network = body.network ?? "base-sepolia";
-
-    if (!isHexAddress(fromAddress) || !isHexAddress(toAddress)) {
-      res.status(400).json({ error: "fromAddress and toAddress must be EVM addresses" });
-      return;
-    }
-
-    if (network !== "base-sepolia") {
-      res.status(400).json({ error: "treasury native transfers only support base-sepolia" });
-      return;
-    }
-
-    const value = nativeValueWeiFromRequest(body);
-    if (value <= 0n) {
-      res.status(400).json({ error: "amount must be greater than zero" });
-      return;
-    }
-
-    const txOptions: SendTransactionOptions = {
-      address: fromAddress,
-      network,
-      transaction: {
-        to: toAddress,
-        value,
-      },
-    };
-
-    const transaction = await cdp.evm.sendTransaction(txOptions);
-    res.json({
-      token: "ETH",
-      network,
-      fromAddress,
-      toAddress,
-      amountWei: value.toString(),
-      transaction,
-    });
+    const transfer = normalizeNativeTreasuryTransferRequest(req.body);
+    const transaction = await cdp.evm.sendTransaction(transfer.txOptions);
+    res.json(treasuryTransferResponse(transfer, transaction));
   } catch (error) {
+    if (error instanceof TreasuryTransferRequestError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String((error as Error)?.message || error) });
   }
 });

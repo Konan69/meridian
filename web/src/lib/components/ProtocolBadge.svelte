@@ -1,9 +1,9 @@
 <script>
-  import { getProtocolColor } from '$lib/constants';
+  import { getProtocolColor, getProtocolDisplayLabel } from '$lib/constants';
   /** @type {{ protocol: string }} */
   let { protocol } = $props();
 
-  let label = $derived(protocol?.toUpperCase() ?? 'UNKNOWN');
+  let label = $derived(getProtocolDisplayLabel(protocol));
   let dotColor = $derived(getProtocolColor(protocol ?? ''));
 </script>
 

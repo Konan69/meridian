@@ -575,12 +575,17 @@ class ReportGenerator:
             fees = pm.get("total_fees_cents", 0)
             avg_exec = pm.get("avg_settlement_ms", 0.0)
             micro = pm.get("micropayment_count", 0)
+            avg_route_score = pm.get("avg_route_score", 0.0)
+            avg_pressure = abs(pm.get("avg_route_pressure_penalty", 0.0))
+            avg_sustainability = pm.get("avg_sustainability_bias", 0.0)
 
             lines = [
                 f"Transactions: {txns} ({success} ok, {failed} failed)",
                 f"Volume: {_cents_to_dollars(vol)}",
                 f"Fees: {_cents_to_dollars(fees)} ({_pct(fees, vol)} of volume)",
                 f"Avg execution time: {avg_exec:.3f} ms",
+                f"Avg selected-route score: {avg_route_score:.2f}",
+                f"Route pressure drag: {avg_pressure:.2f}; sustainability lift: {avg_sustainability:.2f}",
                 f"Micropayments (< $1): {micro}",
                 f"Success rate: {_pct(success, txns)}",
             ]
@@ -822,6 +827,43 @@ class ReportGenerator:
             f"Mission-critical commerce: {rel_best.upper()} — highest success rate "
             f"({_pct(_get(rel_best, 'successful_transactions'), _get(rel_best, 'total_transactions'))})."
         )
+
+        scored_routes = [
+            tx
+            for round_summary in self.result.rounds
+            for tx in round_summary.transactions
+            if tx.success and tx.route_score_drivers
+        ]
+        if scored_routes:
+            chosen = max(scored_routes, key=lambda tx: tx.route_score)
+            positive_drivers = sorted(
+                (
+                    (name, value)
+                    for name, value in chosen.route_score_drivers.items()
+                    if name != "total" and value > 0
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            pressure = abs(chosen.route_score_drivers.get("route_pressure_penalty", 0.0))
+            driver_text = ", ".join(
+                f"{name.replace('_', ' ')} {value:.2f}"
+                for name, value in positive_drivers[:3]
+            )
+            recs.append(
+                f"Selected route rationale: {chosen.protocol.upper()} on {chosen.route_id} "
+                f"scored {chosen.route_score:.2f}; {driver_text or 'no positive drivers'} "
+                f"offset route pressure {pressure:.2f}."
+            )
+            runner_up = chosen.route_score_context.get("runner_up")
+            if isinstance(runner_up, dict):
+                gap = chosen.route_score - _as_float(runner_up.get("score", 0.0))
+                recs.append(
+                    f"Nearest route alternative: {str(runner_up.get('protocol', 'unknown')).upper()} "
+                    f"on {runner_up.get('route_id', 'unknown route')} trailed by {gap:.2f}; "
+                    f"selected route pressure stayed at {pressure:.2f} versus "
+                    f"{abs(_as_float(runner_up.get('route_pressure_penalty', 0.0))):.2f}."
+                )
 
         if self.result.ecosystem_summary:
             eco_best = max(

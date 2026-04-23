@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getProtocolDisplayLabel } from '$lib/constants';
 
 	type ProtocolStatus = {
 		protocol: string;
@@ -43,7 +44,7 @@
 		engine: { label: 'Engine', accent: 'var(--x402)' },
 		atxp: { label: 'ATXP', accent: 'var(--atxp)' },
 		cdp: { label: 'CDP', accent: 'var(--x402)' },
-		stripe: { label: 'MPP/Stripe', accent: 'var(--mpp)' },
+		stripe: { label: 'Stripe MPP', accent: 'var(--mpp)' },
 		ap2: { label: 'AP2', accent: 'var(--ap2)' }
 	};
 
@@ -234,7 +235,7 @@
 					<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
 						{#each engineCaps.supported_protocols as protocol}
 							<span style="font-family:var(--mono); font-size:11px; padding:5px 10px; border-radius:999px; background:var(--bg-2); color:var(--tx-2);">
-								{protocol}
+								{getProtocolDisplayLabel(protocol)}
 							</span>
 						{/each}
 					</div>
@@ -244,7 +245,7 @@
 							<div style="padding:12px; border-radius:8px; background:var(--bg-2);">
 								<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px;">
 									<span style="font-family:var(--mono); font-size:12px; font-weight:700;">
-										{status.protocol.toUpperCase()}
+										{getProtocolDisplayLabel(status.protocol)}
 									</span>
 									<span
 										style={`font-size:10px; color:${status.runtime_ready ? '#10b981' : '#ef4444'}; text-transform:uppercase; letter-spacing:0.08em;`}

@@ -414,6 +414,9 @@ class TransactionRecord:
     primitive: Optional[str] = None
     route_id: Optional[str] = None
     margin_delta_cents: int = 0
+    route_score: float = 0.0
+    route_score_drivers: dict[str, float] = field(default_factory=dict)
+    route_score_context: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass

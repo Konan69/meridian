@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { PROTOCOL_COLORS } from '$lib/constants';
+	import { getProtocolColor, getProtocolDisplayLabel } from '$lib/constants';
 	import { buildNoRoutePressureRows, formatRoutePressureLabel } from '$lib/routePressureDisplay';
 	import type { RoutePressureSummary } from '$lib/stores/simulation.svelte';
 
@@ -42,7 +42,11 @@
 	}: Props = $props();
 
 	function color(protocol: string): string {
-		return PROTOCOL_COLORS[protocol.toLowerCase()] ?? '#6b7280';
+		return getProtocolColor(protocol);
+	}
+
+	function protocolLabel(protocol: string): string {
+		return getProtocolDisplayLabel(protocol);
 	}
 
 	function fmtDollars(cents: number): string {
@@ -234,7 +238,7 @@
 				<!-- Protocol dot + label -->
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<!-- Bar -->
 				<rect x={labelWidth} y={y} width={barW} height={barHeight} rx="3" fill={color(m.protocol)} opacity="0.85" />
@@ -258,7 +262,7 @@
 				{@const barW = scaledWidth(m.feeRate, feeMax)}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<rect x={labelWidth} y={y} width={barW} height={barHeight} rx="3" fill={color(m.protocol)} opacity="0.85" />
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
@@ -280,7 +284,7 @@
 				{@const barW = scaledWidth(logScale(m.avg_settlement_ms, execMax), 1)}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<rect x={labelWidth} y={y} width={barW} height={barHeight} rx="3" fill={color(m.protocol)} opacity="0.85" />
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
@@ -302,7 +306,7 @@
 				{@const barW = scaledWidth(m.rate, 100)}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<!-- Background track -->
 				<rect x={labelWidth} y={y} width={plotWidth} height={barHeight} rx="3" fill="var(--bg-0)" opacity="0.5" />
@@ -328,7 +332,7 @@
 				{@const positive = m.margin_cents >= 0}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<line x1={marginAxisX} y1={y - 2} x2={marginAxisX} y2={y + barHeight + 2} stroke="var(--bd)" stroke-width="1" />
 				<rect
@@ -360,7 +364,7 @@
 				{@const congestionW = scaledWidth(unit(m.congestion), 1)}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
 				<text x="18" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="var(--sans)">
-					{m.protocol.toUpperCase()}
+					{protocolLabel(m.protocol)}
 				</text>
 				<rect x={labelWidth} y={y} width={plotWidth} height={10} rx="3" fill="var(--bg-0)" opacity="0.5" />
 				<rect x={labelWidth} y={y} width={adoptionW} height={10} rx="3" fill={color(m.protocol)} opacity="0.85" />
@@ -445,7 +449,7 @@
 							{/if}
 							{#each row.protocols.slice(0, 3) as protocol}
 								<span class="pressure-tag" style={`border-color:${color(protocol)}; color:${color(protocol)}`}>
-									{protocol.toUpperCase()}
+									{protocolLabel(protocol)}
 								</span>
 							{/each}
 						</div>

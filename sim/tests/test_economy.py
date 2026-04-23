@@ -15,6 +15,7 @@ from sim.types import (
     Protocol,
     RoundSummary,
     SimulationConfig,
+    TransactionRecord,
     WorkloadType,
 )
 
@@ -1458,3 +1459,89 @@ def test_economy_observability_snapshots_mark_route_and_treasury_pressure():
     assert posture[0]["preferred_domain"] == BalanceDomain.BASE_USDC.value
     assert posture[0]["preferred_shortfall_cents"] == 19_000
     assert posture[0]["rebalance_ready"] is True
+
+
+def test_chosen_payment_option_exposes_route_score_drivers():
+    agents = generate_agents(1, seed=2)
+    merchant = _merchant()
+    engine = SimulationEngine(
+        SimulationConfig(
+            num_agents=1,
+            num_rounds=1,
+            protocols=list(Protocol),
+            seed=2,
+            use_llm=False,
+        )
+    )
+    engine.agents = agents
+    engine.merchants = [merchant]
+    engine.economy = StablecoinEconomy(
+        agents=agents,
+        merchants=[merchant],
+        protocols=list(Protocol),
+        rng=__import__("random").Random(2),
+    )
+    engine._refresh_protocol_market_state()
+
+    option = engine._choose_payment_option(
+        agent=agents[0],
+        merchant=merchant,
+        amount=500,
+        workload_type=WorkloadType.API_MICRO,
+        available_protocols=merchant.accepted_protocols,
+        target_domains=merchant.accepted_settlement_domains,
+    )
+
+    assert option is not None
+    drivers = option["route_score_drivers"]
+    assert option["route_score"] == drivers["total"]
+    assert "sustainability_bias" in drivers
+    assert "route_pressure_penalty" in drivers
+    assert "fee_penalty" in drivers
+    context = option["route_score_context"]
+    assert context["selected_rank"] == 1
+    assert context["alternative_count"] >= 1
+    assert context["runner_up"]["score"] <= option["route_score"]
+
+
+def test_protocol_summary_aggregates_selected_route_score_drivers():
+    engine = SimulationEngine(
+        SimulationConfig(
+            num_agents=1,
+            num_rounds=1,
+            protocols=[Protocol.X402],
+            seed=3,
+            use_llm=False,
+        )
+    )
+    engine.result.rounds = [
+        RoundSummary(
+            round_num=1,
+            transactions=[
+                TransactionRecord(
+                    round_num=1,
+                    agent_id="agent_001",
+                    protocol="x402",
+                    product_id="prod_api_credits",
+                    product_name="API Credits",
+                    amount=500,
+                    fee=3,
+                    settlement_ms=120,
+                    success=True,
+                    route_id="base_direct_usdc",
+                    route_score=1.25,
+                    route_score_drivers={
+                        "total": 1.25,
+                        "route_pressure_penalty": -0.2,
+                        "sustainability_bias": 0.08,
+                    },
+                )
+            ],
+        )
+    ]
+
+    summary = engine._build_protocol_summaries()["x402"]
+
+    assert summary["avg_route_score"] == 1.25
+    assert summary["avg_route_pressure_penalty"] == -0.2
+    assert summary["avg_sustainability_bias"] == 0.08

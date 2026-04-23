@@ -681,6 +681,7 @@ class SimulationEngine:
             successful = [tx for tx in protocol_txs if tx.success]
             failed = [tx for tx in protocol_txs if not tx.success]
             settlement_values = [tx.settlement_ms for tx in successful]
+            scored = [tx for tx in protocol_txs if tx.route_score_drivers]
             state = self.protocol_state.get(protocol.value)
 
             summaries[protocol.value] = {
@@ -698,6 +699,24 @@ class SimulationEngine:
                 "avg_authorization_ms": 0.0,
                 "micropayment_count": sum(1 for tx in successful if tx.amount < 100),
                 "refund_count": 0,
+                "avg_route_score": round(
+                    sum(tx.route_score for tx in scored) / len(scored),
+                    4,
+                ) if scored else 0.0,
+                "avg_route_pressure_penalty": round(
+                    sum(
+                        tx.route_score_drivers.get("route_pressure_penalty", 0.0)
+                        for tx in scored
+                    ) / len(scored),
+                    4,
+                ) if scored else 0.0,
+                "avg_sustainability_bias": round(
+                    sum(
+                        tx.route_score_drivers.get("sustainability_bias", 0.0)
+                        for tx in scored
+                    ) / len(scored),
+                    4,
+                ) if scored else 0.0,
             }
 
         return summaries
@@ -1045,6 +1064,22 @@ class SimulationEngine:
         workload_type: WorkloadType,
         option: dict,
     ) -> float:
+        return self._score_option_breakdown(
+            agent,
+            merchant,
+            amount,
+            workload_type,
+            option,
+        )["total"]
+
+    def _score_option_breakdown(
+        self,
+        agent: AgentProfile,
+        merchant: MerchantProfile,
+        amount: int,
+        workload_type: WorkloadType,
+        option: dict,
+    ) -> dict[str, float]:
         protocol = option["protocol"]
         route = option["route"]
         state = self.protocol_state[protocol.value]
@@ -1062,20 +1097,23 @@ class SimulationEngine:
         workload_bonus = 0.12 if workload_type in PROTOCOL_PREFERRED_WORKLOADS[protocol] else 0.0
         if workload_type == WorkloadType.API_MICRO and amount <= 100:
             workload_bonus += 0.15 if PROTOCOL_TRAITS[protocol]["supports_micropay"] else -0.2
+        sustainability_bias = self._protocol_self_sustainability_bias(merchant, amount, option)
 
-        return (
-            trust
-            + preference
-            + merchant_fit
-            + state.reliability * 0.35
-            + state.network_effect * 0.30
-            + workload_bonus
-            + self._protocol_self_sustainability_bias(merchant, amount, option)
-            - fee_penalty * (0.85 + agent.price_sensitivity)
-            - latency_penalty * (1.0 - agent.checkout_patience)
-            - congestion_penalty
-            - domain_penalty
-        )
+        drivers = {
+            "trust": trust,
+            "preference": preference,
+            "merchant_fit": merchant_fit,
+            "reliability": state.reliability * 0.35,
+            "network_effect": state.network_effect * 0.30,
+            "workload_fit": workload_bonus,
+            "sustainability_bias": sustainability_bias,
+            "fee_penalty": -fee_penalty * (0.85 + agent.price_sensitivity),
+            "latency_penalty": -latency_penalty * (1.0 - agent.checkout_patience),
+            "route_pressure_penalty": -congestion_penalty,
+            "domain_mismatch_penalty": -domain_penalty,
+        }
+        drivers["total"] = sum(drivers.values())
+        return {key: round(value, 6) for key, value in drivers.items()}
 
     def _choose_payment_option(
         self,
@@ -1098,15 +1136,42 @@ class SimulationEngine:
         if not options:
             return None
 
-        scored = [
-            (option, self._score_option(agent, merchant, amount, workload_type, option))
-            for option in options
-        ]
+        scored = []
+        for option in options:
+            breakdown = self._score_option_breakdown(
+                agent,
+                merchant,
+                amount,
+                workload_type,
+                option,
+            )
+            scored.append((option, breakdown["total"], breakdown))
         scored.sort(key=lambda item: item[1], reverse=True)
-        best_option, best_score = scored[0]
+        best_option, best_score, best_breakdown = scored[0]
         walkaway_threshold = -0.12 + agent.risk_tolerance * 0.1
         if best_score < walkaway_threshold:
             return None
+        alternatives = []
+        for candidate, score, breakdown in scored[1:4]:
+            alternatives.append(
+                {
+                    "protocol": candidate["protocol"].value,
+                    "route_id": candidate["route"].route_id,
+                    "score": score,
+                    "capacity_ratio": round(float(candidate.get("capacity_ratio", 0.0)), 6),
+                    "route_pressure_penalty": breakdown.get("route_pressure_penalty", 0.0),
+                    "sustainability_bias": breakdown.get("sustainability_bias", 0.0),
+                }
+            )
+        best_option = dict(best_option)
+        best_option["route_score"] = best_score
+        best_option["route_score_drivers"] = best_breakdown
+        best_option["route_score_context"] = {
+            "selected_rank": 1,
+            "alternative_count": max(0, len(scored) - 1),
+            "runner_up": alternatives[0] if alternatives else None,
+            "top_alternatives": alternatives,
+        }
         return best_option
 
     def _choose_rebalance_option(
@@ -1344,6 +1409,9 @@ class SimulationEngine:
             record.target_domain = option["target_domain"].value
             record.primitive = route.primitive.value
             record.route_id = route.route_id
+            record.route_score = float(option.get("route_score", 0.0))
+            record.route_score_drivers = dict(option.get("route_score_drivers", {}))
+            record.route_score_context = dict(option.get("route_score_context", {}))
             ecosystem_pressure = max(0.0, option["capacity_ratio"] - 1.0)
             trust_before, trust_after, sentiment_delta = self._apply_protocol_experience(
                 agent,
@@ -1392,6 +1460,9 @@ class SimulationEngine:
                     "target_domain": option["target_domain"].value,
                     "primitive": route.primitive.value,
                     "route_id": route.route_id,
+                    "route_score": record.route_score,
+                    "route_score_drivers": record.route_score_drivers,
+                    "route_score_context": record.route_score_context,
                     "ecosystem_pressure": ecosystem_pressure,
                     "margin_delta_cents": margin_delta,
                     "trust_before": round(trust_before, 4),
@@ -1431,6 +1502,9 @@ class SimulationEngine:
                 ecosystem_pressure=ecosystem_pressure,
             )
             merchant.reputation = max(0.2, merchant.reputation - 0.015)
+            record.route_score = float(option.get("route_score", 0.0))
+            record.route_score_drivers = dict(option.get("route_score_drivers", {}))
+            record.route_score_context = dict(option.get("route_score_context", {}))
             summary.transactions.append(record)
             summary.route_executions.append(route_record)
             self._record_agent_memory(
@@ -1462,6 +1536,9 @@ class SimulationEngine:
                     "target_domain": option["target_domain"].value,
                     "primitive": route.primitive.value,
                     "route_id": route.route_id,
+                    "route_score": record.route_score,
+                    "route_score_drivers": record.route_score_drivers,
+                    "route_score_context": record.route_score_context,
                     "workload_type": workload_type.value,
                     "ecosystem_pressure": ecosystem_pressure,
                     "trust_before": round(trust_before, 4),

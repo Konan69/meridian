@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { getProtocolColor, getProtocolDisplayLabel } from '$lib/constants';
 	let { children } = $props();
 
 	const NAV = [
@@ -16,14 +17,6 @@
 		runtime_ready: boolean;
 		integration: string;
 		reason: string;
-	};
-
-	const COLORS: Record<string, string> = {
-		acp: 'var(--acp)',
-		x402: 'var(--x402)',
-		ap2: 'var(--ap2)',
-		mpp: 'var(--mpp)',
-		atxp: 'var(--atxp)',
 	};
 
 	let protocolStatuses = $state<CapabilityStatus[]>([]);
@@ -102,8 +95,8 @@
 		<div style="display:flex; align-items:center; gap:14px;" role="status" aria-label="Protocol status indicators">
 			{#each protocolStatuses as p}
 				<div title={p.reason} style="display:flex; align-items:center; gap:4px; opacity:{p.runtime_ready ? 1 : 0.45};">
-					<span style="width:6px; height:6px; border-radius:50%; background:{COLORS[p.protocol] ?? 'var(--tx-3)'};" aria-hidden="true"></span>
-					<span style="font-family:var(--mono); font-size:10px; font-weight:600; color:{p.runtime_ready ? 'var(--tx-2)' : 'var(--tx-3)'};">{p.protocol.toUpperCase()}</span>
+					<span style="width:6px; height:6px; border-radius:50%; background:{getProtocolColor(p.protocol)};" aria-hidden="true"></span>
+					<span style="font-family:var(--mono); font-size:10px; font-weight:600; color:{p.runtime_ready ? 'var(--tx-2)' : 'var(--tx-3)'};">{getProtocolDisplayLabel(p.protocol)}</span>
 				</div>
 			{/each}
 		</div>

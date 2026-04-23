@@ -359,6 +359,7 @@ def pnpm_trace_metadata(
     validation_commands: list[str],
     node_modules_seed: dict[str, Any] | None = None,
     phase_tasks: list[dict[str, Any]] | None = None,
+    parent_task_id: str | None = None,
 ) -> dict[str, Any]:
     validation: dict[str, Any] = {
         "kind": "pnpm_frozen_build_pipeline",
@@ -374,7 +375,7 @@ def pnpm_trace_metadata(
             "Default profiles keep the combined command. Use these task ids manually "
             "to isolate install, build, check, or test diagnostics."
         )
-    return {
+    metadata: dict[str, Any] = {
         "validation": {
             **validation,
         },
@@ -394,6 +395,23 @@ def pnpm_trace_metadata(
             "node_modules_seed": node_modules_seed,
         }
     }
+    if phase_tasks is not None and parent_task_id is not None:
+        task_ids = [task["task_id"] for task in phase_tasks]
+        metadata["manual_validation"] = {
+            "kind": "manual_phase_task_index",
+            "parent_task_id": parent_task_id,
+            "package_root": rel(root, package_root),
+            "task_ids": task_ids,
+            "tasks": phase_tasks,
+            "selection_args": {
+                "single": f"--task-id {task_ids[0]}",
+                "all": f"--task-ids {','.join(task_ids)}",
+            },
+            "default_profile": False,
+            "gate_profile": False,
+            "note": "Manual phase tasks are opt-in diagnostics for this aggregate; default benchmark and gate profiles are unchanged.",
+        }
+    return metadata
 
 
 SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
@@ -564,6 +582,12 @@ def python_sim_trace_metadata(root: Path) -> dict[str, Any]:
 
 
 def service_builds_summary_trace_metadata(component_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    manual_tasks = [
+        phase_task
+        for component_task in component_tasks
+        for phase_task in component_task.get("manual_phase_tasks", [])
+    ]
+    manual_task_ids = [task["task_id"] for task in manual_tasks]
     return {
         "aggregation": {
             "kind": "mean_component_score",
@@ -571,6 +595,19 @@ def service_builds_summary_trace_metadata(component_tasks: list[dict[str, Any]])
             "component_tasks": component_tasks,
             "score_formula": "sum(component_scores) / len(component_scores)",
             "note": "This synthetic summary runs no shell command; component entries list manual phase task ids for install/build isolation, while component traces show full cache, validation, and logs.",
+        },
+        "manual_validation": {
+            "kind": "manual_phase_task_index",
+            "parent_task_id": "service_builds_summary",
+            "task_ids": manual_task_ids,
+            "tasks": manual_tasks,
+            "selection_args": {
+                "single": "--task-id service_cdp_install",
+                "all": f"--task-ids {','.join(manual_task_ids)}",
+            },
+            "default_profile": False,
+            "gate_profile": False,
+            "note": "Use these opt-in service phase tasks to isolate install versus TypeScript build without rerunning every service aggregate.",
         }
     }
 
@@ -1231,6 +1268,7 @@ def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, A
             ["pnpm run build"],
             node_modules_seed,
             service_build_phase_task_list(service),
+            task_id,
         ),
     )
     return score, component_task
@@ -1283,6 +1321,7 @@ def task_service_build_phase(root: Path, service: str, phase: str) -> float:
             validation_commands,
             node_modules_seed,
             service_build_phase_task_list(service),
+            f"service_build_{service}",
         )
         | {
             "phase": {
@@ -1400,6 +1439,7 @@ def task_web_check(root: Path) -> float:
             ["pnpm run check", "pnpm run build"],
             node_modules_seed,
             web_phase_task_list(),
+            "web_check_build",
         ),
     )
 
@@ -1427,6 +1467,7 @@ def task_web_phase(root: Path, task_id: str) -> float:
             validation_commands,
             node_modules_seed,
             web_phase_task_list(),
+            "web_check_build",
         )
         | {
             "phase": {
@@ -1511,6 +1552,30 @@ def task_catalog() -> list[dict[str, Any]]:
                     break
             if entry.get("category") == "service_build_phase":
                 break
+        for phase_task in web_phase_task_list():
+            if phase_task["task_id"] == task_id:
+                entry.update(
+                    {
+                        "category": "web_build_phase",
+                        "parent_task_id": "web_check_build",
+                        "phase": phase_task["phase"],
+                        "command": phase_task["command"],
+                        "target_seconds": phase_task["target_seconds"],
+                    }
+                )
+                break
+        if task_id == "web_check_build":
+            web_task_ids = [task["task_id"] for task in web_phase_task_list()]
+            entry["manual_validation_task_ids"] = web_task_ids
+            entry["manual_selection"] = f"--task-ids {','.join(web_task_ids)}"
+        if task_id == "service_builds_summary":
+            service_task_ids = [
+                task["task_id"]
+                for service in SERVICE_BUILD_TARGETS
+                for task in service_build_phase_task_list(service)
+            ]
+            entry["manual_validation_task_ids"] = service_task_ids
+            entry["manual_selection"] = f"--task-ids {','.join(service_task_ids)}"
         catalog.append(entry)
     return catalog
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getProtocolDisplayLabel } from '$lib/constants';
 
 	interface PM {
 		protocol: string;
@@ -140,7 +141,7 @@
 				<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:12px; flex-wrap:wrap;">
 					<div style="display:flex; align-items:center; gap:8px;">
 						<span style="width:10px; height:10px; border-radius:50%; background:{c};"></span>
-						<span style="font-family:var(--mono); font-weight:700; font-size:18px; color:{c};">{status.protocol.toUpperCase()}</span>
+						<span style="font-family:var(--mono); font-weight:700; font-size:18px; color:{c};">{getProtocolDisplayLabel(status.protocol)}</span>
 						<span style="font-size:11px; color:var(--tx-3); margin-left:4px;">{m?.stack}</span>
 						<span style="
 							font-family:var(--mono); font-size:10px; padding:3px 6px; border-radius:3px;
