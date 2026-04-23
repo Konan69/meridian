@@ -73,8 +73,10 @@
 	let routeRows = $derived(buildRouteRows(routeUsage, ecosystem));
 	let routeTotalCents = $derived(routeRows.reduce((sum, row) => sum + row.usageCents, 0));
 	let routeMaxCents = $derived(Math.max(...routeRows.map((row) => row.usageCents), 1));
+	let visibleRouteRows = $derived(routeRows.slice(0, 5));
 	let railRows = $derived(buildRailRows(metrics, ecosystem, railPnlHistory));
 	let railMaxAbs = $derived(Math.max(...railRows.map((row) => Math.abs(row.marginCents)), 1));
+	let visibleRailRows = $derived(railRows.slice(0, 5));
 	let switchRows = $derived(collectMerchantSwitches(events, worldEvents));
 
 	function buildRouteRows(
@@ -90,15 +92,20 @@
 			}
 		}
 
-		return Object.entries(usage)
-			.map(([route, usageCents]) => {
+		const routes = new Set<string>([
+			...Object.keys(usage),
+			...Array.from(mix.keys()),
+		]);
+
+		return Array.from(routes)
+			.map((route) => {
 				const protocolMap = mix.get(route) ?? new Map<string, number>();
 				const protocols = Array.from(protocolMap.entries())
 					.map(([protocol, count]) => ({ protocol, count }))
 					.sort((a, b) => b.count - a.count || a.protocol.localeCompare(b.protocol));
 				return {
 					route,
-					usageCents,
+					usageCents: usage[route] ?? 0,
 					attempts: protocols.reduce((sum, part) => sum + part.count, 0),
 					protocols,
 				};
@@ -224,6 +231,7 @@
 	}
 
 	function barWidth(value: number, max: number) {
+		if (!Number.isFinite(value) || value === 0 || max <= 0) return '0%';
 		return `${Math.max(2, Math.min(100, (Math.abs(value) / max) * 100)).toFixed(1)}%`;
 	}
 
@@ -278,7 +286,7 @@
 		</div>
 
 		<div class="route-list">
-			{#each routeRows.slice(0, 5) as row}
+			{#each visibleRouteRows as row}
 				<div class="route-row">
 					<div class="route-line">
 						<span class="route-name">{row.route}</span>
@@ -316,7 +324,7 @@
 		</div>
 
 		<div class="rail-list">
-			{#each railRows.slice(0, 5) as row}
+			{#each visibleRailRows as row}
 				<div class="rail-row">
 					<div class="rail-protocol">
 						<span class="protocol-dot" style={`background:${protocolColor(row.protocol)}`}></span>
@@ -378,9 +386,10 @@
 <style>
 	.economy-observability {
 		display: grid;
-		grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
 		gap: 12px;
 		margin-bottom: 16px;
+		container-type: inline-size;
 	}
 
 	.panel {
@@ -410,7 +419,7 @@
 		font-size: 10px;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 		color: var(--tx-3);
 	}
 
@@ -506,6 +515,7 @@
 
 	.mix-line {
 		justify-content: space-between;
+		flex-wrap: wrap;
 		color: var(--tx-3);
 		font-family: var(--mono);
 		font-size: 10px;
@@ -531,6 +541,12 @@
 		white-space: nowrap;
 	}
 
+	.evidence-line span {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
 	.rail-row {
 		display: grid;
 		grid-template-columns: 74px minmax(72px, 1fr) minmax(130px, 1.2fr);
@@ -542,6 +558,7 @@
 		display: flex;
 		align-items: center;
 		gap: 7px;
+		min-width: 0;
 		font-family: var(--mono);
 		font-size: 11px;
 		font-weight: 800;
@@ -606,7 +623,7 @@
 	.reason {
 		margin-left: auto;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: 0;
 		font-weight: 800;
 	}
 
@@ -635,17 +652,7 @@
 		color: var(--tx-3);
 	}
 
-	@media (max-width: 1100px) {
-		.economy-observability {
-			grid-template-columns: 1fr;
-		}
-
-		.switch-panel {
-			grid-column: auto;
-		}
-	}
-
-	@media (max-width: 640px) {
+	@container (max-width: 560px) {
 		.panel-heading,
 		.route-line,
 		.mix-line,
