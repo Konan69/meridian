@@ -90,6 +90,21 @@ def pnpm_cached_install_command(after_install: str) -> str:
     )
 
 
+def cargo_cached_test_command() -> str:
+    return (
+        'CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench" && '
+        'mkdir -p "$CACHE_ROOT" && '
+        'RUSTC_KEY="$(rustc -Vv | sha256sum | cut -d " " -f 1)" && '
+        'DEPS_KEY="$(sha256sum engine/Cargo.toml engine/Cargo.lock | sha256sum | cut -d " " -f 1)" && '
+        'SHORT_KEY="$(printf "%s-%s" "$RUSTC_KEY" "$DEPS_KEY" | sha256sum | cut -c 1-16)" && '
+        'CARGO_TARGET_DIR="$CACHE_ROOT/cargo-target-$SHORT_KEY" && '
+        'LOCK_FILE="$CACHE_ROOT/cargo-target-$SHORT_KEY.lock" && '
+        'echo "cargo target cache key=$SHORT_KEY dir=$CARGO_TARGET_DIR" && '
+        'flock "$LOCK_FILE" env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" '
+        'cargo test --quiet --manifest-path engine/Cargo.toml'
+    )
+
+
 def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = None, timeout: int = 180, target_seconds: float = 30.0) -> float:
     env = os.environ.copy()
     env.update(
@@ -339,7 +354,7 @@ def task_rust_tests(root: Path) -> float:
     return run_command(
         root,
         "rust_engine_tests",
-        "cargo test --quiet --manifest-path engine/Cargo.toml",
+        cargo_cached_test_command(),
         timeout=240,
         target_seconds=70,
     )
