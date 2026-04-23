@@ -219,6 +219,16 @@ def task_static_contracts(root: Path) -> float:
         failures,
     )
     require_contains(
+        root / "services/atxp/src/funding.ts",
+        [
+            "ATXP_CDP_TREASURY_ADDRESS",
+            "/evm/transfer-native",
+            "/evm/transfer-usdc",
+            "Automatic cdp-base payments also try this treasury path before faucet fallback.",
+        ],
+        failures,
+    )
+    require_contains(
         root / "services/atxp/src/index.ts",
         [
             'app.get("/health"',

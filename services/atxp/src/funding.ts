@@ -246,23 +246,42 @@ function recoveryActionsForCdpFunding(args: {
   lowUsdc: boolean;
 }): string[] {
   const actions: string[] = [];
+  const treasuryAddress = process.env.ATXP_CDP_TREASURY_ADDRESS?.trim();
 
   if (args.lowNative) {
-    actions.push(
-      `Request Base Sepolia ETH via ${args.serviceUrl}/evm/request-faucet or fund the CDP probe wallet directly.`,
-    );
+    if (treasuryAddress) {
+      actions.push(
+        `Recycle Base Sepolia ETH from the configured CDP treasury via ${args.serviceUrl}/evm/transfer-native.`,
+      );
+    } else {
+      actions.push(
+        `Request Base Sepolia ETH via ${args.serviceUrl}/evm/request-faucet or set ATXP_CDP_TREASURY_ADDRESS to recycle treasury gas.`,
+      );
+    }
   }
 
   if (args.lowUsdc) {
-    actions.push(
-      `Request Base Sepolia USDC via ${args.serviceUrl}/evm/request-faucet or rotate to a better-funded CDP account.`,
-    );
+    if (treasuryAddress) {
+      actions.push(
+        `Recycle Base Sepolia USDC from the configured CDP treasury via ${args.serviceUrl}/evm/transfer-usdc.`,
+      );
+    } else {
+      actions.push(
+        `Request Base Sepolia USDC via ${args.serviceUrl}/evm/request-faucet or set ATXP_CDP_TREASURY_ADDRESS to recycle treasury USDC.`,
+      );
+    }
   }
 
   if (args.lowNative || args.lowUsdc) {
-    actions.push(
-      "If the CDP faucet reports a project limit, wait for the faucet window to reset or switch to a different funded payer.",
-    );
+    if (treasuryAddress) {
+      actions.push(
+        "Automatic cdp-base payments also try this treasury path before faucet fallback.",
+      );
+    } else {
+      actions.push(
+        "If the CDP faucet reports a project limit, wait for the faucet window to reset or switch to a funded treasury payer.",
+      );
+    }
   } else {
     actions.push("Funding looks healthy.");
   }
