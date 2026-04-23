@@ -23,5 +23,6 @@ Meridian work loop:
 - Pick the next change that makes the economy more believable: agent behavior, merchant adoption, route pressure, treasury effects, trust/memory, reports, or UI explanation.
 - Prefer small, complete edits that include the matching test, doc, or frontend normalization update in the same pass.
 - After a safe edit, run the narrowest relevant check first, then the whole-app gate when the change could affect contracts.
+- Before committing or combining an Evo checkpoint, run `evo gate list <parent-or-checkpoint>` and preserve every focused gate along with `whole_app_contract_gate`. Manual diff combines do not automatically carry gate metadata; `ap2_offline_settlement_semantics` is the reference focused gate for AP2 settlement helper behavior.
 - If a reference repo under `ref/` suggests useful behavior, adapt the idea into Meridian's payment-economy model instead of copying its source or shifting the app toward that repo's domain.
 - When a phase feels done, choose the next useful repo-backed step yourself. Do not ask the user what phase comes next, and do not pause for phase approval unless the next action is destructive or blocked.

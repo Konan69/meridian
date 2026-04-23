@@ -38,7 +38,7 @@ const ERC20_TRANSFER_ABI = [
   },
 ] as const;
 
-type DirectTransferRequest = {
+export type DirectTransferRequest = {
   merchant: string;
   amountUsd: number;
   memo?: string;
@@ -85,6 +85,13 @@ export class DirectTransferRejectedError extends Error {
   constructor(message: string, readonly status: number = 402) {
     super(message);
     this.name = "DirectTransferRejectedError";
+  }
+}
+
+export class DirectTransferRequestError extends DirectTransferRejectedError {
+  constructor(message: string) {
+    super(message, 400);
+    this.name = "DirectTransferRequestError";
   }
 }
 
@@ -468,12 +475,46 @@ function expectedRecipientForChain(
 }
 
 export function expectedUsdcUnits(amountUsd: number): bigint {
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new DirectTransferRequestError("amountUsd must be a positive finite number");
+  }
   return BigInt(
     new BigNumber(amountUsd.toString())
       .multipliedBy(10 ** 6)
       .integerValue(BigNumber.ROUND_CEIL)
       .toFixed(0),
   );
+}
+
+function ownValue(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+export function normalizeDirectTransferRequest(body: unknown): DirectTransferRequest {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new DirectTransferRequestError("request body must be an object");
+  }
+
+  const record = body as Record<string, unknown>;
+  const merchant = ownValue(record, "merchant");
+  if (typeof merchant !== "string" || merchant.trim().length === 0) {
+    throw new DirectTransferRequestError("merchant must be a non-empty string");
+  }
+
+  const amountUsd = ownValue(record, "amountUsd");
+  if (typeof amountUsd !== "number" || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new DirectTransferRequestError("amountUsd must be a positive finite number");
+  }
+
+  const memo = ownValue(record, "memo");
+  if (memo === undefined || memo === null) {
+    return { merchant: merchant.trim(), amountUsd };
+  }
+  if (typeof memo !== "string") {
+    throw new DirectTransferRequestError("memo must be a string when provided");
+  }
+
+  return { merchant: merchant.trim(), amountUsd, memo };
 }
 
 export function parseAtxpCredential(credential: string): AtxpCredential | null {

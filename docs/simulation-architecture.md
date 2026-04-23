@@ -120,6 +120,13 @@ test, or compile commands.
 For pnpm build tasks, `trace_metadata.cache.node_modules_seed` reports whether
 the benchmark hardlinked a compatible `node_modules` tree from another Evo
 worktree before running the frozen install.
+Service TypeScript build traces also list manual phase tasks under
+`trace_metadata.validation.manual_phase_tasks`. Use `service_cdp_install`,
+`service_cdp_build`, `service_stripe_install`, `service_stripe_build`,
+`service_atxp_install`, or `service_atxp_build` when a worker needs to isolate a
+frozen pnpm install from `tsc -p tsconfig.json`. These manual tasks keep the
+same frozen install flags and shared pnpm store as the default aggregate, but
+they are not benchmark or gate profile members.
 Offline service protocol tests are benchmark tasks too. Read
 `service_offline_protocol_tests` for the aggregate result, then inspect
 `service_offline_cdp`, `service_offline_stripe`, `service_offline_atxp`, and
@@ -132,6 +139,15 @@ Python unittest contract directly. The static benchmark contract also requires
 each service coverage entry to list at least one test file and one helper file,
 then checks that every listed path still exists. Deleting or renaming one of
 those files requires updating the metadata in the same change.
+
+Manual Evo combines need a separate gate hygiene pass. Before applying a
+winning diff outside its ancestry, run `evo gate list <source>` and
+`evo gate list <destination>`, then reattach any focused gates that are present
+on the source or parent but missing from the combined checkpoint. Keep
+`whole_app_contract_gate` plus focused gates such as
+`ap2_offline_settlement_semantics`; the AP2 gate protects the
+`service_offline_ap2` settlement semantics even when a combine was created by
+patching files rather than inheriting Evo metadata.
 
 ## Optimization Target
 

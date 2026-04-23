@@ -14,7 +14,12 @@ import {
   amountUsdFromRequest,
   isHexAddress,
   merchantFromRequest,
+  paidResourcePayloadForMppSettlement,
+  paidResourceUrlForMppExecute,
+  settlementResponseForMppExecute,
+  validateMppAuthorizeRequest,
   validateMppExecuteRequest,
+  type MppAuthorizeRequest,
   type MppExecuteRequest,
 } from "./mppRequest.js";
 import { deriveMppPrivateKey } from "./mppKeys.js";
@@ -36,13 +41,6 @@ const tempoCurrency =
   process.env.TEMPO_TEST_CURRENCY || "0x20c0000000000000000000000000000000000000";
 const fundedActors = new Set<string>();
 const mppSecretKey = process.env.MPP_CHALLENGE_SECRET ?? randomBytes(32).toString("base64");
-
-type MppAuthorizeRequest = {
-  actorId: string;
-  merchant: string;
-  amountUsd: number;
-  memo?: string;
-};
 
 function recipientForRequest(request: Request): `0x${string}` {
   const authHeader = request.headers.get("authorization");
@@ -87,17 +85,28 @@ app.get("/health", (c) =>
 );
 
 app.post("/mpp/authorize", async (c) => {
-  const body = (await c.req.json()) as Partial<MppAuthorizeRequest>;
-  if (!body.actorId || !body.merchant || typeof body.amountUsd !== "number") {
-    return c.json({ error: "actorId, merchant, and amountUsd are required" }, 400);
+  try {
+    const paymentSession = validateMppAuthorizeRequest(
+      (await c.req.json()) as Partial<MppAuthorizeRequest>,
+    );
+    return c.json({
+      ok: true,
+      ...paymentSession,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "actorId, merchant, and amountUsd are required"
+    ) {
+      return c.json({ error: error.message }, 400);
+    }
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+      500,
+    );
   }
-  return c.json({
-    ok: true,
-    actorId: body.actorId,
-    merchant: body.merchant,
-    amountUsd: body.amountUsd,
-    memo: body.memo ?? `meridian-mpp:${body.actorId}:${body.merchant}`,
-  });
 });
 
 app.get("/mpp/paid", async (c, next) => {
@@ -120,21 +129,16 @@ app.get("/mpp/paid", async (c, next) => {
     return result.challenge;
   }
   return result.withReceipt(
-    Response.json({
-      ok: true,
-      message: "MPP payment accepted",
-      recipient: payToAddress,
-      merchant: merchantFromRequest(c.req.raw),
-      amountUsd: Number(amountUsd),
-    }),
+    Response.json(paidResourcePayloadForMppSettlement(c.req.raw, payToAddress)),
   );
 });
 
 app.post("/mpp/execute", async (c) => {
   try {
-    const { actorId, merchant, amountUsd } = validateMppExecuteRequest(
+    const paymentRequest = validateMppExecuteRequest(
       (await c.req.json()) as Partial<MppExecuteRequest>,
     );
+    const { actorId } = paymentRequest;
 
     const account = await ensureActorFunded(actorId);
     const client = createClient({
@@ -152,7 +156,7 @@ app.post("/mpp/execute", async (c) => {
     });
 
     const response = await payer.fetch(
-      `http://localhost:${port}/mpp/paid?merchant=${encodeURIComponent(merchant)}&amountUsd=${encodeURIComponent(amountUsd.toFixed(2))}`,
+      paidResourceUrlForMppExecute(`http://localhost:${port}`, paymentRequest),
     );
     if (!response.ok) {
       const text = await response.text();
@@ -161,15 +165,7 @@ app.post("/mpp/execute", async (c) => {
 
     const receipt = Receipt.fromResponse(response);
     const payload = await response.json();
-    return c.json({
-      ok: true,
-      actorId,
-      merchant,
-      amountUsd,
-      receipt,
-      paymentId: receipt.reference,
-      response: payload,
-    });
+    return c.json(settlementResponseForMppExecute(paymentRequest, receipt, payload));
   } catch (error) {
     if (
       error instanceof Error &&

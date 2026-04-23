@@ -35,3 +35,26 @@ test("cdp-base treasury top-up planning covers the requested USDC minimum", () =
     usdcAmountUnits: 2_500_000n,
   });
 });
+
+test("cdp-base treasury top-up planning ignores negative configured units", () => {
+  const plan = planCdpBaseTreasuryTopUp(0n, {
+    ATXP_CDP_TREASURY_ADDRESS: "0x0000000000000000000000000000000000000003",
+    ATXP_CDP_TREASURY_USDC_TOPUP_UNITS: "-1",
+  });
+
+  assert.deepEqual(plan, {
+    fromAddress: "0x0000000000000000000000000000000000000003",
+    nativeAmount: DEFAULT_TREASURY_NATIVE_TOPUP_ETH,
+    usdcAmountUnits: DEFAULT_TREASURY_USDC_TOPUP_UNITS,
+  });
+});
+
+test("cdp-base treasury top-up planning rejects negative requested minimums", () => {
+  assert.throws(
+    () =>
+      planCdpBaseTreasuryTopUp(-1n, {
+        ATXP_CDP_TREASURY_ADDRESS: "0x0000000000000000000000000000000000000004",
+      }),
+    new RangeError("minAmountUnits must be non-negative"),
+  );
+});

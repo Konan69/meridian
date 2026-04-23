@@ -17,7 +17,8 @@ function envBigInt(
     return fallback;
   }
   try {
-    return BigInt(value);
+    const parsed = BigInt(value);
+    return parsed >= 0n ? parsed : fallback;
   } catch {
     return fallback;
   }
@@ -27,6 +28,10 @@ export function planCdpBaseTreasuryTopUp(
   minAmountUnits: bigint,
   env: Record<string, string | undefined> = process.env,
 ): CdpTreasuryTopUpPlan | null {
+  if (minAmountUnits < 0n) {
+    throw new RangeError("minAmountUnits must be non-negative");
+  }
+
   const fromAddress = env.ATXP_CDP_TREASURY_ADDRESS?.trim();
   if (!fromAddress) {
     return null;

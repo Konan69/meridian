@@ -47,6 +47,7 @@ import {
 } from "./payerAccount.js";
 import {
   DirectTransferRejectedError,
+  normalizeDirectTransferRequest,
   settleDirectTransfer,
 } from "./directTransfer.js";
 import { runtimeStatusForPayerMode } from "./funding.js";
@@ -564,9 +565,7 @@ async function main() {
       if (!credential) {
         return c.json({ error: "x-atxp-payment or Bearer credential is required" }, 400);
       }
-      if (!body.merchant || typeof body.amountUsd !== "number") {
-        return c.json({ error: "merchant and amountUsd are required" }, 400);
-      }
+      const request = normalizeDirectTransferRequest(body);
 
       const payerMode = getPayerModeFromEnv();
       const settled = await settleDirectTransfer({
@@ -575,17 +574,13 @@ async function main() {
         destinationAccountId: `atxp:${accountId}`,
         payerMode,
         payeeSources,
-        request: {
-          merchant: body.merchant,
-          amountUsd: body.amountUsd,
-          memo: body.memo,
-        },
+        request,
         credential,
       });
       return c.json({
         ok: true,
-        merchant: body.merchant,
-        amountUsd: body.amountUsd,
+        merchant: request.merchant,
+        amountUsd: request.amountUsd,
         txHash: settled.txHash,
         settledAmount: settled.settledAmount,
         verificationMode: settled.verificationMode,

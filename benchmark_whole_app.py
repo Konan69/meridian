@@ -372,7 +372,7 @@ def pnpm_trace_metadata(
         validation["manual_phase_tasks"] = phase_tasks
         validation["phase_debug_note"] = (
             "Default profiles keep the combined command. Use these task ids manually "
-            "to isolate install, Svelte check, or Vite build diagnostics."
+            "to isolate install, build, check, or test diagnostics."
         )
     return {
         "validation": {
@@ -570,7 +570,7 @@ def service_builds_summary_trace_metadata(component_tasks: list[dict[str, Any]])
             "component_count": len(component_tasks),
             "component_tasks": component_tasks,
             "score_formula": "sum(component_scores) / len(component_scores)",
-            "note": "This synthetic summary runs no shell command; inspect component traces for cache, validation, and logs.",
+            "note": "This synthetic summary runs no shell command; component entries list manual phase task ids for install/build isolation, while component traces show full cache, validation, and logs.",
         }
     }
 
@@ -807,7 +807,9 @@ def static_contract_trace_metadata(
 def task_static_contracts(root: Path) -> float:
     failures: list[str] = []
     required_files = [
+        "AGENTS.md",
         "README.md",
+        "docs/simulation-architecture.md",
         "docs/funding.md",
         "run.sh",
         "engine/Cargo.toml",
@@ -927,6 +929,28 @@ def task_static_contracts(root: Path) -> float:
                 "status.runtime_ready && status.integration == \"in_engine\"",
             ],
         ),
+        (
+            "AGENTS.md",
+            [
+                "evo gate list <parent-or-checkpoint>",
+                "preserve every focused gate",
+                "whole_app_contract_gate",
+                "ap2_offline_settlement_semantics",
+                "Manual diff combines do not automatically carry gate metadata",
+            ],
+        ),
+        (
+            "docs/simulation-architecture.md",
+            [
+                "Manual Evo combines need a separate gate hygiene pass",
+                "evo gate list <source>",
+                "evo gate list <destination>",
+                "reattach any focused gates",
+                "whole_app_contract_gate",
+                "ap2_offline_settlement_semantics",
+                "service_offline_ap2",
+            ],
+        ),
     ]
     for path, needles in contains_contracts:
         require_contains(root / path, needles, failures)
@@ -1014,6 +1038,14 @@ def task_static_contracts(root: Path) -> float:
             ],
             "protects": "Raw route_pressure fallback fields stay documented and asserted by report tests.",
         },
+        {
+            "surface": "manual_combine_gate_hygiene",
+            "paths": [
+                "AGENTS.md",
+                "docs/simulation-architecture.md",
+            ],
+            "protects": "Manual Evo combines keep inherited focused gates visible, including the AP2 offline settlement semantics gate.",
+        },
     ]
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
     log_task(
@@ -1094,6 +1126,19 @@ SERVICE_BUILD_TARGETS = {
     "atxp": 35,
 }
 
+SERVICE_BUILD_PHASES = {
+    "install": {
+        "command": "pnpm install --store-dir $PNPM_STORE_DIR --frozen-lockfile --prefer-offline --ignore-scripts",
+        "target_seconds": 12,
+        "log_anchors": ["Lockfile is up to date", "Already up to date", "Done in"],
+    },
+    "build": {
+        "command": "pnpm run build",
+        "target_seconds_ratio": 0.75,
+        "log_anchors": ["tsc -p tsconfig.json"],
+    },
+}
+
 SERVICE_OFFLINE_TARGETS = {
     "cdp": 22,
     "stripe": 22,
@@ -1135,6 +1180,31 @@ def web_phase_task_list() -> list[dict[str, Any]]:
     ]
 
 
+def service_build_phase_task_id(service: str, phase: str) -> str:
+    return f"service_{service}_{phase}"
+
+
+def service_build_phase_target_seconds(service: str, phase: str) -> float:
+    metadata = SERVICE_BUILD_PHASES[phase]
+    if "target_seconds" in metadata:
+        return metadata["target_seconds"]
+    return round(SERVICE_BUILD_TARGETS[service] * metadata["target_seconds_ratio"], 2)
+
+
+def service_build_phase_task_list(service: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "task_id": service_build_phase_task_id(service, phase),
+            "service": service,
+            "phase": phase,
+            "command": metadata["command"],
+            "target_seconds": service_build_phase_target_seconds(service, phase),
+            "log_anchors": metadata["log_anchors"],
+        }
+        for phase, metadata in SERVICE_BUILD_PHASES.items()
+    ]
+
+
 def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, Any]]:
     target_seconds = SERVICE_BUILD_TARGETS[service]
     task_id = f"service_build_{service}"
@@ -1146,6 +1216,7 @@ def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, A
         "package_root": f"services/{service}",
         "target_seconds": target_seconds,
         "node_modules_seed": node_modules_seed,
+        "manual_phase_tasks": service_build_phase_task_list(service),
     }
     score = run_command(
         root,
@@ -1159,6 +1230,7 @@ def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, A
             package_root,
             ["pnpm run build"],
             node_modules_seed,
+            service_build_phase_task_list(service),
         ),
     )
     return score, component_task
@@ -1185,6 +1257,45 @@ def task_service_builds(root: Path) -> float:
 def task_service_build_component(root: Path, service: str) -> float:
     score, _component_task = run_service_build_task(root, service)
     return score
+
+
+def task_service_build_phase(root: Path, service: str, phase: str) -> float:
+    package_root = root / "services" / service
+    metadata = SERVICE_BUILD_PHASES[phase]
+    node_modules_seed = seed_node_modules(root, package_root)
+    task_id = service_build_phase_task_id(service, phase)
+    validation_commands = [] if phase == "install" else [metadata["command"]]
+    command = (
+        pnpm_install_phase_command()
+        if phase == "install"
+        else pnpm_cached_install_command(metadata["command"])
+    )
+    return run_command(
+        root,
+        task_id,
+        command,
+        cwd=package_root,
+        timeout=120,
+        target_seconds=service_build_phase_target_seconds(service, phase),
+        trace_metadata=pnpm_trace_metadata(
+            root,
+            package_root,
+            validation_commands,
+            node_modules_seed,
+            service_build_phase_task_list(service),
+        )
+        | {
+            "phase": {
+                "kind": "service_build_validation_phase",
+                "parent_task_id": f"service_build_{service}",
+                "service": service,
+                "phase": phase,
+                "log_anchors": metadata["log_anchors"],
+                "default_profile": False,
+                "gate_profile": False,
+            }
+        },
+    )
 
 
 def run_service_offline_node_task(root: Path, service: str) -> tuple[float, dict[str, Any]]:
@@ -1356,6 +1467,12 @@ def task_runners() -> dict[str, Any]:
         "service_build_stripe": lambda root: task_service_build_component(root, "stripe"),
         "service_build_atxp": lambda root: task_service_build_component(root, "atxp"),
         "service_builds_summary": task_service_builds,
+        "service_cdp_install": lambda root: task_service_build_phase(root, "cdp", "install"),
+        "service_cdp_build": lambda root: task_service_build_phase(root, "cdp", "build"),
+        "service_stripe_install": lambda root: task_service_build_phase(root, "stripe", "install"),
+        "service_stripe_build": lambda root: task_service_build_phase(root, "stripe", "build"),
+        "service_atxp_install": lambda root: task_service_build_phase(root, "atxp", "install"),
+        "service_atxp_build": lambda root: task_service_build_phase(root, "atxp", "build"),
         "service_offline_cdp": lambda root: task_service_offline_component(root, "cdp"),
         "service_offline_stripe": lambda root: task_service_offline_component(root, "stripe"),
         "service_offline_atxp": lambda root: task_service_offline_component(root, "atxp"),
@@ -1373,13 +1490,28 @@ def task_catalog() -> list[dict[str, Any]]:
     gate_tasks = set(GATE_PROFILE_TASK_IDS)
     catalog = []
     for task_id in task_runners():
-        catalog.append(
-            {
-                "task_id": task_id,
-                "benchmark_profile": task_id in benchmark_tasks,
-                "gate_profile": task_id in gate_tasks,
-            }
-        )
+        entry = {
+            "task_id": task_id,
+            "benchmark_profile": task_id in benchmark_tasks,
+            "gate_profile": task_id in gate_tasks,
+        }
+        for service in SERVICE_BUILD_TARGETS:
+            for phase_task in service_build_phase_task_list(service):
+                if phase_task["task_id"] == task_id:
+                    entry.update(
+                        {
+                            "category": "service_build_phase",
+                            "parent_task_id": f"service_build_{service}",
+                            "service": service,
+                            "phase": phase_task["phase"],
+                            "command": phase_task["command"],
+                            "target_seconds": phase_task["target_seconds"],
+                        }
+                    )
+                    break
+            if entry.get("category") == "service_build_phase":
+                break
+        catalog.append(entry)
     return catalog
 
 
@@ -1394,7 +1526,7 @@ def list_tasks() -> float:
                 },
                 "manual_selection": {
                     "single": "--task-id web_check_build",
-                    "multiple": "--task-ids service_offline_cdp,web_check_build",
+                    "multiple": "--task-ids service_cdp_install,service_cdp_build",
                 },
             },
             indent=2,
