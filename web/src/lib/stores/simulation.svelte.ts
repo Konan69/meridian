@@ -79,6 +79,9 @@ export interface ProtoMetrics {
   avg_settlement_ms: number;
   avg_authorization_ms: number;
   micropayment_count: number;
+  avg_route_score: number;
+  avg_route_pressure_penalty: number;
+  avg_sustainability_bias: number;
 }
 
 export interface ProtocolEcosystem {

@@ -570,6 +570,66 @@ def test_run_round_carries_rebalance_infeasibility_pressure_into_market_evolutio
     assert removed["evidence"]["route_pressure"] == pressure[0]["capacity_ratio"]
 
 
+def test_market_evolution_uses_route_score_evidence_for_protocol_removal():
+    config = SimulationConfig(
+        seed=37,
+        protocols=[Protocol.X402, Protocol.MPP, Protocol.AP2],
+        social_memory_strength=0.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.X402, Protocol.MPP, Protocol.AP2]
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent("agent_001", trust={"x402": 0.68, "mpp": 0.68, "ap2": 0.68}),
+        _agent("agent_002", trust={"x402": 0.68, "mpp": 0.68, "ap2": 0.68}),
+    ]
+    for state in engine.protocol_state.values():
+        state.reliability = 0.98
+        state.network_effect = 0.55
+        state.operator_margin_cents = 0
+    engine._refresh_protocol_market_state()
+
+    summary = RoundSummary(
+        round_num=8,
+        transactions=[
+            TransactionRecord(
+                round_num=8,
+                agent_id="agent_001",
+                protocol="mpp",
+                product_id="prod_api_credits",
+                product_name="API credits",
+                amount=10_000,
+                fee=50,
+                settlement_ms=120.0,
+                success=True,
+                merchant_id=merchant.merchant_id,
+                route_id="tempo_direct_session",
+                route_score=0.1,
+                route_score_drivers={
+                    "total": 0.1,
+                    "route_pressure_penalty": -1.8,
+                    "sustainability_bias": -0.4,
+                },
+            )
+        ],
+    )
+
+    engine._evolve_market(8, summary)
+
+    removed = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "removed"
+    ][0]
+    assert removed["protocol"] == "mpp"
+    assert removed["reason"] == "ecosystem_evidence"
+    assert removed["evidence"]["route_pressure"] == 0.0
+    assert removed["evidence"]["route_score_pressure_drag"] == 1.8
+    assert removed["evidence"]["route_score_sustainability_lift"] == -0.4
+
+
 def test_consecutive_run_rounds_escalate_rebalance_infeasibility_pressure():
     engine, _ = _engine_with_treasury_shortfall(
         seed=32,

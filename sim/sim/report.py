@@ -1,5 +1,10 @@
 """Structured report generator for Meridian simulation results."""
 
+from .protocol_labels import (
+    normalize_protocol_labels_in_text,
+    protocol_display_label,
+    protocol_list_label,
+)
 from .types import AgentProfile, SimulationResult
 
 
@@ -25,15 +30,6 @@ def _as_int(value: object, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _list_label(value: object, default: str = "unknown") -> str:
-    if isinstance(value, (list, tuple, set)):
-        labels = [str(item).upper() for item in value if str(item)]
-        return ", ".join(labels) if labels else default
-    if value:
-        return str(value).upper()
-    return default
 
 
 def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
@@ -178,7 +174,7 @@ class ReportGenerator:
             f"Agents: {r.config.num_agents}",
             f"Rounds: {r.config.num_rounds}",
             f"Merchants: {sum(state.merchant_count for state in r.ecosystem_summary.values())}",
-            f"Protocols tested: {', '.join(p.value.upper() for p in r.config.protocols)}",
+            f"Protocols tested: {', '.join(protocol_display_label(p) for p in r.config.protocols)}",
             f"Duration: {r.duration_seconds:.1f}s",
             "",
             f"Total transactions: {total} ({success} succeeded, {failed} failed)",
@@ -198,7 +194,7 @@ class ReportGenerator:
             if not state:
                 continue
             lines.append(
-                f"  {proto_name.upper()}: merchants={state.merchant_count}, "
+                f"  {protocol_display_label(proto_name)}: merchants={state.merchant_count}, "
                 f"network_effect={state.network_effect:.2f}, reliability={state.reliability:.2%}, "
                 f"congestion={state.congestion:.2f}, scale_pressure={state.scale_pressure:.2f}"
             )
@@ -230,7 +226,7 @@ class ReportGenerator:
                 if not trust:
                     continue
                 lines.append(
-                    f"  {proto_name.upper()}: avg={trust.get('avg', 0):.2f}, "
+                    f"  {protocol_display_label(proto_name)}: avg={trust.get('avg', 0):.2f}, "
                     f"min={trust.get('min', 0):.2f}, max={trust.get('max', 0):.2f}"
                 )
 
@@ -238,7 +234,9 @@ class ReportGenerator:
             lines.append("")
             lines.append("Recent world events:")
             for event in self.result.world_events[-5:]:
-                lines.append(f"  R{event.round_num}: {event.summary}")
+                lines.append(
+                    f"  R{event.round_num}: {normalize_protocol_labels_in_text(event.summary)}"
+                )
 
         return {"title": "Emergent Agent Economy", "content": "\n".join(lines), "status": "ok"}
 
@@ -338,7 +336,7 @@ class ReportGenerator:
                 blocked_route = str(blocked.get("route_id") or "treasury_rebalance_unroutable")
                 source = str(blocked.get("source_domain") or "unknown_source")
                 target = str(blocked.get("target_domain") or "unknown_target")
-                protocols = _list_label(blocked.get("protocols"))
+                protocols = protocol_list_label(blocked.get("protocols"))
                 pressure_rounds = _as_int(blocked.get("pressure_rounds", blocked.get("failure_count", 0)))
                 round_label = "pressure round" if pressure_rounds == 1 else "pressure rounds"
                 blocked_cents = _as_int(blocked.get("total_usage_cents", blocked.get("usage_cents", 0)))
@@ -378,7 +376,7 @@ class ReportGenerator:
             target = str(data.get("target_domain") or "unknown_target")
             amount_cents = _as_int(data.get("amount_cents", 0))
             error = str(data.get("error") or "unknown_failure")
-            protocols = _list_label(data.get("accepted_protocols"))
+            protocols = protocol_list_label(data.get("accepted_protocols"))
             fail_label = (
                 "failure" if len(treasury_failed) == 1 else f"latest of {len(treasury_failed)} failures"
             )
@@ -411,8 +409,8 @@ class ReportGenerator:
                 trusted = max(trust_rows, key=lambda row: float(row[1].get("avg", 0)))
                 fragile = min(trust_rows, key=lambda row: float(row[1].get("avg", 0)))
                 lines.append(
-                    f"Agent trust anchor: {trusted[0].upper()} leads at avg "
-                    f"{float(trusted[1].get('avg', 0)):.2f}; {fragile[0].upper()} is weakest at "
+                    f"Agent trust anchor: {protocol_display_label(trusted[0])} leads at avg "
+                    f"{float(trusted[1].get('avg', 0)):.2f}; {protocol_display_label(fragile[0])} is weakest at "
                     f"{float(fragile[1].get('avg', 0)):.2f}."
                 )
 
@@ -472,7 +470,7 @@ class ReportGenerator:
                 count = int(bucket["count"])
                 memory_label = "memory" if count == 1 else "memories"
                 lines.append(
-                    f"Route-pressure memory: {proto.upper()} on {route_id} recorded "
+                    f"Route-pressure memory: {protocol_display_label(proto)} on {route_id} recorded "
                     f"{count} pressure-linked {memory_label}, max pressure "
                     f"{float(bucket['max_pressure']) * 100:.1f}%, net trust "
                     f"{float(bucket['net']):+.2f}, attempt value "
@@ -512,28 +510,28 @@ class ReportGenerator:
             if worst_state.operator_margin_cents < 0:
                 if worst_name == best_name:
                     lines.append(
-                        f"Rail margin watch: {worst_name.upper()} is losing "
+                        f"Rail margin watch: {protocol_display_label(worst_name)} is losing "
                         f"{_cents_to_dollars(abs(worst_state.operator_margin_cents))} "
                         f"after {_cents_to_dollars(worst_state.fee_revenue_cents)} revenue and "
                         f"{_cents_to_dollars(worst_state.infrastructure_cost_cents)} infrastructure cost."
                     )
                 else:
                     lines.append(
-                        f"Rail margin watch: {worst_name.upper()} is losing "
+                        f"Rail margin watch: {protocol_display_label(worst_name)} is losing "
                         f"{_cents_to_dollars(abs(worst_state.operator_margin_cents))} "
                         f"after {_cents_to_dollars(worst_state.fee_revenue_cents)} revenue and "
                         f"{_cents_to_dollars(worst_state.infrastructure_cost_cents)} infrastructure cost; "
-                        f"{best_name.upper()} leads at {_cents_to_dollars(best_state.operator_margin_cents)}."
+                        f"{protocol_display_label(best_name)} leads at {_cents_to_dollars(best_state.operator_margin_cents)}."
                     )
             else:
                 lines.append(
-                    f"Rail margin watch: {best_name.upper()} leads at "
+                    f"Rail margin watch: {protocol_display_label(best_name)} leads at "
                     f"{_cents_to_dollars(best_state.operator_margin_cents)}; lowest margin is "
-                    f"{worst_name.upper()} at {_cents_to_dollars(worst_state.operator_margin_cents)}."
+                    f"{protocol_display_label(worst_name)} at {_cents_to_dollars(worst_state.operator_margin_cents)}."
                 )
             for name, state in states:
                 lines.append(
-                    f"  {name.upper()}: margin={_cents_to_dollars(state.operator_margin_cents)}, "
+                    f"  {protocol_display_label(name)}: margin={_cents_to_dollars(state.operator_margin_cents)}, "
                     f"revenue={_cents_to_dollars(state.fee_revenue_cents)}, "
                     f"infra={_cents_to_dollars(state.infrastructure_cost_cents)}, "
                     f"scale_pressure={state.scale_pressure:.2f}"
@@ -597,7 +595,7 @@ class ReportGenerator:
                 status = "warn"
 
             sections.append({
-                "title": f"Protocol: {proto_name.upper()}",
+                "title": f"Protocol: {protocol_display_label(proto_name)}",
                 "content": "\n".join(lines),
                 "status": status,
             })
@@ -632,13 +630,13 @@ class ReportGenerator:
 
         lines = [
             "Fastest settlement:",
-            *[f"  {i+1}. {p.upper()} ({_get(p, 'avg_settlement_ms', 0):.3f} ms)" for i, p in enumerate(by_speed)],
+            *[f"  {i+1}. {protocol_display_label(p)} ({_get(p, 'avg_settlement_ms', 0):.3f} ms)" for i, p in enumerate(by_speed)],
             "",
             "Lowest fee ratio:",
-            *[f"  {i+1}. {p.upper()} ({_pct(_get(p, 'total_fees_cents'), _get(p, 'total_volume_cents'))})" for i, p in enumerate(by_cost)],
+            *[f"  {i+1}. {protocol_display_label(p)} ({_pct(_get(p, 'total_fees_cents'), _get(p, 'total_volume_cents'))})" for i, p in enumerate(by_cost)],
             "",
             "Most reliable:",
-            *[f"  {i+1}. {p.upper()} ({_pct(_get(p, 'successful_transactions'), _get(p, 'total_transactions'))})" for i, p in enumerate(by_reliability)],
+            *[f"  {i+1}. {protocol_display_label(p)} ({_pct(_get(p, 'successful_transactions'), _get(p, 'total_transactions'))})" for i, p in enumerate(by_reliability)],
         ]
         return {"title": "Comparative Ranking", "content": "\n".join(lines), "status": "ok"}
 
@@ -657,7 +655,7 @@ class ReportGenerator:
         lines = ["Best unit economics:"]
         for idx, (name, state) in enumerate(by_margin, start=1):
             lines.append(
-                f"  {idx}. {name.upper()} "
+                f"  {idx}. {protocol_display_label(name)} "
                 f"(margin={_cents_to_dollars(state.operator_margin_cents)}, "
                 f"volume={_cents_to_dollars(state.gross_volume_cents)})"
             )
@@ -666,7 +664,7 @@ class ReportGenerator:
         lines.append("Best ecosystem pull:")
         for idx, (name, state) in enumerate(by_scale, start=1):
             lines.append(
-                f"  {idx}. {name.upper()} "
+                f"  {idx}. {protocol_display_label(name)} "
                 f"(network_effect={state.network_effect:.2f}, merchants={state.merchant_count})"
             )
 
@@ -712,7 +710,10 @@ class ReportGenerator:
         lines.append("Most active (by transaction count):")
         for agent_id, count in most_active:
             protos = agent_proto_counts.get(agent_id, {})
-            proto_str = ", ".join(f"{p.upper()}={c}" for p, c in sorted(protos.items(), key=lambda kv: kv[1], reverse=True))
+            proto_str = ", ".join(
+                f"{protocol_display_label(p)}={c}"
+                for p, c in sorted(protos.items(), key=lambda kv: kv[1], reverse=True)
+            )
             lines.append(f"  {agent_id}: {count} txns ({proto_str})")
 
         # Protocol preference distribution
@@ -726,7 +727,7 @@ class ReportGenerator:
         for p in _PROTO_ORDER:
             c = global_proto.get(p, 0)
             if c > 0:
-                lines.append(f"  {p.upper()}: {c} txns ({_pct(c, total_txns)})")
+                lines.append(f"  {protocol_display_label(p)}: {c} txns ({_pct(c, total_txns)})")
 
         return {"title": "Agent Behavior Analysis", "content": "\n".join(lines), "status": "ok"}
 
@@ -761,7 +762,7 @@ class ReportGenerator:
             txns = _get(p, "total_transactions", 0)
             micro_share = _pct(count, txns) if txns else "N/A"
             lines.append(
-                f"  {p.upper()}: {count} micropayments ({micro_share} of its txns), "
+                f"  {protocol_display_label(p)}: {count} micropayments ({micro_share} of its txns), "
                 f"fee ratio {_pct(fees, vol)}"
             )
 
@@ -774,7 +775,7 @@ class ReportGenerator:
             fee_ratio = fees / vol if vol > 0 else 0
             if mc == 0 or fee_ratio > 0.10:
                 reason = "no micropayments" if mc == 0 else f"high fee ratio ({_pct(fees, vol)})"
-                lines.append(f"  {p.upper()}: {reason}")
+                lines.append(f"  {protocol_display_label(p)}: {reason}")
 
         return {"title": "Micropayment Analysis", "content": "\n".join(lines), "status": "ok"}
 
@@ -803,28 +804,28 @@ class ReportGenerator:
         if micro_candidates:
             best_micro = min(micro_candidates, key=lambda kv: fee_ratio(kv[0]))
             recs.append(
-                f"Micropayments: {best_micro[0].upper()} — lowest fee ratio among protocols "
+                f"Micropayments: {protocol_display_label(best_micro[0])} — lowest fee ratio among protocols "
                 f"that handled sub-$1 transactions ({_pct(_get(best_micro[0], 'total_fees_cents'), _get(best_micro[0], 'total_volume_cents'))})."
             )
 
         # Best for high-value
         hv_best = min(protos, key=fee_ratio)
         recs.append(
-            f"High-value transactions: {hv_best.upper()} — lowest overall fee ratio "
+            f"High-value transactions: {protocol_display_label(hv_best)} — lowest overall fee ratio "
             f"({_pct(_get(hv_best, 'total_fees_cents'), _get(hv_best, 'total_volume_cents'))})."
         )
 
         # Best for speed
         speed_best = min(protos, key=lambda p: _get(p, "avg_settlement_ms", float("inf")))
         recs.append(
-            f"Latency-sensitive use cases: {speed_best.upper()} — fastest avg settlement "
+            f"Latency-sensitive use cases: {protocol_display_label(speed_best)} — fastest avg settlement "
             f"({_get(speed_best, 'avg_settlement_ms', 0):.3f} ms)."
         )
 
         # Best for reliability
         rel_best = max(protos, key=success_rate)
         recs.append(
-            f"Mission-critical commerce: {rel_best.upper()} — highest success rate "
+            f"Mission-critical commerce: {protocol_display_label(rel_best)} — highest success rate "
             f"({_pct(_get(rel_best, 'successful_transactions'), _get(rel_best, 'total_transactions'))})."
         )
 
@@ -851,7 +852,7 @@ class ReportGenerator:
                 for name, value in positive_drivers[:3]
             )
             recs.append(
-                f"Selected route rationale: {chosen.protocol.upper()} on {chosen.route_id} "
+                f"Selected route rationale: {protocol_display_label(chosen.protocol)} on {chosen.route_id} "
                 f"scored {chosen.route_score:.2f}; {driver_text or 'no positive drivers'} "
                 f"offset route pressure {pressure:.2f}."
             )
@@ -859,7 +860,7 @@ class ReportGenerator:
             if isinstance(runner_up, dict):
                 gap = chosen.route_score - _as_float(runner_up.get("score", 0.0))
                 recs.append(
-                    f"Nearest route alternative: {str(runner_up.get('protocol', 'unknown')).upper()} "
+                    f"Nearest route alternative: {protocol_display_label(runner_up.get('protocol', 'unknown'))} "
                     f"on {runner_up.get('route_id', 'unknown route')} trailed by {gap:.2f}; "
                     f"selected route pressure stayed at {pressure:.2f} versus "
                     f"{abs(_as_float(runner_up.get('route_pressure_penalty', 0.0))):.2f}."
@@ -871,7 +872,7 @@ class ReportGenerator:
                 key=lambda item: item[1].operator_margin_cents,
             )
             recs.append(
-                f"Ecosystem operator economics: {eco_best[0].upper()} — strongest simulated "
+                f"Ecosystem operator economics: {protocol_display_label(eco_best[0])} — strongest simulated "
                 f"margin at {_cents_to_dollars(eco_best[1].operator_margin_cents)}."
             )
 
@@ -881,13 +882,13 @@ class ReportGenerator:
             sr = success_rate(p)
             if sr < 0.90 and _get(p, "total_transactions", 0) > 0:
                 cautions.append(
-                    f"  {p.upper()}: success rate {_pct(_get(p, 'successful_transactions'), _get(p, 'total_transactions'))} "
+                    f"  {protocol_display_label(p)}: success rate {_pct(_get(p, 'successful_transactions'), _get(p, 'total_transactions'))} "
                     f"— investigate failure causes before production use."
                 )
             fr = fee_ratio(p)
             if fr > 0.05 and _get(p, "total_volume_cents", 0) > 0:
                 cautions.append(
-                    f"  {p.upper()}: fee ratio {_pct(_get(p, 'total_fees_cents'), _get(p, 'total_volume_cents'))} "
+                    f"  {protocol_display_label(p)}: fee ratio {_pct(_get(p, 'total_fees_cents'), _get(p, 'total_volume_cents'))} "
                     f"— may erode margins on low-value goods."
                 )
 

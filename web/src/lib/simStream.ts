@@ -176,6 +176,9 @@ export function normalizeProtocolSummaries(value: unknown): ProtoMetrics[] {
         avg_settlement_ms: numberFrom(item.avg_settlement_ms) ?? 0,
         avg_authorization_ms: numberFrom(item.avg_authorization_ms) ?? 0,
         micropayment_count: wholeNumberFrom(item.micropayment_count) ?? 0,
+        avg_route_score: numberFrom(item.avg_route_score) ?? 0,
+        avg_route_pressure_penalty: numberFrom(item.avg_route_pressure_penalty) ?? 0,
+        avg_sustainability_bias: numberFrom(item.avg_sustainability_bias) ?? 0,
       }];
     })
     .flat()

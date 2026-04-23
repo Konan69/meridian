@@ -27,6 +27,43 @@ _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 PASS_SCORE_FLOOR = 0.82
 SPEED_SCORE_WEIGHT = 0.18
 RAW_ROUTE_PRESSURE_FALLBACK_FIELDS = ["reason", "failure_count", "pressure_level"]
+INHERITED_GATE_GUIDANCE = [
+    {
+        "name": "whole_app_contract_gate",
+        "command": "python3 {worktree}/benchmark_whole_app.py --target {target} --profile gate --min-score 1.0",
+        "scope": "static contracts and Python compileability",
+        "related_task_ids": ["static_contracts", "python_compile"],
+        "preserve_when_combining": True,
+    },
+    {
+        "name": "ap2_offline_settlement_semantics",
+        "command": "cd {target}/services/ap2 && PYTHONPATH=src python3 -m unittest discover -s tests -q",
+        "scope": "AP2 offline settlement helper semantics",
+        "related_task_ids": ["service_offline_ap2", "service_offline_protocol_tests"],
+        "preserve_when_combining": True,
+    },
+    {
+        "name": "stripe_mpp_offline_semantics",
+        "command": "cd {target}/services/stripe && CACHE_ROOT=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench\" && PNPM_STORE_DIR=\"$CACHE_ROOT/pnpm-store-v10\" && pnpm install --store-dir \"$PNPM_STORE_DIR\" --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run test:offline",
+        "scope": "Stripe MPP offline request and settlement helper semantics",
+        "related_task_ids": ["service_offline_stripe", "service_offline_protocol_tests"],
+        "preserve_when_combining": True,
+    },
+    {
+        "name": "atxp_offline_direct_transfer_topup_contract",
+        "command": "cd {target}/services/atxp && CACHE_ROOT=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench\" && PNPM_STORE_DIR=\"$CACHE_ROOT/pnpm-store-v10\" && pnpm install --store-dir \"$PNPM_STORE_DIR\" --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run test:offline",
+        "scope": "ATXP direct-transfer and cdp-base treasury top-up contracts",
+        "related_task_ids": ["service_offline_atxp", "service_offline_protocol_tests"],
+        "preserve_when_combining": True,
+    },
+    {
+        "name": "cdp_offline_treasury_transfer_contract",
+        "command": "cd {target}/services/cdp && CACHE_ROOT=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench\" && PNPM_STORE_DIR=\"$CACHE_ROOT/pnpm-store-v10\" && pnpm install --store-dir \"$PNPM_STORE_DIR\" --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run test:offline",
+        "scope": "CDP offline treasury transfer route request and response contract",
+        "related_task_ids": ["service_offline_cdp", "service_offline_protocol_tests"],
+        "preserve_when_combining": True,
+    },
+]
 
 if _TRACES_DIR:
     _TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,6 +134,17 @@ def merge_trace_metadata(*items: dict[str, Any] | None) -> dict[str, Any] | None
             continue
         merged.update(item)
     return merged or None
+
+
+def inherited_gate_guidance_metadata() -> dict[str, Any]:
+    return {
+        "kind": "inherited_gate_guidance",
+        "source_of_truth": "evo gate list <parent-or-checkpoint>",
+        "combine_rule": "Before manual combines, compare source and destination gate lists and reattach every missing gate listed here.",
+        "default_profile_changed": False,
+        "gate_profile_changed": False,
+        "gates": INHERITED_GATE_GUIDANCE,
+    }
 
 
 def shared_cache_root() -> Path:
@@ -622,7 +670,8 @@ def service_offline_tests_summary_trace_metadata(
             "component_tasks": component_tasks,
             "score_formula": "sum(component_scores) / len(component_scores)",
             "note": "This synthetic summary runs no shell command; inspect component traces for offline protocol test logs and dependency cache details.",
-        }
+        },
+        "gate_guidance": inherited_gate_guidance_metadata(),
     }
 
 
@@ -789,12 +838,47 @@ def check_raw_route_pressure_report_contract(root: Path, failures: list[str]) ->
     }
 
 
+def check_inherited_gate_guidance_contract(
+    root: Path, failures: list[str]
+) -> dict[str, Any]:
+    checked_paths = ["AGENTS.md", "docs/simulation-architecture.md"]
+    required_needles = [
+        "benchmark_whole_app.py --list-tasks",
+        *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+    ]
+    missing_needles = []
+    for rel_path in checked_paths:
+        path = root / rel_path
+        if not path.exists():
+            failures.append(f"inherited_gate_guidance[{rel_path}]: missing file")
+            missing_needles.extend(
+                {"path": rel_path, "needle": needle} for needle in required_needles
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in required_needles:
+            if needle not in text:
+                failures.append(
+                    f"inherited_gate_guidance[{rel_path}]: missing {needle!r}"
+                )
+                missing_needles.append({"path": rel_path, "needle": needle})
+    return {
+        "kind": "inherited_gate_guidance_docs",
+        "source": "INHERITED_GATE_GUIDANCE",
+        "checked_paths": checked_paths,
+        "required_gate_names": [gate["name"] for gate in INHERITED_GATE_GUIDANCE],
+        "missing_needles": missing_needles,
+        "protects": "Gate hygiene docs and list-task metadata keep inherited focused gate names discoverable without source hunting.",
+    }
+
+
 def static_contract_trace_metadata(
     required_files: list[str],
     contains_contracts: list[tuple[str, list[str]]],
     contract_surfaces: list[dict[str, Any]],
     service_offline_coverage_files: list[dict[str, Any]],
     raw_route_pressure_report_contract: dict[str, Any],
+    inherited_gate_guidance_contract: dict[str, Any],
 ) -> dict[str, Any]:
     needles_by_path = {path: len(needles) for path, needles in contains_contracts}
     return {
@@ -835,8 +919,10 @@ def static_contract_trace_metadata(
                     "protects": "Offline service trace coverage must name at least one test file and helper file per service, and every listed path must exist.",
                 },
                 raw_route_pressure_report_contract,
+                inherited_gate_guidance_contract,
             ],
             "service_offline_coverage_files": service_offline_coverage_files,
+            "gate_guidance": inherited_gate_guidance_metadata(),
         }
     }
 
@@ -973,6 +1059,10 @@ def task_static_contracts(root: Path) -> float:
                 "preserve every focused gate",
                 "whole_app_contract_gate",
                 "ap2_offline_settlement_semantics",
+                "stripe_mpp_offline_semantics",
+                "atxp_offline_direct_transfer_topup_contract",
+                "cdp_offline_treasury_transfer_contract",
+                "benchmark_whole_app.py --list-tasks",
                 "Manual diff combines do not automatically carry gate metadata",
             ],
         ),
@@ -985,6 +1075,10 @@ def task_static_contracts(root: Path) -> float:
                 "reattach any focused gates",
                 "whole_app_contract_gate",
                 "ap2_offline_settlement_semantics",
+                "stripe_mpp_offline_semantics",
+                "atxp_offline_direct_transfer_topup_contract",
+                "cdp_offline_treasury_transfer_contract",
+                "benchmark_whole_app.py --list-tasks",
                 "service_offline_ap2",
             ],
         ),
@@ -993,6 +1087,9 @@ def task_static_contracts(root: Path) -> float:
         require_contains(root / path, needles, failures)
 
     raw_route_pressure_report_contract = check_raw_route_pressure_report_contract(
+        root, failures
+    )
+    inherited_gate_guidance_contract = check_inherited_gate_guidance_contract(
         root, failures
     )
 
@@ -1081,7 +1178,7 @@ def task_static_contracts(root: Path) -> float:
                 "AGENTS.md",
                 "docs/simulation-architecture.md",
             ],
-            "protects": "Manual Evo combines keep inherited focused gates visible, including the AP2 offline settlement semantics gate.",
+            "protects": "Manual Evo combines keep inherited focused gates visible, including AP2, Stripe MPP, ATXP, and CDP offline protocol gates.",
         },
     ]
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
@@ -1097,6 +1194,7 @@ def task_static_contracts(root: Path) -> float:
             contract_surfaces,
             service_offline_coverage_files,
             raw_route_pressure_report_contract,
+            inherited_gate_guidance_contract,
         ),
     )
     return score
@@ -1576,6 +1674,13 @@ def task_catalog() -> list[dict[str, Any]]:
             ]
             entry["manual_validation_task_ids"] = service_task_ids
             entry["manual_selection"] = f"--task-ids {','.join(service_task_ids)}"
+        matching_gates = [
+            gate
+            for gate in INHERITED_GATE_GUIDANCE
+            if task_id in gate["related_task_ids"]
+        ]
+        if matching_gates:
+            entry["preserved_gate_names"] = [gate["name"] for gate in matching_gates]
         catalog.append(entry)
     return catalog
 
@@ -1593,6 +1698,7 @@ def list_tasks() -> float:
                     "single": "--task-id web_check_build",
                     "multiple": "--task-ids service_cdp_install,service_cdp_build",
                 },
+                "gate_guidance": inherited_gate_guidance_metadata(),
             },
             indent=2,
         )

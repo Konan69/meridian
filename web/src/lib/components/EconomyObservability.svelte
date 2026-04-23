@@ -46,6 +46,9 @@
 		snapshots: number;
 		routeAttempts: number;
 		reliability: number | null;
+		routeScore: number;
+		pressureDrag: number;
+		sustainabilityLift: number;
 	}
 
 	interface Props {
@@ -155,6 +158,7 @@
 				const lastHistoryValue = history.length > 0 ? history[history.length - 1] : undefined;
 				const marginCents = numberFrom(ecosystemState?.operator_margin_cents, lastHistoryValue) ?? 0;
 				const firstHistoryValue = history.length > 0 ? history[0] : marginCents;
+				const metrics = protocolMetrics.find((metric) => metric.protocol === protocol);
 				const routeAttempts = Object.values(ecosystemState?.route_mix ?? {})
 					.reduce((sum, count) => sum + wholeNonNegative(count), 0);
 				return {
@@ -164,6 +168,9 @@
 					snapshots: history.length,
 					routeAttempts,
 					reliability: numberFrom(ecosystemState?.reliability),
+					routeScore: numberFrom(metrics?.avg_route_score) ?? 0,
+					pressureDrag: numberFrom(metrics?.avg_route_pressure_penalty) ?? 0,
+					sustainabilityLift: numberFrom(metrics?.avg_sustainability_bias) ?? 0,
 				};
 			})
 			.sort((a, b) => Math.abs(b.marginCents) - Math.abs(a.marginCents) || a.protocol.localeCompare(b.protocol));
@@ -425,6 +432,9 @@
 							{money(row.marginCents)}
 						</strong>
 						<small>{signedMoney(row.deltaCents)} · {row.snapshots || 1} snapshots · {row.routeAttempts} attempts · rel {pct(row.reliability)}</small>
+						{#if row.routeScore !== 0 || row.pressureDrag !== 0 || row.sustainabilityLift !== 0}
+							<small class="score-drivers">score {row.routeScore.toFixed(2)} · pressure {row.pressureDrag.toFixed(2)} · sustain +{row.sustainabilityLift.toFixed(2)}</small>
+						{/if}
 					</div>
 				</div>
 			{:else}

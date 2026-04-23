@@ -1,5 +1,6 @@
 """Integration tests -- requires the Rust engine running on :4080."""
 import asyncio
+import io
 import uuid
 import pytest
 
@@ -485,7 +486,7 @@ def test_emergent_world_report_section():
         EconomyWorldEvent(
             round_num=1,
             event_type="round_closed",
-            summary="Round 1 closed with protocol trust changes.",
+            summary="Round 1 closed after mpp settlement and cdp funding checks.",
         )
     ]
 
@@ -494,7 +495,9 @@ def test_emergent_world_report_section():
     assert emergent is not None
     assert "test-agent-economy" in emergent["content"]
     assert "Agent memory events: 1" in emergent["content"]
-    assert "X402" in emergent["content"]
+    assert "x402" in emergent["content"]
+    assert "Stripe MPP settlement and CDP funding" in emergent["content"]
+    assert result.world_events[0].summary == "Round 1 closed after mpp settlement and cdp funding checks."
 
 
 def test_self_sustainability_report_section():
@@ -607,16 +610,16 @@ def test_self_sustainability_report_section():
         "Readout: base_direct_usdc peaked at 80.0% capacity (elevated) "
         "across 1 pressure round with $20,000.00 reserved principal"
     ) in signals["content"]
-    assert "X402 leads at avg 0.74" in signals["content"]
+    assert "x402 leads at avg 0.74" in signals["content"]
     assert "failed under route pressure" in signals["content"]
     assert (
-        "Route-pressure memory: X402 on base_direct_usdc recorded 1 "
+        "Route-pressure memory: x402 on base_direct_usdc recorded 1 "
         "pressure-linked memory, max pressure 80.0%, net trust -0.08, "
         "attempt value $1.00."
     ) in signals["content"]
     assert (
         "Rail margin watch: ATXP is losing $2.00 after $3.00 revenue and "
-        "$5.00 infrastructure cost; X402 leads at $4.50."
+        "$5.00 infrastructure cost; x402 leads at $4.50."
     ) in signals["content"]
     assert "margin=$4.50" in signals["content"]
 
@@ -671,14 +674,14 @@ def test_self_sustainability_report_explains_rebalance_failure_event():
     assert "Treasury rebalances: 0 succeeded, 1 failed" in signals["content"]
     assert (
         "No-route pressure: R4 failure: merchant_test could not rebalance "
-        "$120.00 from tempo_usd to base_usdc; accepted protocols MPP had "
+        "$120.00 from tempo_usd to base_usdc; accepted protocols Stripe MPP had "
         "no feasible route (no_feasible_rebalance_route)."
     ) in signals["content"]
     assert (
         "Unroutable treasury pressure: "
         "treasury_rebalance_unroutable:tempo_usd->base_usdc reached "
         "106.0% capacity across 2 pressure rounds with $360.00 blocked "
-        "demand; protocols MPP had no feasible tempo_usd -> base_usdc route."
+        "demand; protocols Stripe MPP had no feasible tempo_usd -> base_usdc route."
     ) in signals["content"]
 
 
@@ -747,13 +750,79 @@ def test_self_sustainability_report_uses_raw_route_pressure_events_without_summa
         "Unroutable treasury pressure: "
         "treasury_rebalance_unroutable:tempo_usd->base_usdc reached "
         "106.0% capacity across 2 pressure rounds with $360.00 blocked "
-        "demand; protocols MPP had no feasible tempo_usd -> base_usdc route; "
+        "demand; protocols Stripe MPP had no feasible tempo_usd -> base_usdc route; "
         "reason no_feasible_rebalance_route, failure_count 2, pressure_level critical."
     ) in signals["content"]
     assert (
         "  treasury_rebalance_unroutable:tempo_usd->base_usdc: max=106.0%, "
         "usage=$360.00, rounds=2"
     ) in signals["content"]
+
+
+def test_report_and_cli_readout_use_display_labels_without_rekeying_payload():
+    config = SimulationConfig(
+        num_agents=1,
+        num_rounds=1,
+        protocols=[Protocol.AP2, Protocol.MPP, Protocol.ATXP],
+    )
+    result = SimulationResult(config=config)
+    result.protocol_summaries = {
+        "ap2": {
+            "protocol": "ap2",
+            "total_transactions": 1,
+            "successful_transactions": 1,
+            "failed_transactions": 0,
+            "total_volume_cents": 10_000,
+            "total_fees_cents": 270,
+            "avg_settlement_ms": 3000,
+            "micropayment_count": 0,
+        },
+        "mpp": {
+            "protocol": "mpp",
+            "total_transactions": 1,
+            "successful_transactions": 1,
+            "failed_transactions": 0,
+            "total_volume_cents": 10_000,
+            "total_fees_cents": 155,
+            "avg_settlement_ms": 500,
+            "micropayment_count": 1,
+        },
+        "atxp": {
+            "protocol": "atxp",
+            "total_transactions": 1,
+            "successful_transactions": 1,
+            "failed_transactions": 0,
+            "total_volume_cents": 10_000,
+            "total_fees_cents": 50,
+            "avg_settlement_ms": 150,
+            "micropayment_count": 1,
+        },
+    }
+    result.ecosystem_summary = {
+        "ap2": ProtocolEcosystemState(protocol=Protocol.AP2, merchant_count=1),
+        "mpp": ProtocolEcosystemState(protocol=Protocol.MPP, merchant_count=1),
+        "atxp": ProtocolEcosystemState(protocol=Protocol.ATXP, merchant_count=1),
+    }
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    rendered = "\n".join(f"{section['title']}\n{section['content']}" for section in sections)
+
+    assert "Protocols tested: AP2, Stripe MPP, ATXP" in rendered
+    assert "Protocol: Stripe MPP" in rendered
+    assert "Protocol: MPP" not in rendered
+    assert "Stripe MPP: 1 micropayments" in rendered
+    assert sorted(result.protocol_summaries) == ["ap2", "atxp", "mpp"]
+    assert result.protocol_summaries["mpp"]["protocol"] == "mpp"
+
+    engine = SimulationEngine(config)
+    engine.result = result
+    engine.active_protocols = config.protocols
+    out = io.StringIO()
+    engine.print_report(file=out)
+
+    cli_lines = out.getvalue().splitlines()
+    assert "Stripe MPP" in out.getvalue()
+    assert not any(line.strip().startswith("MPP ") for line in cli_lines)
 
 
 # ------------------------------------------------------------------

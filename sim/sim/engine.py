@@ -17,6 +17,7 @@ from .agents import generate_agents
 from .commerce import CommerceClient
 from .economy import StablecoinEconomy
 from .memory import MemoryUpdater
+from .protocol_labels import protocol_display_label
 from .routes import routes_for_protocol
 from .types import (
     BalanceDomain,
@@ -904,6 +905,36 @@ class SimulationEngine:
             apply_entry(entry, 0.85**age)
         return dict(pressure)
 
+    def _route_score_evidence_by_protocol(self, summary: RoundSummary) -> dict[str, dict[str, float]]:
+        buckets: dict[str, dict[str, float]] = {}
+        for tx in summary.transactions:
+            if not tx.route_score_drivers:
+                continue
+            bucket = buckets.setdefault(
+                tx.protocol,
+                {
+                    "count": 0.0,
+                    "avg_route_score": 0.0,
+                    "route_pressure_drag": 0.0,
+                    "sustainability_lift": 0.0,
+                },
+            )
+            bucket["count"] += 1.0
+            bucket["avg_route_score"] += tx.route_score
+            bucket["route_pressure_drag"] += abs(
+                float(tx.route_score_drivers.get("route_pressure_penalty", 0.0))
+            )
+            bucket["sustainability_lift"] += float(
+                tx.route_score_drivers.get("sustainability_bias", 0.0)
+            )
+
+        for bucket in buckets.values():
+            count = max(1.0, bucket["count"])
+            bucket["avg_route_score"] = round(bucket["avg_route_score"] / count, 4)
+            bucket["route_pressure_drag"] = round(bucket["route_pressure_drag"] / count, 4)
+            bucket["sustainability_lift"] = round(bucket["sustainability_lift"] / count, 4)
+        return buckets
+
     def _merchant_treasury_posture(self, summary: RoundSummary, merchant: MerchantProfile) -> dict | None:
         for entry in summary.treasury_posture:
             if entry.get("merchant_id") == merchant.merchant_id:
@@ -1740,6 +1771,7 @@ class SimulationEngine:
         avg_trust = self._avg_trust_by_protocol()
         memory_signal = self._recent_memory_signal_by_protocol(round_num)
         route_pressure = self._route_pressure_by_protocol(summary)
+        route_score_evidence = self._route_score_evidence_by_protocol(summary)
         ranked = sorted(
             self.protocol_state.values(),
             key=lambda state: (
@@ -1785,6 +1817,9 @@ class SimulationEngine:
                         treasury_feasibility_bonus = 0.08
                     else:
                         treasury_feasibility_bonus = -0.16
+                route_evidence = route_score_evidence.get(protocol.value, {})
+                route_sustainability = float(route_evidence.get("sustainability_lift", 0.0))
+                route_pressure_drag = float(route_evidence.get("route_pressure_drag", 0.0))
                 score = (
                     state.reliability * 0.35
                     + state.network_effect * 0.25
@@ -1792,6 +1827,8 @@ class SimulationEngine:
                     + memory_signal.get(protocol.value, 0.0) * 1.4
                     + treasury_feasibility_bonus * treasury_pressure
                     - route_pressure.get(protocol.value, 0.0) * 0.08
+                    + max(0.0, route_sustainability) * 0.12
+                    - route_pressure_drag * 0.06
                 )
                 adoption_candidates.append((score, protocol, serves_preferred, rebalance_fit))
 
@@ -1829,6 +1866,9 @@ class SimulationEngine:
                                 "avg_trust": round(avg_trust.get(protocol.value, 0.6), 4),
                                 "recent_memory_signal": round(memory_signal.get(protocol.value, 0.0), 4),
                                 "route_pressure": round(route_pressure.get(protocol.value, 0.0), 4),
+                                "route_score": round(route_score_evidence.get(protocol.value, {}).get("avg_route_score", 0.0), 4),
+                                "route_score_pressure_drag": round(route_score_evidence.get(protocol.value, {}).get("route_pressure_drag", 0.0), 4),
+                                "route_score_sustainability_lift": round(route_score_evidence.get(protocol.value, {}).get("sustainability_lift", 0.0), 4),
                                 "treasury_pressure": round(treasury_pressure, 4),
                                 "serves_preferred_domain": serves_preferred,
                                 "rebalance_source_domain": (
@@ -1864,6 +1904,9 @@ class SimulationEngine:
                 else:
                     treasury_fit = 0.34
                 settlement_domain_fit = treasury_pressure * treasury_fit
+                route_evidence = route_score_evidence.get(protocol.value, {})
+                route_sustainability = float(route_evidence.get("sustainability_lift", 0.0))
+                route_pressure_drag = float(route_evidence.get("route_pressure_drag", 0.0))
                 risk = (
                     trust_gap * 0.9
                     + reliability_gap * 0.7
@@ -1871,6 +1914,9 @@ class SimulationEngine:
                     + route_pressure.get(protocol.value, 0.0) * 0.18
                     + min(0.25, margin_drag)
                     + settlement_domain_fit
+                    + route_pressure_drag * 0.18
+                    + max(0.0, -route_sustainability) * 0.30
+                    - max(0.0, route_sustainability) * 0.08
                 )
                 removal_candidates.append((risk, protocol, rebalance_fit))
 
@@ -1893,6 +1939,9 @@ class SimulationEngine:
                                 "avg_trust": round(avg_trust.get(worst.value, 0.6), 4),
                                 "recent_memory_signal": round(memory_signal.get(worst.value, 0.0), 4),
                                 "route_pressure": round(route_pressure.get(worst.value, 0.0), 4),
+                                "route_score": round(route_score_evidence.get(worst.value, {}).get("avg_route_score", 0.0), 4),
+                                "route_score_pressure_drag": round(route_score_evidence.get(worst.value, {}).get("route_pressure_drag", 0.0), 4),
+                                "route_score_sustainability_lift": round(route_score_evidence.get(worst.value, {}).get("sustainability_lift", 0.0), 4),
                                 "reliability": round(self.protocol_state[worst.value].reliability, 4),
                                 "operator_margin_cents": self.protocol_state[worst.value].operator_margin_cents,
                                 "treasury_pressure": round(treasury_pressure, 4),
@@ -2204,7 +2253,7 @@ class SimulationEngine:
         )
         p()
         p(
-            f"  {'Protocol':<8} {'Txns':>6} {'Volume':>12} {'Fees':>10} {'Margin':>10} {'NE':>6} {'CG':>6}"
+            f"  {'Protocol':<12} {'Txns':>6} {'Volume':>12} {'Fees':>10} {'Margin':>10} {'NE':>6} {'CG':>6}"
         )
         p("  " + "-" * 82)
         proto_order = ["atxp", "x402", "mpp", "acp", "ap2"]
@@ -2213,7 +2262,7 @@ class SimulationEngine:
             pm = r.protocol_summaries.get(proto_name, {})
             eco = r.ecosystem_summary.get(proto_name)
             p(
-                f"  {proto_name.upper():<8} {pm.get('total_transactions', 0):>6} "
+                f"  {protocol_display_label(proto_name):<12} {pm.get('total_transactions', 0):>6} "
                 f"${pm.get('total_volume_cents', 0) / 100:>10.2f} "
                 f"${pm.get('total_fees_cents', 0) / 100:>8.2f} "
                 f"${(eco.operator_margin_cents if eco else 0) / 100:>8.2f} "

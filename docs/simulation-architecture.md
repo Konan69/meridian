@@ -143,11 +143,17 @@ those files requires updating the metadata in the same change.
 Manual Evo combines need a separate gate hygiene pass. Before applying a
 winning diff outside its ancestry, run `evo gate list <source>` and
 `evo gate list <destination>`, then reattach any focused gates that are present
-on the source or parent but missing from the combined checkpoint. Keep
-`whole_app_contract_gate` plus focused gates such as
-`ap2_offline_settlement_semantics`; the AP2 gate protects the
-`service_offline_ap2` settlement semantics even when a combine was created by
-patching files rather than inheriting Evo metadata.
+on the source or parent but missing from the combined checkpoint.
+`benchmark_whole_app.py --list-tasks` prints the benchmark-owned gate guidance
+index, including command text and related task ids, so workers do not have to
+hunt through source or old traces to find gate names. Keep
+`whole_app_contract_gate` plus focused gates:
+`ap2_offline_settlement_semantics` for `service_offline_ap2`,
+`stripe_mpp_offline_semantics` for `service_offline_stripe`,
+`atxp_offline_direct_transfer_topup_contract` for `service_offline_atxp`, and
+`cdp_offline_treasury_transfer_contract` for `service_offline_cdp`. These gates
+protect service protocol semantics even when a combine was created by patching
+files rather than inheriting Evo metadata.
 
 ## Optimization Target
 

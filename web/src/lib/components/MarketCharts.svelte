@@ -12,6 +12,9 @@
 		micropayment_count: number;
 		successful_transactions: number;
 		failed_transactions: number;
+		avg_route_score?: number;
+		avg_route_pressure_penalty?: number;
+		avg_sustainability_bias?: number;
 	}
 
 	interface ProtocolEcosystem {
@@ -126,6 +129,9 @@
 			merchant_count: wholeNonNegative(ecosystem[protocol]?.merchant_count),
 			network_effect: unit(numberFrom(ecosystem[protocol]?.network_effect) ?? 0),
 			congestion: unit(numberFrom(ecosystem[protocol]?.congestion) ?? 0),
+			route_score: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_route_score) ?? 0,
+			pressure_drag: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_route_pressure_penalty) ?? 0,
+			sustainability_lift: numberFrom(metricData.find(m => m.protocol === protocol)?.avg_sustainability_bias) ?? 0,
 		})).sort((a, b) => b.network_effect - a.network_effect)
 	);
 
@@ -158,6 +164,10 @@
 
 	function svgHeight(count: number): number {
 		return chartPadding.top + Math.max(count, 1) * (barHeight + 8) + chartPadding.bottom;
+	}
+
+	function stackedSvgHeight(count: number): number {
+		return chartPadding.top + Math.max(count, 1) * (barHeight + 18) + chartPadding.bottom;
 	}
 
 	/** Log-scale mapping for execution time: compress large values */
@@ -195,6 +205,9 @@
 			micropayment_count: wholeNonNegative(metric.micropayment_count),
 			successful_transactions: wholeNonNegative(metric.successful_transactions),
 			failed_transactions: wholeNonNegative(metric.failed_transactions),
+			avg_route_score: numberFrom(metric.avg_route_score) ?? 0,
+			avg_route_pressure_penalty: numberFrom(metric.avg_route_pressure_penalty) ?? 0,
+			avg_sustainability_bias: numberFrom(metric.avg_sustainability_bias) ?? 0,
 		};
 	}
 
@@ -355,11 +368,11 @@
 
 	<!-- 6. Adoption / Pressure -->
 	<div class="chart-card">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(adoptionData.length)}" role="img" aria-label="Rail adoption and pressure chart" style="width:100%; height:auto;">
+		<svg viewBox="0 0 {chartWidth} {stackedSvgHeight(adoptionData.length)}" role="img" aria-label="Rail adoption route score and pressure driver chart" style="width:100%; height:auto;">
 			<title>Adoption &amp; Pressure</title>
 			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Adoption &amp; Pressure</text>
 			{#each adoptionData as m, i}
-				{@const y = chartPadding.top + i * (barHeight + 12)}
+				{@const y = chartPadding.top + i * (barHeight + 18)}
 				{@const adoptionW = scaledWidth(unit(m.network_effect), 1)}
 				{@const congestionW = scaledWidth(unit(m.congestion), 1)}
 				<circle cx="8" cy={y + barHeight / 2} r="4" fill={color(m.protocol)} />
@@ -375,6 +388,11 @@
 				<text x={labelWidth + congestionW + 6} y={y + 23} fill="var(--tx-3)" font-size="10" font-family="'Berkeley Mono', var(--mono), monospace">
 					CG {m.congestion.toFixed(2)} · {m.merchant_count} merchants
 				</text>
+				{#if m.route_score !== 0 || m.pressure_drag !== 0 || m.sustainability_lift !== 0}
+					<text x={labelWidth} y={y + 35} fill="var(--tx-3)" font-size="9" font-family="'Berkeley Mono', var(--mono), monospace">
+						score {m.route_score.toFixed(2)} · pressure {m.pressure_drag.toFixed(2)} · sustain +{m.sustainability_lift.toFixed(2)}
+					</text>
+				{/if}
 			{:else}
 				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No ecosystem adoption data yet</text>
 			{/each}

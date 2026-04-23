@@ -77,6 +77,9 @@ const observabilityEvent = {
       avg_settlement_ms: 18.2,
       avg_authorization_ms: 0,
       micropayment_count: 1,
+      avg_route_score: 1.25,
+      avg_route_pressure_penalty: -0.2,
+      avg_sustainability_bias: 0.08,
     },
   },
   ecosystem_summary: {
@@ -407,6 +410,9 @@ export const streamNormalizationContract = {
     worldSwitchType: economyObservabilityState.worldEvents[0]?.event_type,
     switchReason: economyObservabilityState.worldEvents[0]?.data?.reason,
     metricsProtocol: economyObservabilityState.metrics[0]?.protocol,
+    metricsRouteScore: economyObservabilityState.metrics[0]?.avg_route_score,
+    metricsPressureDrag: economyObservabilityState.metrics[0]?.avg_route_pressure_penalty,
+    metricsSustainabilityLift: economyObservabilityState.metrics[0]?.avg_sustainability_bias,
     nonNegativeRouteLedgerValue: Math.max(0, partialRouteUsage['cdp-base->ap2'] ?? 0),
     nonNegativeRouteMixAttempts: Math.max(0, Math.trunc(partialEcosystem.ap2?.route_mix?.['cdp-base->ap2'] ?? 0)),
     railLossSnapshot: partialRailPnlHistory.ap2?.slice(-1)[0],
@@ -450,6 +456,9 @@ type EconomyObservabilityContract = {
   worldSwitchType?: unknown;
   switchReason?: unknown;
   metricsProtocol?: unknown;
+  metricsRouteScore?: unknown;
+  metricsPressureDrag?: unknown;
+  metricsSustainabilityLift?: unknown;
   nonNegativeRouteLedgerValue: number;
   nonNegativeRouteMixAttempts: number;
   railLossSnapshot?: unknown;
@@ -522,6 +531,15 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.metricsProtocol !== 'ap2') {
     throw new Error('economy observability contract missing protocol metrics');
+  }
+  if (contract.metricsRouteScore !== 1.25) {
+    throw new Error('economy observability contract missing selected route score');
+  }
+  if (contract.metricsPressureDrag !== -0.2) {
+    throw new Error('economy observability contract missing route pressure score driver');
+  }
+  if (contract.metricsSustainabilityLift !== 0.08) {
+    throw new Error('economy observability contract missing sustainability score driver');
   }
   if (contract.nonNegativeRouteLedgerValue !== 0) {
     throw new Error('economy observability contract failed reserved principal clamp');
