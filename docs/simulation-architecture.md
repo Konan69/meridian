@@ -99,6 +99,10 @@ checks, or build/test commands.
 Benchmark traces are part of the handoff between workers. Keep command context,
 cache key inputs, and static contract coverage visible so the next worker can
 separate a real validation failure from cache setup or timing variance.
+For build and test tasks, read `trace_metadata.execution.score_policy` first:
+return code decides correctness, while elapsed time only contributes the small
+speed bonus. Cache metadata explains dependency reuse; validation metadata lists
+the install, check, build, compile, or test phases that still ran.
 
 ## Optimization Target
 

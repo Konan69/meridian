@@ -22,6 +22,8 @@ _TRACES_DIR = Path(os.environ["EVO_TRACES_DIR"]) if os.environ.get("EVO_TRACES_D
 _EXPERIMENT_ID = os.environ.get("EVO_EXPERIMENT_ID", "unknown")
 _SCORES: dict[str, float] = {}
 _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
+PASS_SCORE_FLOOR = 0.82
+SPEED_SCORE_WEIGHT = 0.18
 
 if _TRACES_DIR:
     _TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,6 +83,15 @@ def tail(text: str, limit: int = 5000) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
+def merge_trace_metadata(*items: dict[str, Any] | None) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for item in items:
+        if not item:
+            continue
+        merged.update(item)
+    return merged or None
+
+
 def shared_cache_root() -> Path:
     if os.environ.get("XDG_CACHE_HOME"):
         return Path(os.environ["XDG_CACHE_HOME"]) / "meridian-evo-bench"
@@ -122,8 +133,44 @@ def rel(root: Path, path: Path) -> str:
         return str(path)
 
 
-def pnpm_trace_metadata(root: Path, package_root: Path) -> dict[str, Any]:
+def command_trace_metadata(
+    root: Path,
+    task_id: str,
+    command: str,
+    command_cwd: Path,
+    *,
+    target_seconds: float,
+    timeout: int,
+) -> dict[str, Any]:
     return {
+        "execution": {
+            "kind": "shell_command_contract",
+            "task_id": task_id,
+            "cwd": rel(root, command_cwd),
+            "timeout_seconds": timeout,
+            "target_seconds": target_seconds,
+            "command": command,
+            "score_policy": {
+                "passed_returncode_required": 0,
+                "pass_score_floor": PASS_SCORE_FLOOR,
+                "speed_score_weight": SPEED_SCORE_WEIGHT,
+                "speed_bonus_target_seconds": target_seconds,
+                "failed_command_score": 0.0,
+            },
+        }
+    }
+
+
+def pnpm_trace_metadata(root: Path, package_root: Path, validation_commands: list[str]) -> dict[str, Any]:
+    return {
+        "validation": {
+            "kind": "pnpm_frozen_build_pipeline",
+            "package_root": rel(root, package_root),
+            "required_phases": ["install", *validation_commands],
+            "install_command": "pnpm install --store-dir $PNPM_STORE_DIR --frozen-lockfile --prefer-offline --ignore-scripts",
+            "validation_commands": validation_commands,
+            "cache_note": "The shared pnpm store may change elapsed time, but the install and validation commands still run.",
+        },
         "cache": {
             "kind": "pnpm_store",
             "store_dir": str(shared_cache_root() / "pnpm-store-v10"),
@@ -144,6 +191,12 @@ def pnpm_trace_metadata(root: Path, package_root: Path) -> dict[str, Any]:
 def cargo_trace_metadata(root: Path) -> dict[str, Any]:
     cache_root = shared_cache_root()
     return {
+        "validation": {
+            "kind": "cargo_test_pipeline",
+            "manifest": rel(root, root / "engine" / "Cargo.toml"),
+            "validation_commands": ["cargo test --quiet --manifest-path engine/Cargo.toml"],
+            "cache_note": "The keyed target dir may change elapsed time, but cargo still compiles/tests the engine crate.",
+        },
         "cache": {
             "kind": "cargo_target",
             "target_dir_pattern": str(cache_root / "cargo-target-<short-key>"),
@@ -160,6 +213,16 @@ def cargo_trace_metadata(root: Path) -> dict[str, Any]:
 def python_sim_trace_metadata(root: Path) -> dict[str, Any]:
     cache_root = python_cache_root()
     return {
+        "validation": {
+            "kind": "python_sim_pytest_pipeline",
+            "package_root": "sim",
+            "validation_commands": [
+                "python3 -m venv when dependency cache marker is missing",
+                "python3 -m pip install pytest dependencies when marker is missing",
+                "python3 -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q",
+            ],
+            "cache_note": "The keyed dependency venv may skip reinstalling wheels, but pytest still runs.",
+        },
         "cache": {
             "kind": "python_sim_dependency_venv",
             "venv_pattern": str(cache_root / "python-sim-venv-<py-tag>-<short-key>"),
@@ -197,6 +260,17 @@ def run_command(
     command_cwd = cwd or root
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     started = time.perf_counter()
+    full_trace_metadata = merge_trace_metadata(
+        command_trace_metadata(
+            root,
+            task_id,
+            command,
+            command_cwd,
+            target_seconds=target_seconds,
+            timeout=timeout,
+        ),
+        trace_metadata,
+    )
     try:
         result = subprocess.run(
             command,
@@ -210,7 +284,7 @@ def run_command(
         elapsed = time.perf_counter() - started
         passed = result.returncode == 0
         time_score = min(1.0, target_seconds / max(elapsed, 0.001))
-        score = (0.82 + 0.18 * time_score) if passed else 0.0
+        score = (PASS_SCORE_FLOOR + SPEED_SCORE_WEIGHT * time_score) if passed else 0.0
         log_task(
             task_id,
             score,
@@ -230,7 +304,7 @@ def run_command(
                 "shell": True,
                 "command": command,
             },
-            trace_metadata=trace_metadata,
+            trace_metadata=full_trace_metadata,
         )
         return score
     except subprocess.TimeoutExpired as exc:
@@ -253,7 +327,7 @@ def run_command(
                 "shell": True,
                 "command": command,
             },
-            trace_metadata=trace_metadata,
+            trace_metadata=full_trace_metadata,
         )
         return 0.0
 
@@ -439,6 +513,8 @@ def task_python_compile(root: Path) -> float:
             "validation": {
                 "kind": "python_compileall",
                 "paths": ["sim/sim", "services/ap2/src"],
+                "validation_commands": ["python3 -m compileall -q sim/sim services/ap2/src"],
+                "cache_note": "No dependency cache is used; this is a direct syntax/import-bytecode compile check.",
             }
         },
     )
@@ -492,7 +568,11 @@ def task_service_builds(root: Path) -> float:
                 cwd=root / "services" / service,
                 timeout=180,
                 target_seconds=target_seconds,
-                trace_metadata=pnpm_trace_metadata(root, root / "services" / service),
+                trace_metadata=pnpm_trace_metadata(
+                    root,
+                    root / "services" / service,
+                    ["pnpm run build"],
+                ),
             )
         )
     score = sum(scores) / len(scores)
@@ -513,7 +593,11 @@ def task_web_check(root: Path) -> float:
         cwd=root / "web",
         timeout=240,
         target_seconds=70,
-        trace_metadata=pnpm_trace_metadata(root, root / "web"),
+        trace_metadata=pnpm_trace_metadata(
+            root,
+            root / "web",
+            ["pnpm run check", "pnpm run build"],
+        ),
     )
 
 
