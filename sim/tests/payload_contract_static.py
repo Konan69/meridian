@@ -93,6 +93,24 @@ def assert_no_payload_doc_drift() -> None:
         f"{', '.join(missing_events)}"
     )
 
+    required_phrases = (
+        "ref/mirofish",
+        "ref/deps/*",
+        "OASIS",
+        "CAMEL",
+        "reference rails",
+        "unknown fields",
+        "python3 sim/tests/payload_contract_static.py",
+    )
+    missing_phrases = sorted(
+        phrase for phrase in required_phrases
+        if phrase not in contract
+    )
+    assert missing_phrases == [], (
+        "reference/maintenance guidance missing from payload contract: "
+        f"{', '.join(missing_phrases)}"
+    )
+
 
 if __name__ == "__main__":
     assert_no_payload_doc_drift()

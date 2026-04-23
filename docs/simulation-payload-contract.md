@@ -20,6 +20,22 @@ not the product surface.
   fields may pass through the raw `SimEvent` timeline even when a normalized
   helper projects only the stable core fields.
 
+## Reference Rail Boundary
+
+- `ref/mirofish`: borrow workflow shape only. In Meridian that means seeded
+  worlds, visible graph scaffolds, agent personas, action streams, explicit
+  memory, and trace-grounded reports/chat.
+- `ref/deps/*`: use AP2, ATXP, x402, CDP, MPPX, Stripe, and similar protocol
+  repos to keep simulated settlement vocabulary, readiness checks, fees,
+  latency, domains, and failure modes plausible.
+- OASIS and CAMEL: use as multi-agent economy references for role design,
+  interaction loops, market pressure, memory, and evaluation ideas.
+- Live integrations constrain the simulation. They are not the product goal.
+  Payloads should explain agent/economy behavior first and SDK details only
+  when they affect settlement realism.
+- Do not paste reference source into docs. Summarize the adapted rule and link
+  it to Meridian fields or stream events.
+
 ## Stream Envelope
 
 Each emitted line is one JSON object with `type` and `timestamp`. Round-scoped
@@ -129,3 +145,14 @@ mixed stream data before updating stores:
 
 When adding a sim payload field, update this file only if the UI needs a typed
 projection. Raw events can carry extra fields without a helper change.
+
+## Maintenance Checklist
+
+- New dataclass field: update the relevant `AgentMemoryEvent`,
+  `EconomyWorldEvent`, `RoundSummary`, or `SimulationResult` field list.
+- New emitted `type`: add it under Stream Envelope and decide whether the UI
+  can keep it as raw `SimEvent` or needs a `web/src/lib/simStream.ts` helper.
+- New `world_event.event_type`: document it if reports, timelines, or chat use
+  it as durable context.
+- New frontend helper export: add it under Frontend Stream Helpers.
+- After docs changes, run `python3 sim/tests/payload_contract_static.py`.
