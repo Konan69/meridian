@@ -206,6 +206,19 @@ def task_static_contracts(root: Path) -> float:
         failures,
     )
     require_contains(
+        root / "services/atxp/src/cdpBaseSepoliaAccount.ts",
+        [
+            "ATXP_CDP_TREASURY_ADDRESS",
+            "ATXP_CDP_TREASURY_NATIVE_TOPUP",
+            "ATXP_CDP_TREASURY_USDC_TOPUP_UNITS",
+            "tryTreasuryTopUp",
+            '"/evm/transfer-native"',
+            '"/evm/transfer-usdc"',
+            "falling back to faucet",
+        ],
+        failures,
+    )
+    require_contains(
         root / "services/atxp/src/index.ts",
         [
             'app.get("/health"',

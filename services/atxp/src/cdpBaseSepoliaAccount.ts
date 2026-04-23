@@ -51,6 +51,8 @@ const USDC_CONTRACT_ADDRESS_BASE_SEPOLIA =
   "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER =
   USDC_CONTRACT_ADDRESS_BASE_SEPOLIA.toLowerCase();
+const DEFAULT_TREASURY_NATIVE_TOPUP_ETH = "0.00002";
+const DEFAULT_TREASURY_USDC_TOPUP_UNITS = 1_000_000n;
 
 function toBase64Url(data: string): string {
   return Buffer.from(data)
@@ -60,82 +62,149 @@ function toBase64Url(data: string): string {
     .replaceAll("=", "");
 }
 
+function envBigInt(name: string, fallback: bigint): bigint {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    return fallback;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return fallback;
+  }
+}
+
 class CdpBaseSepoliaPaymentMaker implements PaymentMaker {
   constructor(
     private readonly serviceUrl: string,
     private readonly getAddress: () => Promise<`0x${string}`>,
   ) {}
 
-  private async ensureFunded(minAmountUnits: bigint): Promise<void> {
-    const address = await this.getAddress();
-    let lastSeenUsdc = 0n;
-
-    const balancesResponse = await fetch(
+  private async getUsdcBalance(address: `0x${string}`): Promise<bigint> {
+    const response = await fetch(
       `${this.serviceUrl}/evm/token-balances/${address}`,
     );
-    const balancesBody = (await balancesResponse.json()) as CdpBalancesResponse & {
+    const body = (await response.json()) as CdpBalancesResponse & {
       error?: string;
     };
-    if (
-      balancesResponse.ok &&
-      balancesBody.balances.some(
+    if (!response.ok || !Array.isArray(body.balances)) {
+      throw new Error(body.error ?? "CDP token balance lookup failed");
+    }
+
+    return body.balances
+      .filter(
         (balance) =>
           balance.contractAddress.toLowerCase() ===
-            USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER &&
-          BigInt(balance.amount) >= minAmountUnits,
+          USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER,
       )
-    ) {
-      return;
-    }
-    const existingUsdc = balancesBody.balances.find(
-      (balance) =>
-        balance.contractAddress.toLowerCase() === USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER,
-    );
-    if (existingUsdc) {
-      lastSeenUsdc = BigInt(existingUsdc.amount);
-    }
+      .reduce((sum, balance) => sum + BigInt(balance.amount), 0n);
+  }
 
-    for (const token of ["eth", "usdc"] as const) {
-      await fetch(`${this.serviceUrl}/evm/request-faucet`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          address,
-          token,
-        }),
-      });
-    }
-
-    for (let attempt = 0; attempt < 15; attempt += 1) {
-      const response = await fetch(`${this.serviceUrl}/evm/token-balances/${address}`);
-      const body = (await response.json()) as CdpBalancesResponse & {
-        error?: string;
-      };
-      if (
-        response.ok &&
-        body.balances.some(
-          (balance) =>
-            balance.contractAddress.toLowerCase() ===
-              USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER &&
-            BigInt(balance.amount) >= minAmountUnits,
-        )
-      ) {
-        return;
-      }
-      const usdcBalance = body.balances.find(
-        (balance) =>
-          balance.contractAddress.toLowerCase() === USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER,
-      );
-      if (usdcBalance) {
-        lastSeenUsdc = BigInt(usdcBalance.amount);
+  private async waitForUsdcBalance(
+    address: `0x${string}`,
+    minAmountUnits: bigint,
+    attempts: number,
+    lastSeenUsdc: bigint,
+  ): Promise<bigint> {
+    let latest = lastSeenUsdc;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        latest = await this.getUsdcBalance(address);
+        if (latest >= minAmountUnits) {
+          return latest;
+        }
+      } catch {
+        // Keep polling; transient RPC/CDP failures are common while funds settle.
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
+    return latest;
+  }
+
+  private async postCdp(path: string, payload: Record<string, unknown>): Promise<void> {
+    const response = await fetch(`${this.serviceUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    if (!response.ok) {
+      throw new Error(body.error ?? `${path} returned ${response.status}`);
+    }
+  }
+
+  private async tryTreasuryTopUp(
+    toAddress: `0x${string}`,
+    minAmountUnits: bigint,
+  ): Promise<boolean> {
+    const fromAddress = process.env.ATXP_CDP_TREASURY_ADDRESS?.trim();
+    if (!fromAddress) {
+      return false;
+    }
+
+    const amountUnits = [
+      minAmountUnits,
+      envBigInt("ATXP_CDP_TREASURY_USDC_TOPUP_UNITS", DEFAULT_TREASURY_USDC_TOPUP_UNITS),
+    ].reduce((max, value) => (value > max ? value : max), 0n);
+    const nativeAmount =
+      process.env.ATXP_CDP_TREASURY_NATIVE_TOPUP?.trim() ||
+      DEFAULT_TREASURY_NATIVE_TOPUP_ETH;
+
+    try {
+      await this.postCdp("/evm/transfer-native", {
+        fromAddress,
+        toAddress,
+        amount: nativeAmount,
+      });
+      await this.postCdp("/evm/transfer-usdc", {
+        fromAddress,
+        toAddress,
+        amountUnits: amountUnits.toString(),
+      });
+      return true;
+    } catch (error) {
+      console.warn(
+        `[cdp-base] treasury top-up failed; falling back to faucet: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }
+
+  private async requestFaucet(address: `0x${string}`): Promise<void> {
+    for (const token of ["eth", "usdc"] as const) {
+      await this.postCdp("/evm/request-faucet", {
+        address,
+        token,
+      });
+    }
+  }
+
+  private async ensureFunded(minAmountUnits: bigint): Promise<void> {
+    const address = await this.getAddress();
+    let lastSeenUsdc = await this.getUsdcBalance(address);
+
+    if (lastSeenUsdc >= minAmountUnits) {
+      return;
+    }
+
+    const usedTreasury = await this.tryTreasuryTopUp(address, minAmountUnits);
+    if (usedTreasury) {
+      lastSeenUsdc = await this.waitForUsdcBalance(address, minAmountUnits, 10, lastSeenUsdc);
+      if (lastSeenUsdc >= minAmountUnits) {
+        return;
+      }
+    }
+
+    await this.requestFaucet(address);
+    lastSeenUsdc = await this.waitForUsdcBalance(address, minAmountUnits, 15, lastSeenUsdc);
+    if (lastSeenUsdc >= minAmountUnits) {
+      return;
+    }
 
     throw new Error(
-      `CDP Base payer still underfunded after faucet requests: ${lastSeenUsdc.toString()} < ${minAmountUnits.toString()}`,
+      `CDP Base payer still underfunded after ${usedTreasury ? "treasury top-up and " : ""}faucet requests: ${lastSeenUsdc.toString()} < ${minAmountUnits.toString()}`,
     );
   }
 

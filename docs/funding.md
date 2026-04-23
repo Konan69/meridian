@@ -113,6 +113,16 @@ curl -X POST http://localhost:3030/evm/transfer-native \
 Both helpers are intentionally scoped to Base Sepolia testnet. Use
 `/evm/send-transaction` only when you explicitly need a lower-level transaction.
 
+For self-sustaining `ATXP_PAYER_MODE=cdp-base` runs, set
+`ATXP_CDP_TREASURY_ADDRESS` to a funded CDP server-wallet address. The ATXP
+CDP payer path will try treasury ETH/USDC top-ups before falling back to CDP
+faucet requests. The optional knobs are:
+
+```bash
+ATXP_CDP_TREASURY_NATIVE_TOPUP=0.00002
+ATXP_CDP_TREASURY_USDC_TOPUP_UNITS=1000000
+```
+
 Official CDP docs currently state:
 
 - Base Sepolia faucet support is available programmatically
