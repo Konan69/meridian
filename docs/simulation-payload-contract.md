@@ -129,6 +129,21 @@ Fields: `config`, `rounds`, `protocol_summaries`, `trust_summary`,
 `route_pressure_summary`, `float_summary`, `treasury_distribution`,
 `treasury_posture_summary`, `rail_pnl_history`.
 
+## Accounting Units
+
+- `route_usage` and `route_usage_summary` are cents of reserved payment
+  principal by route, not transaction counts. Use them for route pressure,
+  capacity, and settlement-volume explanations.
+- `route_mix` is the per-protocol count of attempted executions by route. Use
+  it for rail preference and adoption explanations, not dollar volume.
+- `rail_pnl_history` stores one operator-margin snapshot per protocol per
+  completed round. The final value should match
+  `ecosystem_summary.<protocol>.operator_margin_cents`.
+- `total_volume_cents` and `protocol_summaries.<protocol>.total_volume_cents`
+  count successful settled principal. Failed attempts can still affect
+  `route_usage`, `route_mix`, reliability, and operator margin through
+  infrastructure cost.
+
 ## Frontend Stream Helpers
 
 `web/src/lib/simStream.ts` is the browser-side contract adapter. It normalizes
