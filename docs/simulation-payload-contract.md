@@ -139,7 +139,8 @@ mixed stream data before updating stores:
 - Memory/world rows: `normalizeAgentMemoryEvent`,
   `normalizeAgentMemoryEvents`, `normalizeWorldEvent`, `normalizeWorldEvents`.
 - Summaries: `normalizeTrustSummary`, `normalizeProtocolSummaries`,
-  `normalizeEcosystemSummary`, `normalizeBalanceSnapshots`.
+  `normalizeEcosystemSummary`, `normalizeBalanceSnapshots`,
+  `normalizeRoutePressureSummaries`, `normalizeTreasuryPostureSummaries`.
 - Numeric records: `normalizeNumberRecord`, `normalizeNestedNumberRecord`,
   `normalizeNumberArrayRecord`, `numberFrom`.
 
