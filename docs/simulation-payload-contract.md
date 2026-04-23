@@ -85,6 +85,19 @@ Memory and world events:
 - `treasury_rebalance`: merchant treasury recycling success, also mirrored as a
   `world_event`.
 
+Merchant switch payloads are durable evidence, not just timeline copy.
+`merchant_switch` and `world_event.event_type=merchant_protocol_mix_changed`
+carry `merchant_id`, `merchant`, `action`, `protocol`, `round`, `reason`, and
+`evidence`.
+
+`reason` is `ecosystem_evidence` when trust, memory, route pressure, treasury
+posture, reliability, or margin drives the switch. It is `rail_economics` for
+legacy stochastic market churn. Adoption evidence includes `adoption_score`,
+`avg_trust`, `recent_memory_signal`, `route_pressure`, `treasury_pressure`, and
+`serves_preferred_domain`. Removal evidence includes `removal_risk`,
+`avg_trust`, `recent_memory_signal`, `route_pressure`, `reliability`, and
+`operator_margin_cents`.
+
 ## Dataclass Payloads
 
 ### `AgentMemoryEvent`

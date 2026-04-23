@@ -31,6 +31,7 @@ def code_tokens(text: str) -> set[str]:
 def assert_no_payload_doc_drift() -> None:
     contract = (ROOT / "docs/simulation-payload-contract.md").read_text()
     architecture = (ROOT / "docs/simulation-architecture.md").read_text()
+    engine_source = (ROOT / "sim/sim/engine.py").read_text()
     helper_source = (ROOT / "web/src/lib/simStream.ts").read_text()
     stream_contract_source = (ROOT / "web/src/lib/simStream.contract.ts").read_text()
     timeline_source = (ROOT / "web/src/lib/components/Timeline.svelte").read_text()
@@ -112,6 +113,58 @@ def assert_no_payload_doc_drift() -> None:
     assert missing_phrases == [], (
         "reference/maintenance guidance missing from payload contract: "
         f"{', '.join(missing_phrases)}"
+    )
+
+    merchant_switch_doc_tokens = {
+        "merchant_protocol_mix_changed",
+        "merchant_id",
+        "merchant",
+        "action",
+        "protocol",
+        "round",
+        "reason",
+        "evidence",
+        "ecosystem_evidence",
+        "rail_economics",
+        "adoption_score",
+        "removal_risk",
+        "avg_trust",
+        "recent_memory_signal",
+        "route_pressure",
+        "treasury_pressure",
+        "serves_preferred_domain",
+        "reliability",
+        "operator_margin_cents",
+    }
+    missing_switch_doc_tokens = sorted(merchant_switch_doc_tokens - tokens)
+    assert missing_switch_doc_tokens == [], (
+        "merchant switch evidence fields missing from payload contract: "
+        f"{', '.join(missing_switch_doc_tokens)}"
+    )
+
+    merchant_switch_source_literals = {
+        '"merchant_protocol_mix_changed"',
+        '"reason"',
+        '"evidence"',
+        '"ecosystem_evidence"',
+        '"rail_economics"',
+        '"adoption_score"',
+        '"removal_risk"',
+        '"avg_trust"',
+        '"recent_memory_signal"',
+        '"route_pressure"',
+        '"treasury_pressure"',
+        '"serves_preferred_domain"',
+        '"reliability"',
+        '"operator_margin_cents"',
+    }
+    missing_switch_source_literals = sorted(
+        literal for literal in merchant_switch_source_literals
+        if literal not in engine_source
+    )
+    assert missing_switch_source_literals == [], (
+        "merchant switch evidence fields missing from engine payload: "
+        f"{', '.join(missing_switch_source_literals)}"
     )
 
     assert "timelineMetaItems(evt)" in timeline_source
