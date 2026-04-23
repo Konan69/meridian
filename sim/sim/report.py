@@ -173,6 +173,71 @@ class ReportGenerator:
             f"Route pressure events: {len(route_events)}",
         ]
 
+        if self.result.route_pressure_summary:
+            peak_route = max(
+                self.result.route_pressure_summary,
+                key=lambda route: float(route.get("max_capacity_ratio", 0)),
+            )
+            pressure = float(peak_route.get("max_capacity_ratio", 0))
+            if pressure >= 1.0:
+                lines.append(
+                    f"Readout: {peak_route['route_id']} is over round capacity; self-sustainability depends on rerouting or more float."
+                )
+            elif pressure >= 0.7:
+                lines.append(
+                    f"Readout: {peak_route['route_id']} is nearing capacity, so route pressure can start shaping protocol choice."
+                )
+            else:
+                lines.append(
+                    f"Readout: route capacity is not the main constraint; treasury mix, margin, and trust carry more signal."
+                )
+
+        if self.result.treasury_posture_summary:
+            tightest = min(
+                self.result.treasury_posture_summary,
+                key=lambda row: float(row.get("min_preferred_ratio", 1.0)),
+            )
+            lines.append(
+                f"Merchant treasury watch: {tightest['merchant']} reached "
+                f"{float(tightest.get('min_preferred_ratio', 0)) * 100:.1f}% in preferred "
+                f"{tightest['preferred_domain']} with "
+                f"{_cents_to_dollars(int(tightest.get('max_preferred_shortfall_cents', 0)))} max shortfall."
+            )
+
+        if self.result.trust_summary:
+            trust_rows = [
+                (name, trust)
+                for name, trust in self.result.trust_summary.items()
+                if isinstance(trust, dict)
+            ]
+            if trust_rows:
+                trusted = max(trust_rows, key=lambda row: float(row[1].get("avg", 0)))
+                fragile = min(trust_rows, key=lambda row: float(row[1].get("avg", 0)))
+                lines.append(
+                    f"Agent trust anchor: {trusted[0].upper()} leads at avg "
+                    f"{float(trusted[1].get('avg', 0)):.2f}; {fragile[0].upper()} is weakest at "
+                    f"{float(fragile[1].get('avg', 0)):.2f}."
+                )
+
+        if self.result.agent_memory_log:
+            driver_totals: dict[str, float] = {}
+            driver_counts: dict[str, int] = {}
+            for memory in self.result.agent_memory_log:
+                driver = memory.trust_driver or memory.outcome or "unclassified"
+                driver_totals[driver] = driver_totals.get(driver, 0.0) + memory.sentiment_delta
+                driver_counts[driver] = driver_counts.get(driver, 0) + 1
+            drivers = sorted(
+                driver_totals,
+                key=lambda driver: (abs(driver_totals[driver]), driver_counts[driver]),
+                reverse=True,
+            )
+            if drivers:
+                driver = drivers[0]
+                lines.append(
+                    f"Memory driver: {driver.replace('_', ' ')} produced "
+                    f"{driver_counts[driver]} memories with net trust {driver_totals[driver]:+.2f}."
+                )
+
         if self.result.treasury_posture_summary:
             lines.append("")
             lines.append("Treasury posture watchlist:")

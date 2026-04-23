@@ -10,6 +10,7 @@ from sim.types import (
     AgentRole,
     EconomyWorldEvent,
     Protocol,
+    ProtocolEcosystemState,
     SimulationConfig,
     SimulationResult,
 )
@@ -504,6 +505,46 @@ def test_self_sustainability_report_section():
         protocols=[Protocol.X402, Protocol.ATXP],
     )
     result = SimulationResult(config=config)
+    result.trust_summary = {
+        "x402": {"avg": 0.74, "min": 0.63, "max": 0.86},
+        "atxp": {"avg": 0.68, "min": 0.59, "max": 0.78},
+    }
+    result.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_0001",
+            agent_name="Alice_1",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=-0.08,
+            trust_before=0.74,
+            trust_after=0.66,
+            outcome="failure",
+            trust_driver="failed_under_route_pressure",
+            ecosystem_pressure=0.8,
+            amount_cents=100,
+            reason="route pressure raised settlement risk",
+        )
+    ]
+    result.ecosystem_summary = {
+        "x402": ProtocolEcosystemState(
+            protocol=Protocol.X402,
+            merchant_count=2,
+            fee_revenue_cents=850,
+            infrastructure_cost_cents=400,
+            operator_margin_cents=450,
+            scale_pressure=0.8,
+        ),
+        "atxp": ProtocolEcosystemState(
+            protocol=Protocol.ATXP,
+            merchant_count=1,
+            fee_revenue_cents=300,
+            infrastructure_cost_cents=500,
+            operator_margin_cents=-200,
+            scale_pressure=0.1,
+        ),
+    }
     result.route_pressure_summary = [
         {
             "route_id": "base_direct_usdc",
@@ -561,6 +602,9 @@ def test_self_sustainability_report_section():
     assert "merchant_test" in signals["content"]
     assert "base_direct_usdc" in signals["content"]
     assert "$20,000.00" in signals["content"]
+    assert "X402 leads at avg 0.74" in signals["content"]
+    assert "failed under route pressure" in signals["content"]
+    assert "margin=$4.50" in signals["content"]
 
 
 # ------------------------------------------------------------------
