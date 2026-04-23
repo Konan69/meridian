@@ -81,6 +81,9 @@ three; merchant switch reports use pressure drag and sustainability lift when
 route evidence changes adoption. Together they explain self-sustainable
 protocol evolution: protocols gain or lose usage because simulated merchants
 and agents see route capacity, treasury posture, margin, and trust changing.
+Compact driver token vocabulary is `score`, `pressure`, and `sustain`; use
+those labels in both frontend route-score displays and grouped merchant switch
+report rows.
 
 ## Stream Contract
 
@@ -119,7 +122,10 @@ Current protected surfaces checkpoint:
 Metadata label: `protected_surfaces_checkpoint`, version: 1. This is a compact
 identifier in `benchmark_whole_app.py --list-tasks` gate guidance for workers
 that need to preserve the docs-defined protected-surface set without parsing
-this section.
+this section. The checkpoint also links to `focused_gate_duplicate_validation_cost`
+through `gate_guidance.duplicate_validation` and
+`trace_metadata.duplicate_validation`, so the expected focused service gate
+rerun cost travels with the current protected-surface handoff.
 
 - `static_contracts` / `whole_app_contract_gate`: static runtime, funding,
   trace metadata, docs, and Python compile contracts. Validate with

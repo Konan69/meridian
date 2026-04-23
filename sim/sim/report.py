@@ -342,6 +342,10 @@ class ReportGenerator:
             event for event in self.result.world_events
             if event.event_type == "route_pressure"
         ]
+        merchant_switch_events = [
+            event for event in self.result.world_events
+            if event.event_type in {"merchant_protocol_mix_changed", "merchant_switch"}
+        ]
         has_margin = any(
             state.operator_margin_cents or state.fee_revenue_cents or state.infrastructure_cost_cents
             for state in self.result.ecosystem_summary.values()
@@ -351,6 +355,7 @@ class ReportGenerator:
             and not treasury_failed
             and not treasury_posture_events
             and not route_events
+            and not merchant_switch_events
             and not self.result.treasury_posture_summary
             and not self.result.route_pressure_summary
             and not has_margin
@@ -365,11 +370,33 @@ class ReportGenerator:
             f"Treasury rebalances: {len(treasury_ok)} succeeded, {len(treasury_failed)} failed",
             f"Treasury posture events: {len(treasury_posture_events)}",
             f"Route pressure events: {len(route_events)}",
+            f"Merchant protocol changes: {len(merchant_switch_events)}",
         ]
         route_pressure_rows = (
             self.result.route_pressure_summary
             or _route_pressure_rows_from_events(route_events)
         )
+
+        if merchant_switch_events:
+            latest_switch = sorted(
+                merchant_switch_events,
+                key=lambda event: (event.round_num, event.summary),
+            )[-1]
+            data = latest_switch.data if isinstance(latest_switch.data, dict) else {}
+            merchant = str(
+                data.get("merchant")
+                or data.get("merchant_id")
+                or latest_switch.actor_id
+                or "unknown merchant"
+            )
+            action = str(data.get("action") or "changed")
+            protocol = protocol_display_label(data.get("protocol") or latest_switch.protocol)
+            reason = str(data.get("reason") or "unknown")
+            lines.append(
+                f"Merchant adaptation: R{latest_switch.round_num} latest of "
+                f"{len(merchant_switch_events)} protocol changes: {merchant} {action} "
+                f"{protocol} after {reason.replace('_', ' ')}."
+            )
 
         if route_pressure_rows:
             peak_route = sorted(

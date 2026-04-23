@@ -121,6 +121,7 @@ FOCUSED_GATE_DUPLICATE_VALIDATION = [
         "reason": "The full benchmark already runs CDP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited treasury transfer semantics.",
     },
 ]
+FOCUSED_GATE_DUPLICATE_VALIDATION_KIND = "focused_gate_duplicate_validation_cost"
 PROTECTED_SURFACES_CHECKPOINT = {
     "label": "protected_surfaces_checkpoint",
     "version": 1,
@@ -137,6 +138,18 @@ PROTECTED_SURFACES_CHECKPOINT = {
     "related_gate_names": [
         *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
     ],
+    "duplicate_validation_cost": {
+        "kind": FOCUSED_GATE_DUPLICATE_VALIDATION_KIND,
+        "metadata_paths": [
+            "gate_guidance.duplicate_validation",
+            "trace_metadata.duplicate_validation",
+        ],
+        "benchmark_aggregate_task_id": "service_offline_protocol_tests",
+        "focused_task_ids": [
+            entry["focused_task_id"] for entry in FOCUSED_GATE_DUPLICATE_VALIDATION
+        ],
+        "note": "Checkpoint includes the expected rerun cost for inherited focused service gates.",
+    },
     "protects": "Compact label for the current docs-defined checkpoint of inherited protected surfaces.",
 }
 LIST_TASKS_METADATA_SCHEMA_VERSION = 1
@@ -271,7 +284,7 @@ def inherited_gate_guidance_metadata() -> dict[str, Any]:
 
 def focused_gate_duplicate_validation_metadata() -> dict[str, Any]:
     return {
-        "kind": "focused_gate_duplicate_validation_cost",
+        "kind": FOCUSED_GATE_DUPLICATE_VALIDATION_KIND,
         "source_of_truth": "evo run executes the benchmark profile before inherited focused gates",
         "benchmark_aggregate_task_id": "service_offline_protocol_tests",
         "default_profile_changed": False,
@@ -283,6 +296,16 @@ def focused_gate_duplicate_validation_metadata() -> dict[str, Any]:
 
 def inherited_gate_names() -> list[str]:
     return [gate["name"] for gate in INHERITED_GATE_GUIDANCE]
+
+
+def duplicate_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    return sorted(duplicates)
 
 
 def service_readme_paths() -> list[str]:
@@ -1012,7 +1035,9 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
             [
                 "## Route-Score Rationale",
                 "self-sustainability bias",
+                "Compact driver token vocabulary",
                 *ROUTE_SCORE_RATIONALE_FIELDS,
+                *ROUTE_SCORE_DRIVER_TOKEN_LABELS,
             ],
         ),
         (
@@ -1146,6 +1171,52 @@ def check_inherited_gate_guidance_contract(
     }
 
 
+def check_protected_checkpoint_gate_subset_contract(
+    failures: list[str],
+) -> dict[str, Any]:
+    checkpoint_gate_names = list(PROTECTED_SURFACES_CHECKPOINT["related_gate_names"])
+    guidance_gate_names = inherited_gate_names()
+    guidance_gate_name_set = set(guidance_gate_names)
+    checkpoint_gate_name_set = set(checkpoint_gate_names)
+    extra_checkpoint_gate_names = sorted(
+        checkpoint_gate_name_set - guidance_gate_name_set
+    )
+    missing_checkpoint_gate_names = sorted(
+        guidance_gate_name_set - checkpoint_gate_name_set
+    )
+    duplicate_checkpoint_gate_names = duplicate_values(checkpoint_gate_names)
+    duplicate_guidance_gate_names = duplicate_values(guidance_gate_names)
+
+    for gate_name in extra_checkpoint_gate_names:
+        failures.append(
+            "protected_surfaces_checkpoint.related_gate_names: "
+            f"{gate_name!r} is not listed in INHERITED_GATE_GUIDANCE"
+        )
+    for gate_name in duplicate_checkpoint_gate_names:
+        failures.append(
+            "protected_surfaces_checkpoint.related_gate_names: "
+            f"duplicate gate name {gate_name!r}"
+        )
+    for gate_name in duplicate_guidance_gate_names:
+        failures.append(f"INHERITED_GATE_GUIDANCE: duplicate gate name {gate_name!r}")
+
+    return {
+        "kind": "protected_checkpoint_gate_subset_contract",
+        "source": "PROTECTED_SURFACES_CHECKPOINT.related_gate_names",
+        "subset_of": "INHERITED_GATE_GUIDANCE[*].name",
+        "checkpoint_gate_names": checkpoint_gate_names,
+        "guidance_gate_names": guidance_gate_names,
+        "checkpoint_gate_count": len(checkpoint_gate_names),
+        "guidance_gate_count": len(guidance_gate_names),
+        "extra_checkpoint_gate_names": extra_checkpoint_gate_names,
+        "missing_checkpoint_gate_names": missing_checkpoint_gate_names,
+        "duplicate_checkpoint_gate_names": duplicate_checkpoint_gate_names,
+        "duplicate_guidance_gate_names": duplicate_guidance_gate_names,
+        "subset_valid": not extra_checkpoint_gate_names,
+        "protects": "The protected checkpoint cannot grow stale manual gate names or duplicate focused gate entries outside inherited gate guidance.",
+    }
+
+
 def list_tasks_payload() -> dict[str, Any]:
     return {
         "tasks": task_catalog(),
@@ -1248,6 +1319,7 @@ def static_contract_trace_metadata(
     raw_route_pressure_report_contract: dict[str, Any],
     route_score_rationale_contract: dict[str, Any],
     inherited_gate_guidance_contract: dict[str, Any],
+    protected_checkpoint_gate_subset_contract: dict[str, Any],
     list_tasks_metadata_schema_contract: dict[str, Any],
 ) -> dict[str, Any]:
     needles_by_path = {path: len(needles) for path, needles in contains_contracts}
@@ -1370,6 +1442,7 @@ def static_contract_trace_metadata(
                 raw_route_pressure_report_contract,
                 route_score_rationale_contract,
                 inherited_gate_guidance_contract,
+                protected_checkpoint_gate_subset_contract,
                 list_tasks_metadata_schema_contract,
             ],
             "service_offline_coverage_files": service_offline_coverage_files,
@@ -1543,6 +1616,9 @@ def task_static_contracts(root: Path) -> float:
     )
     inherited_gate_guidance_contract = check_inherited_gate_guidance_contract(
         root, failures
+    )
+    protected_checkpoint_gate_subset_contract = (
+        check_protected_checkpoint_gate_subset_contract(failures)
     )
     list_tasks_metadata_schema_contract = check_list_tasks_metadata_schema_contract(
         root, failures
@@ -1756,6 +1832,7 @@ def task_static_contracts(root: Path) -> float:
             raw_route_pressure_report_contract,
             route_score_rationale_contract,
             inherited_gate_guidance_contract,
+            protected_checkpoint_gate_subset_contract,
             list_tasks_metadata_schema_contract,
         ),
     )

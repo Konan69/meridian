@@ -725,6 +725,47 @@ def test_self_sustainability_report_section():
     assert "margin=$4.50" in signals["content"]
 
 
+def test_self_sustainability_report_names_merchant_protocol_adaptation():
+    """Report treats merchant protocol churn as sustainability feedback."""
+    config = SimulationConfig(
+        num_agents=1,
+        num_rounds=1,
+        protocols=[Protocol.AP2, Protocol.ATXP],
+    )
+    result = SimulationResult(config=config)
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=3,
+            event_type="merchant_protocol_mix_changed",
+            summary="merchant_test added ATXP after observing rail economics.",
+            actor_id="merchant_test",
+            protocol="atxp",
+            data={
+                "merchant_id": "merchant_test",
+                "merchant": "merchant_test",
+                "action": "added",
+                "protocol": "atxp",
+                "reason": "rail_economics",
+                "evidence": {
+                    "operator_margin_cents": 225,
+                    "avg_trust": 0.71,
+                },
+            },
+        )
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    signals = next((s for s in sections if s["title"] == "Self-Sustainability Signals"), None)
+
+    assert signals is not None
+    assert signals["status"] == "ok"
+    assert "Merchant protocol changes: 1" in signals["content"]
+    assert (
+        "Merchant adaptation: R3 latest of 1 protocol changes: merchant_test "
+        "added ATXP after rail economics."
+    ) in signals["content"]
+
+
 def test_self_sustainability_report_explains_rebalance_failure_event():
     """Report names the no-route cause from treasury failure world events."""
     config = SimulationConfig(
