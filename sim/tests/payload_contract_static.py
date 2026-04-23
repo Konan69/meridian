@@ -75,8 +75,8 @@ def assert_no_payload_doc_drift() -> None:
             (contract, "Economy Observability Surface"),
             (contract, "Route Ledger"),
             (contract, "Reserved Principal"),
-            (contract, "Merchant Switches"),
-            (contract, "Reason Evidence"),
+            (contract, "Merchant Adaptation"),
+            (contract, "Protocol Changes"),
             (contract, "Display edge rules"),
             (contract, "non-finite display numbers"),
         ),
@@ -427,13 +427,13 @@ def assert_no_payload_doc_drift() -> None:
             observability_source,
             "Margin Drift",
         ),
-        "observability merchant switch label": (
+        "observability merchant adaptation label": (
             observability_source,
-            "Merchant Switches",
+            "Merchant Adaptation",
         ),
-        "observability reason evidence label": (
+        "observability protocol changes label": (
             observability_source,
-            "Reason Evidence",
+            "Protocol Changes",
         ),
         "observability direct merchant switch source": (
             observability_source,

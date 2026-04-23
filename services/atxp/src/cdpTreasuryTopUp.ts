@@ -24,6 +24,21 @@ function envBigInt(
   }
 }
 
+function envPositiveDecimal(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: string,
+): string {
+  const value = env[name]?.trim();
+  if (!value) {
+    return fallback;
+  }
+  if (!/^\d+(\.\d+)?$/.test(value) || !/[1-9]/.test(value)) {
+    return fallback;
+  }
+  return value;
+}
+
 export function planCdpBaseTreasuryTopUp(
   minAmountUnits: bigint,
   env: Record<string, string | undefined> = process.env,
@@ -42,8 +57,11 @@ export function planCdpBaseTreasuryTopUp(
     "ATXP_CDP_TREASURY_USDC_TOPUP_UNITS",
     DEFAULT_TREASURY_USDC_TOPUP_UNITS,
   );
-  const nativeAmount =
-    env.ATXP_CDP_TREASURY_NATIVE_TOPUP?.trim() || DEFAULT_TREASURY_NATIVE_TOPUP_ETH;
+  const nativeAmount = envPositiveDecimal(
+    env,
+    "ATXP_CDP_TREASURY_NATIVE_TOPUP",
+    DEFAULT_TREASURY_NATIVE_TOPUP_ETH,
+  );
 
   return {
     fromAddress,

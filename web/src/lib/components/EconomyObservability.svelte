@@ -80,10 +80,14 @@
 		'recent_memory_signal',
 		'route_pressure',
 		'treasury_pressure',
+		'route_score',
+		'route_score_pressure_drag',
+		'route_score_sustainability_lift',
 		'serves_preferred_domain',
 		'reliability',
 		'operator_margin_cents',
 	];
+	const merchantAdaptationEventTypes = new Set(['merchant_protocol_mix_changed', 'merchant_switch']);
 
 	let routeRows = $derived(buildRouteRows(routeUsage, ecosystem));
 	let routeTotalCents = $derived(routeRows.reduce((sum, row) => sum + row.usageCents, 0));
@@ -105,6 +109,8 @@
 		noHistory: railRows.filter((row) => row.snapshots === 0).length,
 	});
 	let switchRows = $derived(collectMerchantSwitches(events, worldEvents));
+	let visibleSwitchRows = $derived(switchRows.slice(0, 6));
+	let adaptationSummary = $derived(formatAdaptationSummary(switchRows));
 
 	function buildRouteRows(
 		usage: Record<string, number>,
@@ -192,12 +198,11 @@
 			if (event.type === 'merchant_switch') addSwitch(rows, switchFromRecord(event));
 		}
 		for (const event of completedWorldEvents) {
-			if (event.event_type !== 'merchant_protocol_mix_changed') continue;
+			if (!merchantAdaptationEventTypes.has(event.event_type)) continue;
 			addSwitch(rows, switchFromRecord(event.data, event.round_num));
 		}
 		return Array.from(rows.values())
-			.sort((a, b) => b.round - a.round || a.merchant.localeCompare(b.merchant))
-			.slice(0, 6);
+			.sort((a, b) => b.round - a.round || a.merchant.localeCompare(b.merchant));
 	}
 
 	function addSwitch(rows: Map<string, MerchantSwitchRow>, row: MerchantSwitchRow | null) {
@@ -233,6 +238,13 @@
 			label: formatLabel(key),
 			value: formatEvidenceValue(key, evidence[key]),
 		}));
+	}
+
+	function formatAdaptationSummary(rows: MerchantSwitchRow[]) {
+		if (rows.length === 0) return '0 recent';
+		const latest = rows[0];
+		const noun = rows.length === 1 ? 'change' : 'changes';
+		return `R${latest.round} latest of ${rows.length} protocol ${noun}`;
 	}
 
 	function formatEvidenceValue(key: string, value: unknown) {
@@ -460,14 +472,14 @@
 	<section class="panel switch-panel">
 		<div class="panel-heading">
 			<div>
-				<div class="eyebrow">Merchant Switches</div>
-				<h3>Reason Evidence</h3>
+				<div class="eyebrow">Merchant Adaptation</div>
+				<h3>Protocol Changes</h3>
 			</div>
-			<div class="panel-note">{switchRows.length} recent</div>
+			<div class="panel-note">{adaptationSummary}</div>
 		</div>
 
 		<div class="switch-list">
-			{#each switchRows as row}
+			{#each visibleSwitchRows as row}
 				<div class="switch-row">
 					<div class="switch-main">
 						<span class="round">R{row.round}</span>
@@ -484,7 +496,7 @@
 					</div>
 				</div>
 			{:else}
-				<div class="empty-line">No merchant protocol switches recorded.</div>
+				<div class="empty-line">No merchant protocol adaptation recorded.</div>
 			{/each}
 		</div>
 	</section>

@@ -43,6 +43,15 @@ ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS = [
     "avg_sustainability_bias",
 ]
 ROUTE_SCORE_DRIVER_TOKEN_LABELS = ["score", "pressure", "sustain"]
+MERCHANT_ADAPTATION_REPORT_FIELDS = [
+    "merchant_protocol_mix_changed",
+    "merchant_switch",
+    "merchant_id",
+    "merchant",
+    "action",
+    "protocol",
+    "reason",
+]
 INHERITED_GATE_GUIDANCE = [
     {
         "name": "whole_app_contract_gate",
@@ -134,6 +143,7 @@ PROTECTED_SURFACES_CHECKPOINT = {
         "service_offline_atxp",
         "service_offline_ap2",
         "python_compile",
+        "python_sim_tests",
     ],
     "related_gate_names": [
         *[gate["name"] for gate in INHERITED_GATE_GUIDANCE],
@@ -1087,6 +1097,12 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
             [
                 "routeScoreDriverDisplay",
                 "score-driver-strip",
+                "Merchant Adaptation",
+                "merchantAdaptationEventTypes",
+                "merchant_switch",
+                "formatAdaptationSummary",
+                "route_score_pressure_drag",
+                "route_score_sustainability_lift",
                 *ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
             ],
         ),
@@ -1129,6 +1145,80 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
         "checked_paths": checked_paths,
         "missing_needles": missing_needles,
         "protects": "Route-score docs and frontend displays stay tied to exact payload fields for buyer choice, protocol summary, merchant switch evidence, and self-sustainable protocol evolution.",
+    }
+
+
+def check_merchant_adaptation_report_contract(root: Path, failures: list[str]) -> dict[str, Any]:
+    targets = [
+        (
+            "payload_contract",
+            root / "docs/simulation-payload-contract.md",
+            [
+                "Merchant adaptation evidence",
+                "Self-sustainability reports count existing merchant switch events",
+                "without adding a compact summary payload",
+                *MERCHANT_ADAPTATION_REPORT_FIELDS,
+            ],
+        ),
+        (
+            "architecture",
+            root / "docs/simulation-architecture.md",
+            [
+                "Merchant Adaptation Evidence",
+                "self-sustainability report",
+                "merchant_protocol_mix_changed",
+                "merchant_switch",
+                "Merchant adaptation:",
+            ],
+        ),
+        (
+            "report_readout",
+            root / "sim/sim/report.py",
+            [
+                "Merchant adaptation:",
+                "merchant_protocol_mix_changed",
+                "merchant_switch",
+                *MERCHANT_ADAPTATION_REPORT_FIELDS,
+            ],
+        ),
+        (
+            "focused_test",
+            root / "sim/tests/test_engine.py",
+            [
+                "test_self_sustainability_report_names_merchant_protocol_adaptation",
+                "Merchant protocol changes: 1",
+                "Merchant adaptation: R3 latest of 1 protocol changes",
+                "rail_economics",
+            ],
+        ),
+    ]
+    checked_paths = []
+    missing_needles = []
+    for label, path, needles in targets:
+        rel_path = path.relative_to(root).as_posix()
+        checked_paths.append(rel_path)
+        if not path.exists():
+            failures.append(f"merchant_adaptation_report_contract[{label}]: missing {rel_path}")
+            missing_needles.extend(
+                {"surface": label, "path": rel_path, "needle": needle}
+                for needle in needles
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in needles:
+            if needle not in text:
+                failures.append(
+                    f"merchant_adaptation_report_contract[{label}]: missing {needle!r}"
+                )
+                missing_needles.append(
+                    {"surface": label, "path": rel_path, "needle": needle}
+                )
+    return {
+        "kind": "merchant_adaptation_report_contract",
+        "source_fields": MERCHANT_ADAPTATION_REPORT_FIELDS,
+        "checked_paths": checked_paths,
+        "missing_needles": missing_needles,
+        "protects": "Self-sustainability reports stay tied to existing merchant_switch and merchant_protocol_mix_changed evidence for non-route-score protocol adaptation.",
     }
 
 
@@ -1175,17 +1265,30 @@ def check_protected_checkpoint_gate_subset_contract(
     failures: list[str],
 ) -> dict[str, Any]:
     checkpoint_gate_names = list(PROTECTED_SURFACES_CHECKPOINT["related_gate_names"])
+    checkpoint_task_ids = list(PROTECTED_SURFACES_CHECKPOINT["related_task_ids"])
     guidance_gate_names = inherited_gate_names()
+    guidance_task_ids = sorted(
+        {
+            task_id
+            for gate in INHERITED_GATE_GUIDANCE
+            for task_id in gate["related_task_ids"]
+        }
+    )
     guidance_gate_name_set = set(guidance_gate_names)
     checkpoint_gate_name_set = set(checkpoint_gate_names)
+    guidance_task_id_set = set(guidance_task_ids)
+    checkpoint_task_id_set = set(checkpoint_task_ids)
     extra_checkpoint_gate_names = sorted(
         checkpoint_gate_name_set - guidance_gate_name_set
     )
     missing_checkpoint_gate_names = sorted(
         guidance_gate_name_set - checkpoint_gate_name_set
     )
+    extra_checkpoint_task_ids = sorted(checkpoint_task_id_set - guidance_task_id_set)
+    missing_checkpoint_task_ids = sorted(guidance_task_id_set - checkpoint_task_id_set)
     duplicate_checkpoint_gate_names = duplicate_values(checkpoint_gate_names)
     duplicate_guidance_gate_names = duplicate_values(guidance_gate_names)
+    duplicate_checkpoint_task_ids = duplicate_values(checkpoint_task_ids)
 
     for gate_name in extra_checkpoint_gate_names:
         failures.append(
@@ -1199,21 +1302,46 @@ def check_protected_checkpoint_gate_subset_contract(
         )
     for gate_name in duplicate_guidance_gate_names:
         failures.append(f"INHERITED_GATE_GUIDANCE: duplicate gate name {gate_name!r}")
+    for task_id in extra_checkpoint_task_ids:
+        failures.append(
+            "protected_surfaces_checkpoint.related_task_ids: "
+            f"{task_id!r} is not referenced by INHERITED_GATE_GUIDANCE"
+        )
+    for task_id in missing_checkpoint_task_ids:
+        failures.append(
+            "protected_surfaces_checkpoint.related_task_ids: "
+            f"missing inherited gate task id {task_id!r}"
+        )
+    for task_id in duplicate_checkpoint_task_ids:
+        failures.append(
+            "protected_surfaces_checkpoint.related_task_ids: "
+            f"duplicate task id {task_id!r}"
+        )
 
     return {
         "kind": "protected_checkpoint_gate_subset_contract",
-        "source": "PROTECTED_SURFACES_CHECKPOINT.related_gate_names",
-        "subset_of": "INHERITED_GATE_GUIDANCE[*].name",
+        "source": "PROTECTED_SURFACES_CHECKPOINT",
+        "gate_subset_of": "INHERITED_GATE_GUIDANCE[*].name",
+        "task_coverage_of": "INHERITED_GATE_GUIDANCE[*].related_task_ids",
         "checkpoint_gate_names": checkpoint_gate_names,
+        "checkpoint_task_ids": checkpoint_task_ids,
         "guidance_gate_names": guidance_gate_names,
+        "guidance_task_ids": guidance_task_ids,
         "checkpoint_gate_count": len(checkpoint_gate_names),
+        "checkpoint_task_count": len(checkpoint_task_ids),
         "guidance_gate_count": len(guidance_gate_names),
+        "guidance_task_count": len(guidance_task_ids),
         "extra_checkpoint_gate_names": extra_checkpoint_gate_names,
         "missing_checkpoint_gate_names": missing_checkpoint_gate_names,
+        "extra_checkpoint_task_ids": extra_checkpoint_task_ids,
+        "missing_checkpoint_task_ids": missing_checkpoint_task_ids,
         "duplicate_checkpoint_gate_names": duplicate_checkpoint_gate_names,
         "duplicate_guidance_gate_names": duplicate_guidance_gate_names,
-        "subset_valid": not extra_checkpoint_gate_names,
-        "protects": "The protected checkpoint cannot grow stale manual gate names or duplicate focused gate entries outside inherited gate guidance.",
+        "duplicate_checkpoint_task_ids": duplicate_checkpoint_task_ids,
+        "subset_valid": not extra_checkpoint_gate_names
+        and not extra_checkpoint_task_ids,
+        "coverage_valid": not missing_checkpoint_task_ids,
+        "protects": "The protected checkpoint cannot drift away from inherited gate names or the task ids those gates protect.",
     }
 
 
@@ -1318,6 +1446,7 @@ def static_contract_trace_metadata(
     service_offline_coverage_files: list[dict[str, Any]],
     raw_route_pressure_report_contract: dict[str, Any],
     route_score_rationale_contract: dict[str, Any],
+    merchant_adaptation_report_contract: dict[str, Any],
     inherited_gate_guidance_contract: dict[str, Any],
     protected_checkpoint_gate_subset_contract: dict[str, Any],
     list_tasks_metadata_schema_contract: dict[str, Any],
@@ -1441,6 +1570,7 @@ def static_contract_trace_metadata(
                 },
                 raw_route_pressure_report_contract,
                 route_score_rationale_contract,
+                merchant_adaptation_report_contract,
                 inherited_gate_guidance_contract,
                 protected_checkpoint_gate_subset_contract,
                 list_tasks_metadata_schema_contract,
@@ -1612,6 +1742,9 @@ def task_static_contracts(root: Path) -> float:
         root, failures
     )
     route_score_rationale_contract = check_route_score_rationale_contract(
+        root, failures
+    )
+    merchant_adaptation_report_contract = check_merchant_adaptation_report_contract(
         root, failures
     )
     inherited_gate_guidance_contract = check_inherited_gate_guidance_contract(
@@ -1796,6 +1929,16 @@ def task_static_contracts(root: Path) -> float:
             "protects": "Route-score rationale stays documented as evidence for self-sustainable protocol evolution.",
         },
         {
+            "surface": "merchant_adaptation_report_contract",
+            "paths": [
+                "docs/simulation-architecture.md",
+                "docs/simulation-payload-contract.md",
+                "sim/sim/report.py",
+                "sim/tests/test_engine.py",
+            ],
+            "protects": "Non-route-score merchant protocol adaptation stays documented and grounded in existing switch evidence.",
+        },
+        {
             "surface": "manual_combine_gate_hygiene",
             "paths": [
                 "AGENTS.md",
@@ -1831,6 +1974,7 @@ def task_static_contracts(root: Path) -> float:
             service_offline_coverage_files,
             raw_route_pressure_report_contract,
             route_score_rationale_contract,
+            merchant_adaptation_report_contract,
             inherited_gate_guidance_contract,
             protected_checkpoint_gate_subset_contract,
             list_tasks_metadata_schema_contract,

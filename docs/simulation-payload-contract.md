@@ -29,7 +29,7 @@ Durable UI anchors:
 - Route Ledger / Reserved Principal: `route_usage_summary` plus `route_mix`.
 - Rail P&L / Margin Drift: `rail_pnl_history` plus
   `ecosystem_summary.<protocol>.operator_margin_cents`.
-- Merchant Switches / Reason Evidence: `merchant_switch` events plus
+- Merchant Adaptation / Protocol Changes: `merchant_switch` events plus
   `merchant_protocol_mix_changed` world events.
 
 Display edge rules:
@@ -63,6 +63,11 @@ Report grounding:
   failure field names such as `accepted_protocols`, `amount_cents`, and
   `error`; reports should fold those into the existing route-pressure readout
   instead of requiring a new summary payload.
+- Merchant adaptation evidence belongs in the same source-grounded report path.
+  Self-sustainability reports count existing merchant switch events,
+  `merchant_protocol_mix_changed` world events and `merchant_switch` stream
+  events, using their `merchant_id`, `merchant`, `action`, `protocol`, and
+  `reason` fields without adding a compact summary payload.
 - Do not add a compact `self_sustainability_summary`. Keeping the report tied
   to source fields makes route capacity, treasury fit, margin, and memory
   drivers auditable in the stream and final payload.

@@ -85,6 +85,14 @@ Compact driver token vocabulary is `score`, `pressure`, and `sustain`; use
 those labels in both frontend route-score displays and grouped merchant switch
 report rows.
 
+## Merchant Adaptation Evidence
+
+The self-sustainability report also treats non-route-score protocol churn as
+economy feedback. Existing `merchant_protocol_mix_changed` world events and
+`merchant_switch` stream events provide the evidence; the report line starts
+with `Merchant adaptation:` and reads the merchant, action, protocol, round,
+and reason directly from those events.
+
 ## Stream Contract
 
 The simulation API streams NDJSON. Important event types:
@@ -142,8 +150,9 @@ rerun cost travels with the current protected-surface handoff.
   from `evo gate list <checkpoint>`; these intentionally rerun part of the
   aggregate service suite.
 - `route_score_merchant_switch_report_readout`: report wording must explain
-  route-score-driven merchant protocol switches. Validate with the inherited
-  gate from `evo gate list <checkpoint>` or the focused pytest named there.
+  route-score-driven merchant protocol switches through `python_sim_tests`.
+  Validate with the inherited gate from `evo gate list <checkpoint>` or the
+  focused pytest named there.
 
 Benchmark traces are part of the handoff between workers. Keep command context,
 cache key inputs, and static contract coverage visible so the next worker can
