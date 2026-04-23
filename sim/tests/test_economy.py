@@ -677,6 +677,56 @@ def test_merchants_switch_protocols_from_trust_memory_and_world_pressure():
     assert switches[1]["protocol"] == "x402"
     assert switches[1]["evidence"]["route_pressure"] > 1.0
 
+    domain_config = SimulationConfig(
+        seed=26,
+        protocols=[Protocol.AP2, Protocol.MPP, Protocol.ACP],
+        social_memory_strength=0.0,
+    )
+    domain_engine = SimulationEngine(domain_config)
+    domain_merchant = _merchant()
+    domain_merchant.accepted_protocols = [Protocol.AP2, Protocol.MPP, Protocol.ACP]
+    domain_merchant.working_capital_cents = 20_000
+    domain_engine.merchants = [domain_merchant]
+    domain_engine.agents = [
+        _agent("agent_003", trust={"ap2": 0.66, "mpp": 0.66, "acp": 0.66}),
+        _agent("agent_004", trust={"ap2": 0.66, "mpp": 0.66, "acp": 0.66}),
+    ]
+    for state in domain_engine.protocol_state.values():
+        state.reliability = 0.96
+        state.network_effect = 0.4
+        state.operator_margin_cents = 0
+
+    domain_summary = RoundSummary(
+        round_num=6,
+        treasury_posture=[
+            {
+                "merchant_id": domain_merchant.merchant_id,
+                "merchant": domain_merchant.name,
+                "preferred_domain": BalanceDomain.BASE_USDC.value,
+                "preferred_available_cents": 0,
+                "non_preferred_cents": 20_000,
+                "total_treasury_cents": 20_000,
+                "preferred_shortfall_cents": 20_000,
+                "preferred_ratio": 0.0,
+                "rebalance_ready": True,
+                "rebalance_threshold_cents": domain_merchant.rebalance_threshold_cents,
+            }
+        ],
+    )
+
+    domain_engine._evolve_market(6, domain_summary)
+
+    assert Protocol.AP2 in domain_merchant.accepted_protocols
+    assert len(domain_merchant.accepted_protocols) == 2
+    removed = [
+        event.data
+        for event in domain_summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "removed"
+    ][0]
+    assert removed["protocol"] in {"mpp", "acp"}
+    assert removed["evidence"]["removal_risk"] >= 0.28
+
 
 class _OfflineEconomy:
     total_route_usage = {"base-direct": 1}

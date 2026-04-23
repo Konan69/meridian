@@ -18,6 +18,10 @@ and settlement vocabulary, but they are not the product center. Product-facing
 work should keep the graph, timeline, reports, and chat focused on the simulated
 economy rather than turning Meridian into an SDK console or funding dashboard.
 
+The workbench economy observability surface is part of that contract. Route
+ledger, rail P&L, and merchant-switch evidence should stay tied to simulation
+store state and payload fields, not drift into provider diagnostics.
+
 ## Reference Checkouts
 
 Local references live under `ref/` and are ignored by git.

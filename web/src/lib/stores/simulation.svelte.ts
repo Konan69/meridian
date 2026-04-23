@@ -123,6 +123,15 @@ export interface TreasuryPostureSummary {
   last_total_treasury_cents: number;
 }
 
+export interface EconomyObservabilityStoreFields {
+  metrics: ProtoMetrics[];
+  ecosystem: Record<string, ProtocolEcosystem>;
+  routeUsage: Record<string, number>;
+  railPnlHistory: Record<string, number[]>;
+  worldEvents: EconomyWorldEvent[];
+  events: SimEvent[];
+}
+
 export interface SimConfig {
   num_agents: number;
   num_rounds: number;

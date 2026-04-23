@@ -268,6 +268,15 @@
 		amount_cents?: unknown;
 	};
 	const timelineTypes = new Set(['purchase', 'purchase_failed', 'agent_memory', 'world_event', 'agent_preference_shift']);
+	let timelineEvents = $derived(simState.events.filter((event) => timelineTypes.has(event.type)).slice(-60));
+	let visibleAgents = $derived(simState.agents.slice(0, 20));
+	let entityTypeCounts = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const node of simState.graphNodes) {
+			counts.set(node.type, (counts.get(node.type) ?? 0) + 1);
+		}
+		return Array.from(counts, ([type, count]) => ({ type, count }));
+	});
 
 	// View mode for split panel (MiroFish pattern)
 	let viewMode = $state<'graph' | 'split' | 'workbench'>('split');
@@ -538,6 +547,11 @@
 	function generateReport() {
 		simState.addLog('Generating protocol comparison report...');
 		const m = simState.metrics;
+		const fastest = [...m].sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms)[0];
+		const cheapest = [...m].sort((a, b) =>
+			(a.total_volume_cents > 0 ? a.total_fees_cents / a.total_volume_cents : 99) -
+			(b.total_volume_cents > 0 ? b.total_fees_cents / b.total_volume_cents : 99)
+		)[0];
 		simState.reportSections = [
 			{
 				title: 'Executive Summary',
@@ -595,7 +609,7 @@
 			})),
 			{
 				title: 'Comparative Analysis',
-				content: `Fastest protocol: ${m[0]?.protocol.toUpperCase()} at ${ms(m[0]?.avg_settlement_ms || 0)}. Cheapest: ${m.sort((a, b) => (a.total_volume_cents > 0 ? a.total_fees_cents / a.total_volume_cents : 99) - (b.total_volume_cents > 0 ? b.total_fees_cents / b.total_volume_cents : 99))[0]?.protocol.toUpperCase()}.`,
+				content: `Fastest protocol: ${fastest ? `${fastest.protocol.toUpperCase()} at ${ms(fastest.avg_settlement_ms)}` : 'n/a'}. Cheapest: ${cheapest?.protocol.toUpperCase() ?? 'n/a'}.`,
 				status: 'complete',
 			},
 			{
@@ -722,12 +736,12 @@
 							</p>
 
 							<div class="entity-grid" style="gap:8px; margin-bottom:20px;">
-								{#each [...new Set(simState.graphNodes.map(n => n.type))] as type}
+								{#each entityTypeCounts as row}
 									<div style="background:var(--bg-2); border-radius:4px; padding:12px; text-align:center;">
 										<div style="font-family:var(--mono); font-size:20px; font-weight:700;">
-											{simState.graphNodes.filter(n => n.type === type).length}
+											{row.count}
 										</div>
-										<div style="font-size:10px; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em; margin-top:2px;">{type}</div>
+										<div style="font-size:10px; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-top:2px;">{row.type}</div>
 									</div>
 								{/each}
 							</div>
@@ -752,21 +766,21 @@
 							<!-- Config editor -->
 							<div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
 								<label for="cfg-agents" style="display:flex; flex-direction:column; gap:2px;">
-									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Agents</span>
+									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0;">Agents</span>
 									<input id="cfg-agents" type="number" bind:value={simState.config.num_agents} min="10" max="1000" style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
 									" />
 								</label>
 								<label for="cfg-rounds" style="display:flex; flex-direction:column; gap:2px;">
-									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Rounds</span>
+									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0;">Rounds</span>
 									<input id="cfg-rounds" type="number" bind:value={simState.config.num_rounds} min="1" max="100" style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
 									" />
 								</label>
 								<label for="cfg-seed" style="display:flex; flex-direction:column; gap:2px;">
-									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.08em;">Seed</span>
+									<span style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0;">Seed</span>
 									<input id="cfg-seed" type="number" bind:value={simState.config.seed} style="
 										width:60px; background:var(--bg-2); border:1px solid var(--bd); border-radius:4px;
 										padding:5px 8px; color:var(--tx-1); font-family:var(--mono); font-size:12px;
@@ -776,7 +790,7 @@
 
 							<!-- Agent cards grid -->
 							<div class="agent-grid" style="gap:8px; max-height:400px; overflow-y:auto;">
-								{#each simState.agents.slice(0, 20) as agent}
+								{#each visibleAgents as agent}
 									<AgentCard {agent} />
 								{/each}
 							</div>
@@ -814,7 +828,7 @@
 									] as s}
 										<div style="background:var(--bg-2); padding:14px; text-align:center;">
 											<div style="font-family:var(--mono); font-size:18px; font-weight:700;">{s.v}</div>
-											<div style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-top:3px;">{s.l}</div>
+											<div style="font-size:8px; font-weight:600; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-top:3px;">{s.l}</div>
 										</div>
 									{/each}
 								</div>
@@ -830,7 +844,7 @@
 
 								<div class="context-grid" style="gap:12px; margin-bottom:16px;">
 									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Treasury Posture</div>
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:10px;">Treasury Posture</div>
 										{#each simState.treasuryPostureSummary.slice(0, 3) as posture}
 											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
 												<div style="display:flex; justify-content:space-between; gap:10px;">
@@ -844,7 +858,7 @@
 										{/each}
 									</div>
 									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Route Pressure</div>
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:10px;">Route Pressure</div>
 										{#each simState.routePressureSummary.slice(0, 3) as route}
 											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
 												<div style="display:flex; justify-content:space-between; gap:10px;">
@@ -858,7 +872,7 @@
 										{/each}
 									</div>
 									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Trust Drivers</div>
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:10px;">Trust Drivers</div>
 										{#each trustDriverRows(3) as driver}
 											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
 												<div style="display:flex; justify-content:space-between; gap:10px;">
@@ -872,7 +886,7 @@
 										{/each}
 									</div>
 									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Rail Margin</div>
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:10px;">Rail Margin</div>
 										{#each marginRows(3) as row}
 											<div style="display:flex; justify-content:space-between; gap:10px; font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
 												<span>{row.protocol.toUpperCase()}</span>
@@ -892,7 +906,7 @@
 
 							<!-- Timeline -->
 							<div style="margin-top:16px;">
-								<Timeline events={simState.events.filter((event) => timelineTypes.has(event.type)).slice(-60)} />
+								<Timeline events={timelineEvents} />
 							</div>
 						</div>
 
@@ -964,9 +978,9 @@
 								</div>
 							{/if}
 
-							<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+							<div class="ledger-grid" style="margin-bottom:12px;">
 								<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:12px; max-height:220px; overflow:auto;">
-									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Treasury Distribution</div>
+									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:8px;">Treasury Distribution</div>
 									{#each topEntries(simState.treasuryDistribution, 6) as [merchantId, dist]}
 										<div style="padding:6px 0; border-bottom:1px solid var(--bg-3);">
 											<div style="font-family:var(--mono); font-size:11px; margin-bottom:4px;">{merchantId}</div>
@@ -980,7 +994,7 @@
 									{/each}
 								</div>
 								<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:12px; max-height:220px; overflow:auto;">
-									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Balance Snapshots</div>
+									<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0; margin-bottom:8px;">Balance Snapshots</div>
 									{#each simState.balances.slice(0, 10) as bucket}
 										<div style="padding:6px 0; border-bottom:1px solid var(--bg-3); font-family:var(--mono); font-size:10px;">
 											<div>{bucket.owner_kind}:{bucket.owner_id}</div>
@@ -1021,27 +1035,27 @@
 <style>
 	.entity-grid {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
 	}
 	.agent-grid {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 	}
 	.summary-grid {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr));
 	}
 	.context-grid {
 		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+	}
+	.ledger-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+		gap: 12px;
 	}
 	.seed-actions {
 		flex-wrap: wrap;
-	}
-	@media (max-width: 1100px) {
-		.entity-grid { grid-template-columns: repeat(2, 1fr); }
-		.summary-grid { grid-template-columns: repeat(2, 1fr); }
-		.context-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	}
 	@media (max-width: 900px) {
 		.sim-shell {
@@ -1068,13 +1082,7 @@
 			min-height: 0;
 		}
 	}
-	@media (max-width: 768px) {
-		.agent-grid { grid-template-columns: 1fr; }
-	}
 	@media (max-width: 480px) {
-		.entity-grid { grid-template-columns: 1fr; }
-		.summary-grid { grid-template-columns: 1fr; }
-		.context-grid { grid-template-columns: 1fr; }
 		.seed-actions button {
 			width: 100%;
 		}
