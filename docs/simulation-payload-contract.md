@@ -6,6 +6,18 @@ ground reports and chat in the trace. Protocol repos under `ref/` calibrate
 fees, latency, settlement domains, and failure modes. They are reference rails,
 not the product surface.
 
+## Simulation Intent
+
+Payloads describe an ecosystem economy, not just API traffic. Agent transaction
+attempts, protocol choices, route pressure, treasury posture, trust changes,
+merchant switches, and rail P&L must remain visible enough for the frontend to
+visualize why the economy moved.
+
+Live protocol details belong in the payload when they change simulated behavior:
+settlement domain, readiness, fee, latency, balance, failure, or route capacity.
+They should not crowd out the agent/economy story that graph, timeline, reports,
+and chat are expected to explain.
+
 ## MiroFish Adaptation
 
 - `SimulationConfig.world_seed`, `scenario_prompt`, and `stable_universe`
@@ -183,6 +195,10 @@ projection. Raw events can carry extra fields without a helper change.
 
 ## Maintenance Checklist
 
+- Before adding fields, name the economy behavior the field explains: an agent
+  initiating a transaction, a protocol outcome, route pressure, treasury
+  movement, trust/memory, merchant adoption, or visualization of the ecosystem
+  economy.
 - New dataclass field: update the relevant `AgentMemoryEvent`,
   `EconomyWorldEvent`, `RoundSummary`, or `SimulationResult` field list.
 - New emitted `type`: add it under Stream Envelope and decide whether the UI
