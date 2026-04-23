@@ -1538,15 +1538,23 @@ class SimulationEngine:
             removal_candidates = []
             for protocol in merchant.accepted_protocols:
                 state = self.protocol_state[protocol.value]
+                serves_preferred = self._protocol_serves_domain(
+                    protocol,
+                    merchant.preferred_settlement_domain,
+                )
                 trust_gap = max(0.0, 0.62 - avg_trust.get(protocol.value, 0.6))
                 reliability_gap = max(0.0, 0.9 - state.reliability)
                 margin_drag = max(0.0, -state.operator_margin_cents / 20_000)
+                settlement_domain_fit = treasury_pressure * (
+                    -0.06 if serves_preferred else 0.30
+                )
                 risk = (
                     trust_gap * 0.9
                     + reliability_gap * 0.7
                     - memory_signal.get(protocol.value, 0.0) * 1.5
                     + route_pressure.get(protocol.value, 0.0) * 0.18
                     + min(0.25, margin_drag)
+                    + settlement_domain_fit
                 )
                 removal_candidates.append((risk, protocol))
 
