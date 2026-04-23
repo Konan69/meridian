@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { PROTOCOL_COLORS } from '$lib/constants';
+	import { buildNoRoutePressureRows, formatRoutePressureLabel } from '$lib/routePressureDisplay';
 	import type { RoutePressureSummary } from '$lib/stores/simulation.svelte';
 
 	interface ProtoMetric {
@@ -20,16 +21,6 @@
 		operator_margin_cents: number;
 		reliability?: number;
 		route_mix?: Record<string, number>;
-	}
-
-	interface NoRoutePressureRow {
-		route: string;
-		domains: string;
-		capacityRatio: number;
-		pressureRounds: number;
-		failureCount: number | null;
-		merchant: string | null;
-		protocols: string[];
 	}
 
 	interface Props {
@@ -185,17 +176,8 @@
 		return value.length > max ? `${value.slice(0, max - 3)}...` : value;
 	}
 
-	function textFrom(...values: unknown[]) {
-		for (const value of values) {
-			if (typeof value !== 'string') continue;
-			const trimmed = value.trim();
-			if (trimmed) return trimmed;
-		}
-		return null;
-	}
-
 	function formatLabel(value: string) {
-		return value.replaceAll('_', ' ');
+		return formatRoutePressureLabel(value);
 	}
 
 	function cleanMetric(metric: ProtoMetric): ProtoMetric {
@@ -238,41 +220,6 @@
 		});
 	}
 
-	function buildNoRoutePressureRows(summaries: RoutePressureSummary[]): NoRoutePressureRow[] {
-		return summaries
-			.flatMap((summary) => {
-				const reason = textFrom(summary.reason);
-				const failureCount = numberFrom(summary.failure_count);
-				if (reason !== 'no_feasible_rebalance_route' && (failureCount ?? 0) <= 0) return [];
-
-				const route = textFrom(summary.route_id);
-				if (!route) return [];
-
-				const source = textFrom(summary.source_domain) ?? 'unknown';
-				const target = textFrom(summary.target_domain) ?? 'unknown';
-				const protocols = Array.isArray(summary.protocols)
-					? summary.protocols.flatMap((protocol) => {
-						const label = textFrom(protocol);
-						return label ? [label] : [];
-					})
-					: [];
-
-				return [{
-					route,
-					domains: `${source} to ${target}`,
-					capacityRatio: nonNegativeNumber(summary.max_capacity_ratio),
-					pressureRounds: wholeNonNegative(summary.pressure_rounds),
-					failureCount: failureCount == null ? null : wholeNonNegative(failureCount),
-					merchant: textFrom(summary.merchant, summary.merchant_id),
-					protocols,
-				}];
-			})
-			.sort((a, b) =>
-				b.capacityRatio - a.capacityRatio
-				|| (b.failureCount ?? 0) - (a.failureCount ?? 0)
-				|| b.pressureRounds - a.pressureRounds
-			);
-	}
 </script>
 
 <div class="market-charts-grid">

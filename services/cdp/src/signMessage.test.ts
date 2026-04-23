@@ -31,6 +31,11 @@ test("CDP sign-message normalizer preserves exact message bytes", () => {
   );
 });
 
+test("CDP sign-message normalizer accepts whitespace-only signed bytes", () => {
+  const message = " \n\t ";
+  assert.equal(normalizeSignMessageRequest({ address, message }).message, message);
+});
+
 test("CDP sign-message normalizer rejects malformed request shape", () => {
   assert.throws(
     () => normalizeSignMessageRequest(null),

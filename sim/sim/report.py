@@ -334,7 +334,7 @@ class ReportGenerator:
                     if failure_count:
                         raw_parts.append(f"failure_count {failure_count}")
                     if level != "observed":
-                        raw_parts.append(f"level {level}")
+                        raw_parts.append(f"pressure_level {level}")
                 raw_suffix = f"; {', '.join(raw_parts)}" if raw_parts else ""
                 lines.append(
                     f"Unroutable treasury pressure: {blocked_route} reached "

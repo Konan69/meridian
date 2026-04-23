@@ -110,6 +110,12 @@ readiness.
 For synthetic summary tasks such as `service_builds_summary`, inspect
 `trace_metadata.aggregation.component_tasks`; the summary is only an average,
 and the component task traces show the real commands and caches.
+For local validation, `benchmark_whole_app.py` accepts explicit task selection:
+pass `--task-id web_check_build` repeatedly, or use
+`--task-ids service_offline_cdp,web_check_build`. Selection is opt-in; the
+default `--profile benchmark` and `--profile gate` task lists still run their
+normal coverage, and selected tasks still execute their real install, build,
+test, or compile commands.
 For pnpm build tasks, `trace_metadata.cache.node_modules_seed` reports whether
 the benchmark hardlinked a compatible `node_modules` tree from another Evo
 worktree before running the frozen install.

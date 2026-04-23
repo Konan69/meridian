@@ -26,6 +26,7 @@ _SCORES: dict[str, float] = {}
 _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 PASS_SCORE_FLOOR = 0.82
 SPEED_SCORE_WEIGHT = 0.18
+RAW_ROUTE_PRESSURE_FALLBACK_FIELDS = ["reason", "failure_count", "pressure_level"]
 
 if _TRACES_DIR:
     _TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,20 +64,24 @@ def log_task(
     )
 
 
-def write_result(score: float | None = None) -> float:
+def write_result(
+    score: float | None = None,
+    *,
+    result_metadata: dict[str, Any] | None = None,
+) -> float:
     if score is None:
         score = sum(_SCORES.values()) / len(_SCORES) if _SCORES else 0.0
     score = round(score, 4)
+    result: dict[str, Any] = {
+        "score": score,
+        "tasks": dict(_SCORES),
+        "started_at": _STARTED_AT,
+        "ended_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if result_metadata:
+        result.update(result_metadata)
     print(
-        json.dumps(
-            {
-                "score": score,
-                "tasks": dict(_SCORES),
-                "started_at": _STARTED_AT,
-                "ended_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            },
-            indent=2,
-        )
+        json.dumps(result, indent=2)
     )
     return score
 
@@ -386,12 +391,14 @@ SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
             "services/cdp/src/treasury.test.ts",
         ],
         "helper_files": [
+            "services/cdp/src/requestValidation.ts",
             "services/cdp/src/signMessage.ts",
             "services/cdp/src/sendTransaction.ts",
             "services/cdp/src/signTypedData.ts",
             "services/cdp/src/treasury.ts",
         ],
         "coverage_points": [
+            "shared request shape, address, and non-empty string validation",
             "sign-message request normalization and rejection",
             "send-transaction request normalization and rejection",
             "sign-typed-data request normalization and rejection",
@@ -673,11 +680,70 @@ def require_contains(path: Path, needles: list[str], failures: list[str]) -> Non
             failures.append(f"{path}: missing {needle!r}")
 
 
+def check_raw_route_pressure_report_contract(root: Path, failures: list[str]) -> dict[str, Any]:
+    docs_path = root / "docs/simulation-payload-contract.md"
+    report_path = root / "sim/sim/report.py"
+    test_path = root / "sim/tests/test_engine.py"
+    targets = [
+        (
+            "docs",
+            docs_path,
+            ['event_type="route_pressure"', *RAW_ROUTE_PRESSURE_FALLBACK_FIELDS],
+        ),
+        (
+            "report_fallback",
+            report_path,
+            [
+                '_source") == "world_events.route_pressure"',
+                *[f'{field} {{' for field in RAW_ROUTE_PRESSURE_FALLBACK_FIELDS],
+            ],
+        ),
+        (
+            "report_test",
+            test_path,
+            [
+                "test_self_sustainability_report_uses_raw_route_pressure_events_without_summary",
+                *[f'"{field}"' for field in RAW_ROUTE_PRESSURE_FALLBACK_FIELDS],
+                *[f"{field} " for field in RAW_ROUTE_PRESSURE_FALLBACK_FIELDS],
+            ],
+        ),
+    ]
+    checked_paths = []
+    missing_needles = []
+    for label, path, needles in targets:
+        rel_path = path.relative_to(root).as_posix()
+        checked_paths.append(rel_path)
+        if not path.exists():
+            failures.append(f"raw_route_pressure_report_contract[{label}]: missing {rel_path}")
+            missing_needles.extend(
+                {"surface": label, "path": rel_path, "needle": needle}
+                for needle in needles
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in needles:
+            if needle not in text:
+                failures.append(
+                    f"raw_route_pressure_report_contract[{label}]: missing {needle!r}"
+                )
+                missing_needles.append(
+                    {"surface": label, "path": rel_path, "needle": needle}
+                )
+    return {
+        "kind": "raw_route_pressure_report_contract",
+        "source_fields": RAW_ROUTE_PRESSURE_FALLBACK_FIELDS,
+        "checked_paths": checked_paths,
+        "missing_needles": missing_needles,
+        "protects": "Raw route_pressure fallback docs, report wording, and focused tests stay tied to reason, failure_count, and pressure_level field names.",
+    }
+
+
 def static_contract_trace_metadata(
     required_files: list[str],
     contains_contracts: list[tuple[str, list[str]]],
     contract_surfaces: list[dict[str, Any]],
     service_offline_coverage_files: list[dict[str, Any]],
+    raw_route_pressure_report_contract: dict[str, Any],
 ) -> dict[str, Any]:
     needles_by_path = {path: len(needles) for path, needles in contains_contracts}
     return {
@@ -716,7 +782,8 @@ def static_contract_trace_metadata(
                         item["service"] for item in service_offline_coverage_files
                     ],
                     "protects": "Offline service trace coverage must name at least one test file and helper file per service, and every listed path must exist.",
-                }
+                },
+                raw_route_pressure_report_contract,
             ],
             "service_offline_coverage_files": service_offline_coverage_files,
         }
@@ -850,6 +917,10 @@ def task_static_contracts(root: Path) -> float:
     for path, needles in contains_contracts:
         require_contains(root / path, needles, failures)
 
+    raw_route_pressure_report_contract = check_raw_route_pressure_report_contract(
+        root, failures
+    )
+
     service_offline_coverage_files = []
     for service, coverage in SERVICE_OFFLINE_COVERAGE.items():
         required_fields = ["test_files", "helper_files"]
@@ -920,6 +991,15 @@ def task_static_contracts(root: Path) -> float:
             "paths": ["engine/src/routes/capabilities.rs"],
             "protects": "Engine capability checks still join live protocol readiness signals.",
         },
+        {
+            "surface": "raw_route_pressure_report_contract",
+            "paths": [
+                "docs/simulation-payload-contract.md",
+                "sim/sim/report.py",
+                "sim/tests/test_engine.py",
+            ],
+            "protects": "Raw route_pressure fallback fields stay documented and asserted by report tests.",
+        },
     ]
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
     log_task(
@@ -933,6 +1013,7 @@ def task_static_contracts(root: Path) -> float:
             contains_contracts,
             contract_surfaces,
             service_offline_coverage_files,
+            raw_route_pressure_report_contract,
         ),
     )
     return score
@@ -993,39 +1074,55 @@ def task_rust_tests(root: Path) -> float:
     )
 
 
+SERVICE_BUILD_TARGETS = {
+    "cdp": 22,
+    "stripe": 22,
+    "atxp": 35,
+}
+
+SERVICE_OFFLINE_TARGETS = {
+    "cdp": 22,
+    "stripe": 22,
+    "atxp": 35,
+}
+
+
+def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, Any]]:
+    target_seconds = SERVICE_BUILD_TARGETS[service]
+    task_id = f"service_build_{service}"
+    package_root = root / "services" / service
+    node_modules_seed = seed_node_modules(root, package_root)
+    component_task = {
+        "task_id": task_id,
+        "service": service,
+        "package_root": f"services/{service}",
+        "target_seconds": target_seconds,
+        "node_modules_seed": node_modules_seed,
+    }
+    score = run_command(
+        root,
+        task_id,
+        pnpm_cached_install_command("pnpm run build"),
+        cwd=package_root,
+        timeout=180,
+        target_seconds=target_seconds,
+        trace_metadata=pnpm_trace_metadata(
+            root,
+            package_root,
+            ["pnpm run build"],
+            node_modules_seed,
+        ),
+    )
+    return score, component_task
+
+
 def task_service_builds(root: Path) -> float:
     scores = []
     component_tasks = []
-    service_targets = [("cdp", 22), ("stripe", 22), ("atxp", 35)]
-    for service, target_seconds in service_targets:
-        task_id = f"service_build_{service}"
-        package_root = root / "services" / service
-        node_modules_seed = seed_node_modules(root, package_root)
-        component_tasks.append(
-            {
-                "task_id": task_id,
-                "service": service,
-                "package_root": f"services/{service}",
-                "target_seconds": target_seconds,
-                "node_modules_seed": node_modules_seed,
-            }
-        )
-        scores.append(
-            run_command(
-                root,
-                task_id,
-                pnpm_cached_install_command("pnpm run build"),
-                cwd=package_root,
-                timeout=180,
-                target_seconds=target_seconds,
-                trace_metadata=pnpm_trace_metadata(
-                    root,
-                    package_root,
-                    ["pnpm run build"],
-                    node_modules_seed,
-                ),
-            )
-        )
+    for service in SERVICE_BUILD_TARGETS:
+        score, component_task = run_service_build_task(root, service)
+        scores.append(score)
+        component_tasks.append(component_task)
     score = sum(scores) / len(scores)
     log_task(
         "service_builds_summary",
@@ -1037,45 +1134,46 @@ def task_service_builds(root: Path) -> float:
     return score
 
 
-def task_service_offline_protocol_tests(root: Path) -> float:
-    scores = []
-    component_tasks = []
-    node_targets = [("cdp", 22), ("stripe", 22), ("atxp", 35)]
-    for service, target_seconds in node_targets:
-        task_id = f"service_offline_{service}"
-        package_root = root / "services" / service
-        node_modules_seed = seed_node_modules(root, package_root)
-        coverage = SERVICE_OFFLINE_COVERAGE[service]
-        component_tasks.append(
-            {
-                "task_id": task_id,
-                "service": service,
-                "package_root": f"services/{service}",
-                "target_seconds": target_seconds,
-                "node_modules_seed": node_modules_seed,
-                "validation_command": "pnpm run test:offline",
-                "covered_test_files": coverage["test_files"],
-                "covered_helper_files": coverage["helper_files"],
-            }
-        )
-        scores.append(
-            run_command(
-                root,
-                task_id,
-                pnpm_cached_install_command("pnpm run test:offline"),
-                cwd=package_root,
-                timeout=180,
-                target_seconds=target_seconds,
-                trace_metadata=service_offline_node_trace_metadata(
-                    root,
-                    package_root,
-                    service,
-                    node_modules_seed,
-                ),
-            )
-        )
+def task_service_build_component(root: Path, service: str) -> float:
+    score, _component_task = run_service_build_task(root, service)
+    return score
 
-    ap2_task = {
+
+def run_service_offline_node_task(root: Path, service: str) -> tuple[float, dict[str, Any]]:
+    target_seconds = SERVICE_OFFLINE_TARGETS[service]
+    task_id = f"service_offline_{service}"
+    package_root = root / "services" / service
+    node_modules_seed = seed_node_modules(root, package_root)
+    coverage = SERVICE_OFFLINE_COVERAGE[service]
+    component_task = {
+        "task_id": task_id,
+        "service": service,
+        "package_root": f"services/{service}",
+        "target_seconds": target_seconds,
+        "node_modules_seed": node_modules_seed,
+        "validation_command": "pnpm run test:offline",
+        "covered_test_files": coverage["test_files"],
+        "covered_helper_files": coverage["helper_files"],
+    }
+    score = run_command(
+        root,
+        task_id,
+        pnpm_cached_install_command("pnpm run test:offline"),
+        cwd=package_root,
+        timeout=180,
+        target_seconds=target_seconds,
+        trace_metadata=service_offline_node_trace_metadata(
+            root,
+            package_root,
+            service,
+            node_modules_seed,
+        )
+    )
+    return score, component_task
+
+
+def run_service_offline_ap2_task(root: Path) -> tuple[float, dict[str, Any]]:
+    component_task = {
         "task_id": "service_offline_ap2",
         "service": "ap2",
         "package_root": "services/ap2",
@@ -1084,18 +1182,29 @@ def task_service_offline_protocol_tests(root: Path) -> float:
         "covered_test_files": SERVICE_OFFLINE_COVERAGE["ap2"]["test_files"],
         "covered_helper_files": SERVICE_OFFLINE_COVERAGE["ap2"]["helper_files"],
     }
-    component_tasks.append(ap2_task)
-    scores.append(
-        run_command(
-            root,
-            "service_offline_ap2",
-            "PYTHONPATH=src python3 -m unittest discover -s tests -q",
-            cwd=root / "services" / "ap2",
-            timeout=60,
-            target_seconds=4,
-            trace_metadata=service_offline_python_trace_metadata(root),
-        )
+    score = run_command(
+        root,
+        "service_offline_ap2",
+        "PYTHONPATH=src python3 -m unittest discover -s tests -q",
+        cwd=root / "services" / "ap2",
+        timeout=60,
+        target_seconds=4,
+        trace_metadata=service_offline_python_trace_metadata(root),
     )
+    return score, component_task
+
+
+def task_service_offline_protocol_tests(root: Path) -> float:
+    scores = []
+    component_tasks = []
+    for service in SERVICE_OFFLINE_TARGETS:
+        score, component_task = run_service_offline_node_task(root, service)
+        scores.append(score)
+        component_tasks.append(component_task)
+
+    score, ap2_task = run_service_offline_ap2_task(root)
+    scores.append(score)
+    component_tasks.append(ap2_task)
 
     score = sum(scores) / len(scores)
     log_task(
@@ -1105,6 +1214,14 @@ def task_service_offline_protocol_tests(root: Path) -> float:
         component_scores=scores,
         trace_metadata=service_offline_tests_summary_trace_metadata(component_tasks),
     )
+    return score
+
+
+def task_service_offline_component(root: Path, service: str) -> float:
+    if service == "ap2":
+        score, _component_task = run_service_offline_ap2_task(root)
+        return score
+    score, _component_task = run_service_offline_node_task(root, service)
     return score
 
 
@@ -1124,6 +1241,69 @@ def task_web_check(root: Path) -> float:
             ["pnpm run check", "pnpm run build"],
             node_modules_seed,
         ),
+    )
+
+
+def task_runners() -> dict[str, Any]:
+    return {
+        "static_contracts": task_static_contracts,
+        "python_compile": task_python_compile,
+        "python_sim_tests": task_python_tests,
+        "rust_engine_tests": task_rust_tests,
+        "service_build_cdp": lambda root: task_service_build_component(root, "cdp"),
+        "service_build_stripe": lambda root: task_service_build_component(root, "stripe"),
+        "service_build_atxp": lambda root: task_service_build_component(root, "atxp"),
+        "service_builds_summary": task_service_builds,
+        "service_offline_cdp": lambda root: task_service_offline_component(root, "cdp"),
+        "service_offline_stripe": lambda root: task_service_offline_component(root, "stripe"),
+        "service_offline_atxp": lambda root: task_service_offline_component(root, "atxp"),
+        "service_offline_ap2": lambda root: task_service_offline_component(root, "ap2"),
+        "service_offline_protocol_tests": task_service_offline_protocol_tests,
+        "web_check_build": task_web_check,
+    }
+
+
+def parse_task_selection(
+    repeated_task_ids: list[str] | None,
+    comma_task_ids: str | None,
+) -> list[str]:
+    raw_values = []
+    if repeated_task_ids:
+        raw_values.extend(repeated_task_ids)
+    if comma_task_ids:
+        raw_values.append(comma_task_ids)
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        for task_id in value.split(","):
+            task_id = task_id.strip()
+            if not task_id or task_id in seen:
+                continue
+            selected.append(task_id)
+            seen.add(task_id)
+    return selected
+
+
+def run_selected_tasks(root: Path, selected_task_ids: list[str], profile: str) -> float:
+    runners = task_runners()
+    unknown_task_ids = [
+        task_id for task_id in selected_task_ids if task_id not in runners
+    ]
+    if unknown_task_ids:
+        known = ", ".join(runners)
+        raise SystemExit(
+            f"unknown task id(s): {', '.join(unknown_task_ids)}. Known task ids: {known}"
+        )
+
+    scores = [runners[task_id](root) for task_id in selected_task_ids]
+    return write_result(
+        sum(scores) / len(scores),
+        result_metadata={
+            "profile": profile,
+            "selection_mode": "manual_task_ids",
+            "selected_task_ids": selected_task_ids,
+        },
     )
 
 
@@ -1153,13 +1333,29 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--profile", choices=["benchmark", "gate"], default="benchmark")
     parser.add_argument("--min-score", type=float)
+    parser.add_argument(
+        "--task-id",
+        action="append",
+        dest="task_ids",
+        help="Run one task id for manual validation; repeat for multiple tasks.",
+    )
+    parser.add_argument(
+        "--task-ids",
+        dest="task_id_csv",
+        help="Comma-separated task ids for manual validation.",
+    )
     args = parser.parse_args()
 
     root = Path(args.target).resolve()
     if not root.is_dir():
         raise SystemExit(f"target must be the repository root directory, got {root}")
 
-    score = run_gate(root) if args.profile == "gate" else run_benchmark(root)
+    selected_task_ids = parse_task_selection(args.task_ids, args.task_id_csv)
+    score = (
+        run_selected_tasks(root, selected_task_ids, args.profile)
+        if selected_task_ids
+        else run_gate(root) if args.profile == "gate" else run_benchmark(root)
+    )
     if args.min_score is not None and score < args.min_score:
         print(
             f"GATE FAIL: score {score:.4f} below minimum {args.min_score:.4f}",

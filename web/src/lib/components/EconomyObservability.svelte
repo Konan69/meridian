@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { PROTOCOL_COLORS } from '$lib/constants';
+	import {
+		buildRoutePressureRows,
+		formatRoutePressureLabel,
+		type RoutePressureDisplayRow,
+	} from '$lib/routePressureDisplay';
 	import type {
 		EconomyWorldEvent,
 		ProtoMetrics,
@@ -32,18 +37,7 @@
 		protocols: RouteMixPart[];
 	}
 
-	interface PressureRow {
-		route: string;
-		usageCents: number;
-		capacityRatio: number;
-		pressureRounds: number;
-		level: string;
-		reason: string | null;
-		failureCount: number | null;
-		merchant: string | null;
-		domains: string;
-		protocols: string[];
-	}
+	type PressureRow = RoutePressureDisplayRow;
 
 	interface RailRow {
 		protocol: string;
@@ -90,7 +84,7 @@
 	let routeTotalCents = $derived(routeRows.reduce((sum, row) => sum + row.usageCents, 0));
 	let routeMaxCents = $derived(Math.max(...routeRows.map((row) => row.usageCents), 1));
 	let visibleRouteRows = $derived(routeRows.slice(0, 5));
-	let pressureRows = $derived(buildPressureRows(routePressureSummary));
+	let pressureRows = $derived(buildRoutePressureRows(routePressureSummary));
 	let visiblePressureRows = $derived(pressureRows.slice(0, 4));
 	let routeCoverage = $derived({
 		withLedger: routeRows.filter((row) => row.usageCents > 0).length,
@@ -141,40 +135,6 @@
 				};
 			})
 			.sort((a, b) => b.usageCents - a.usageCents || b.attempts - a.attempts);
-	}
-
-	function buildPressureRows(summaries: RoutePressureSummary[]): PressureRow[] {
-		return summaries
-			.map((summary) => {
-				const route = textFrom(summary.route_id);
-				if (!route) return null;
-				return {
-					route,
-					usageCents: nonNegativeNumber(summary.total_usage_cents),
-					capacityRatio: nonNegativeNumber(summary.max_capacity_ratio),
-					pressureRounds: wholeNonNegative(summary.pressure_rounds),
-					level: textFrom(summary.last_pressure_level) ?? 'unknown',
-					reason: textFrom(summary.reason),
-					failureCount: numberFrom(summary.failure_count) == null
-						? null
-						: wholeNonNegative(summary.failure_count),
-					merchant: textFrom(summary.merchant, summary.merchant_id),
-					domains: `${summary.source_domain} to ${summary.target_domain}`,
-					protocols: Array.isArray(summary.protocols) ? summary.protocols.flatMap((protocol) => {
-						const label = textFrom(protocol);
-						return label ? [label] : [];
-					}) : [],
-				};
-			})
-			.filter((row): row is PressureRow => row != null)
-			.sort((a, b) => {
-				const aNoRoute = a.reason === 'no_feasible_rebalance_route' ? 1 : 0;
-				const bNoRoute = b.reason === 'no_feasible_rebalance_route' ? 1 : 0;
-				return bNoRoute - aNoRoute
-					|| b.capacityRatio - a.capacityRatio
-					|| (b.failureCount ?? 0) - (a.failureCount ?? 0)
-					|| b.usageCents - a.usageCents;
-			});
 	}
 
 	function buildRailRows(
@@ -316,7 +276,7 @@
 	}
 
 	function formatLabel(value: string) {
-		return value.replaceAll('_', ' ');
+		return formatRoutePressureLabel(value);
 	}
 
 	function asRecord(value: unknown): Record<string, unknown> | null {

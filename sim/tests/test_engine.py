@@ -749,7 +749,7 @@ def test_self_sustainability_report_uses_raw_route_pressure_events_without_summa
         "treasury_rebalance_unroutable:tempo_usd->base_usdc reached "
         "106.0% capacity across 2 pressure rounds with $360.00 blocked "
         "demand; protocols MPP had no feasible tempo_usd -> base_usdc route; "
-        "reason no_feasible_rebalance_route, failure_count 2, level critical."
+        "reason no_feasible_rebalance_route, failure_count 2, pressure_level critical."
     ) in signals["content"]
     assert (
         "  treasury_rebalance_unroutable:tempo_usd->base_usdc: max=106.0%, "

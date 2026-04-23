@@ -12,22 +12,17 @@ export class SignMessageRequestError extends Error {
   }
 }
 
-const { asRecord, requiredAddress } = makeRequestValidator(
+const { asRecord, requiredAddress, requiredNonEmptyString } = makeRequestValidator(
   (message) => new SignMessageRequestError(message),
 );
-
-function requiredMessage(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new SignMessageRequestError("message must be a non-empty string");
-  }
-  return value;
-}
 
 export function normalizeSignMessageRequest(body: unknown): SignMessageOptions {
   const record = asRecord(body, "request body");
 
   return {
     address: requiredAddress(record.address, "address"),
-    message: requiredMessage(record.message),
+    message: requiredNonEmptyString(record.message, "message", {
+      preserveWhitespace: true,
+    }),
   };
 }

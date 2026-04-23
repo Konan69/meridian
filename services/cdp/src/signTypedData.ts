@@ -30,24 +30,10 @@ export class SignTypedDataRequestError extends Error {
   }
 }
 
-const { asRecord, requiredAddress } = makeRequestValidator(
-  (message) => new SignTypedDataRequestError(message),
-);
-
-function requiredNonEmptyString(value: unknown, name: string): string {
-  const text = typeof value === "string" ? value.trim() : "";
-  if (!text) {
-    throw new SignTypedDataRequestError(`${name} must be a non-empty string`);
-  }
-  return text;
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  return requiredNonEmptyString(value, name);
-}
+const { asRecord, requiredAddress, requiredNonEmptyString, optionalNonEmptyString } =
+  makeRequestValidator(
+    (message) => new SignTypedDataRequestError(message),
+  );
 
 function optionalSafeInteger(value: unknown, name: string): number | undefined {
   if (value === undefined || value === null) {
@@ -84,8 +70,8 @@ function normalizeDomain(value: unknown): SignTypedDataOptions["domain"] {
   }
 
   return {
-    name: optionalString(domain.name, "domain.name"),
-    version: optionalString(domain.version, "domain.version"),
+    name: optionalNonEmptyString(domain.name, "domain.name"),
+    version: optionalNonEmptyString(domain.version, "domain.version"),
     chainId: optionalSafeInteger(domain.chainId, "domain.chainId"),
     verifyingContract:
       domain.verifyingContract === undefined || domain.verifyingContract === null
@@ -134,7 +120,7 @@ export function normalizeSignTypedDataRequest(body: unknown): SignTypedDataOptio
     message: asRecord(record.message, "message"),
   };
 
-  const idempotencyKey = optionalString(record.idempotencyKey, "idempotencyKey");
+  const idempotencyKey = optionalNonEmptyString(record.idempotencyKey, "idempotencyKey");
   if (idempotencyKey !== undefined) {
     options.idempotencyKey = idempotencyKey;
   }

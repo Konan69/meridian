@@ -145,6 +145,17 @@ test("CDP sign-typed-data normalizer rejects ambiguous typed data", () => {
     () =>
       normalizeSignTypedDataRequest({
         address,
+        domain: { name: "   " },
+        types: { Ping: [{ name: "nonce", type: "uint256" }] },
+        primaryType: "Ping",
+        message: { nonce: 1 },
+      }),
+    /domain.name must be a non-empty string/,
+  );
+  assert.throws(
+    () =>
+      normalizeSignTypedDataRequest({
+        address,
         domain: {},
         types: { Ping: [] },
         primaryType: "Ping",
