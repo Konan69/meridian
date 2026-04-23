@@ -143,6 +143,10 @@ Fields: `config`, `rounds`, `protocol_summaries`, `trust_summary`,
   count successful settled principal. Failed attempts can still affect
   `route_usage`, `route_mix`, reliability, and operator margin through
   infrastructure cost.
+- Static drift checks keep these labels wired to reports and the web store:
+  route usage fields are cents, route mix fields are attempt counts, rail P&L fields are margin-cent snapshots,
+  and failed attempts are part of the accounting story even when settled
+  volume excludes them.
 
 ## Frontend Stream Helpers
 

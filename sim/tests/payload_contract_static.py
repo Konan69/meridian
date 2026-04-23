@@ -34,6 +34,8 @@ def assert_no_payload_doc_drift() -> None:
     helper_source = (ROOT / "web/src/lib/simStream.ts").read_text()
     stream_contract_source = (ROOT / "web/src/lib/simStream.contract.ts").read_text()
     timeline_source = (ROOT / "web/src/lib/components/Timeline.svelte").read_text()
+    store_source = (ROOT / "web/src/lib/stores/simulation.svelte.ts").read_text()
+    report_source = (ROOT / "sim/sim/report.py").read_text()
     tokens = code_tokens(contract)
 
     assert "docs/simulation-payload-contract.md" in architecture
@@ -103,6 +105,9 @@ def assert_no_payload_doc_drift() -> None:
         "CAMEL",
         "reference rails",
         "unknown fields",
+        "route usage fields are cents",
+        "route mix fields are attempt counts",
+        "rail P&L fields are margin-cent snapshots",
         "python3 sim/tests/payload_contract_static.py",
     )
     missing_phrases = sorted(
@@ -137,6 +142,22 @@ def assert_no_payload_doc_drift() -> None:
     assert missing_timeline_labels == [], (
         "timeline metadata labels missing from stream contract: "
         f"{', '.join(missing_timeline_labels)}"
+    )
+
+    required_accounting_sources = {
+        "routeUsage store": (store_source, "routeUsage = $state<Record<string, number>>"),
+        "railPnlHistory store": (store_source, "railPnlHistory = $state<Record<string, number[]>>"),
+        "route_mix store": (store_source, "route_mix?: Record<string, number>"),
+        "route usage report label": (report_source, "reserved principal"),
+        "route usage report money formatting": (report_source, "_cents_to_dollars(usage_cents)"),
+    }
+    missing_accounting_sources = sorted(
+        label for label, (source, phrase) in required_accounting_sources.items()
+        if phrase not in source
+    )
+    assert missing_accounting_sources == [], (
+        "accounting unit static anchors missing: "
+        f"{', '.join(missing_accounting_sources)}"
     )
 
 
