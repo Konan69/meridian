@@ -431,7 +431,9 @@ export const streamNormalizationContract = {
     nonFiniteRouteScoreDriverText: routeScoreDriverDisplay('NaN', Infinity, '')?.text,
     nonFiniteRouteScoreDriverHasFiniteValue: routeScoreDriverDisplay('NaN', Infinity, '')?.hasFiniteValue,
     zeroRouteScoreDriverText: routeScoreDriverDisplay(0, 0, 0)?.text,
+    zeroRouteScoreDriverFields: routeScoreDriverDisplay(0, 0, 0)?.fields.map(driverTokenContract).join('|'),
     noEvidenceRouteScoreDriverText: routeScoreDriverDisplay(undefined, undefined, undefined)?.text,
+    noEvidenceRouteScoreDriverFields: routeScoreDriverDisplay(undefined, undefined, undefined)?.fields.map(driverTokenContract).join('|'),
     noEvidenceRouteScoreDriverHasFiniteValue: routeScoreDriverDisplay(undefined, undefined, undefined)?.hasFiniteValue,
     normalizedPartialRouteScore: partialMetrics.find((metric) => metric.protocol === 'ap2')?.avg_route_score,
     normalizedNonFiniteRouteScore: partialMetrics.find((metric) => metric.protocol === 'cdp')?.avg_route_score,
@@ -485,7 +487,9 @@ type EconomyObservabilityContract = {
   nonFiniteRouteScoreDriverText?: unknown;
   nonFiniteRouteScoreDriverHasFiniteValue?: unknown;
   zeroRouteScoreDriverText?: unknown;
+  zeroRouteScoreDriverFields?: unknown;
   noEvidenceRouteScoreDriverText?: unknown;
+  noEvidenceRouteScoreDriverFields?: unknown;
   noEvidenceRouteScoreDriverHasFiniteValue?: unknown;
   normalizedPartialRouteScore?: unknown;
   normalizedNonFiniteRouteScore?: unknown;
@@ -540,6 +544,10 @@ function requireTimelineLabels(meta: string[], expected: string[]): string[] {
   return meta;
 }
 
+function driverTokenContract(field: { label: string; value: string; available: boolean }): string {
+  return `${field.label}:${field.value}:${field.available ? 'available' : 'unavailable'}`;
+}
+
 function requireEconomyObservabilityContract(contract: EconomyObservabilityContract): EconomyObservabilityContract {
   if (contract.routeLedgerValue <= 0) {
     throw new Error('economy observability contract missing route ledger value');
@@ -583,8 +591,14 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   if (contract.zeroRouteScoreDriverText !== 'score 0.00 · pressure 0.00 · sustain +0.00') {
     throw new Error('economy observability contract should distinguish zero route score evidence');
   }
-  if (contract.noEvidenceRouteScoreDriverText !== 'score no evidence · pressure no evidence · sustain no evidence') {
+  if (contract.zeroRouteScoreDriverFields !== 'score:0.00:available|pressure:0.00:available|sustain:+0.00:available') {
+    throw new Error('economy observability contract should keep zero route score driver tokens available');
+  }
+  if (contract.noEvidenceRouteScoreDriverText !== 'score no ev · pressure no ev · sustain no ev') {
     throw new Error('economy observability contract should label missing route score evidence');
+  }
+  if (contract.noEvidenceRouteScoreDriverFields !== 'score:no ev:unavailable|pressure:no ev:unavailable|sustain:no ev:unavailable') {
+    throw new Error('economy observability contract should keep missing route score driver tokens unavailable');
   }
   if (contract.noEvidenceRouteScoreDriverHasFiniteValue !== false) {
     throw new Error('economy observability contract should mark missing route score evidence as unavailable');

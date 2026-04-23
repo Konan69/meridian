@@ -27,6 +27,16 @@ _STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 PASS_SCORE_FLOOR = 0.82
 SPEED_SCORE_WEIGHT = 0.18
 RAW_ROUTE_PRESSURE_FALLBACK_FIELDS = ["reason", "failure_count", "pressure_level"]
+ROUTE_SCORE_RATIONALE_FIELDS = [
+    "route_score",
+    "route_score_drivers",
+    "route_score_context",
+    "avg_route_score",
+    "avg_route_pressure_penalty",
+    "avg_sustainability_bias",
+    "route_score_pressure_drag",
+    "route_score_sustainability_lift",
+]
 INHERITED_GATE_GUIDANCE = [
     {
         "name": "whole_app_contract_gate",
@@ -954,6 +964,58 @@ def check_raw_route_pressure_report_contract(root: Path, failures: list[str]) ->
     }
 
 
+def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dict[str, Any]:
+    targets = [
+        (
+            "architecture",
+            root / "docs/simulation-architecture.md",
+            [
+                "## Route-Score Rationale",
+                "self-sustainability bias",
+                *ROUTE_SCORE_RATIONALE_FIELDS,
+            ],
+        ),
+        (
+            "payload_contract",
+            root / "docs/simulation-payload-contract.md",
+            [
+                "Route-score rationale",
+                "explain the selected buyer",
+                "protocol-level route evidence",
+                *ROUTE_SCORE_RATIONALE_FIELDS,
+            ],
+        ),
+    ]
+    checked_paths = []
+    missing_needles = []
+    for label, path, needles in targets:
+        rel_path = path.relative_to(root).as_posix()
+        checked_paths.append(rel_path)
+        if not path.exists():
+            failures.append(f"route_score_rationale_contract[{label}]: missing {rel_path}")
+            missing_needles.extend(
+                {"surface": label, "path": rel_path, "needle": needle}
+                for needle in needles
+            )
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in needles:
+            if needle not in text:
+                failures.append(
+                    f"route_score_rationale_contract[{label}]: missing {needle!r}"
+                )
+                missing_needles.append(
+                    {"surface": label, "path": rel_path, "needle": needle}
+                )
+    return {
+        "kind": "route_score_rationale_contract",
+        "source_fields": ROUTE_SCORE_RATIONALE_FIELDS,
+        "checked_paths": checked_paths,
+        "missing_needles": missing_needles,
+        "protects": "Route-score docs keep buyer choice, protocol summary, merchant switch evidence, and self-sustainable protocol evolution tied to exact payload fields.",
+    }
+
+
 def check_inherited_gate_guidance_contract(
     root: Path, failures: list[str]
 ) -> dict[str, Any]:
@@ -1090,6 +1152,7 @@ def static_contract_trace_metadata(
     contract_surfaces: list[dict[str, Any]],
     service_offline_coverage_files: list[dict[str, Any]],
     raw_route_pressure_report_contract: dict[str, Any],
+    route_score_rationale_contract: dict[str, Any],
     inherited_gate_guidance_contract: dict[str, Any],
     list_tasks_metadata_schema_contract: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1097,6 +1160,12 @@ def static_contract_trace_metadata(
     return {
         "validation": {
             "kind": "static_contracts",
+            "metadata_schema": {
+                "kind": LIST_TASKS_METADATA_SCHEMA["kind"],
+                "schema_version": LIST_TASKS_METADATA_SCHEMA_VERSION,
+                "source": "LIST_TASKS_METADATA_SCHEMA",
+                "related_list_tasks_key": "metadata_schema",
+            },
             "required_file_count": len(required_files),
             "required_files": required_files,
             "coverage_areas": [
@@ -1168,6 +1237,7 @@ def static_contract_trace_metadata(
                     "protects": "Service READMEs must point to each offline test and helper file named by service protocol trace metadata.",
                 },
                 raw_route_pressure_report_contract,
+                route_score_rationale_contract,
                 inherited_gate_guidance_contract,
                 list_tasks_metadata_schema_contract,
             ],
@@ -1333,6 +1403,12 @@ def task_static_contracts(root: Path) -> float:
                 "benchmark_whole_app.py --list-tasks",
                 "service_offline_ap2",
                 "duplicate focused gate validation",
+                "SERVICE_OFFLINE_COVERAGE",
+                "services/cdp/README.md",
+                "services/stripe/README.md",
+                "services/atxp/README.md",
+                "services/ap2/README.md",
+                "`static_contracts` protects this architecture cross-reference",
             ],
         ),
     ]
@@ -1340,6 +1416,9 @@ def task_static_contracts(root: Path) -> float:
         require_contains(root / path, needles, failures)
 
     raw_route_pressure_report_contract = check_raw_route_pressure_report_contract(
+        root, failures
+    )
+    route_score_rationale_contract = check_route_score_rationale_contract(
         root, failures
     )
     inherited_gate_guidance_contract = check_inherited_gate_guidance_contract(
@@ -1459,6 +1538,14 @@ def task_static_contracts(root: Path) -> float:
             "protects": "Raw route_pressure fallback fields stay documented and asserted by report tests.",
         },
         {
+            "surface": "route_score_rationale_contract",
+            "paths": [
+                "docs/simulation-architecture.md",
+                "docs/simulation-payload-contract.md",
+            ],
+            "protects": "Route-score rationale stays documented as evidence for self-sustainable protocol evolution.",
+        },
+        {
             "surface": "manual_combine_gate_hygiene",
             "paths": [
                 "AGENTS.md",
@@ -1498,6 +1585,7 @@ def task_static_contracts(root: Path) -> float:
             contract_surfaces,
             service_offline_coverage_files,
             raw_route_pressure_report_contract,
+            route_score_rationale_contract,
             inherited_gate_guidance_contract,
             list_tasks_metadata_schema_contract,
         ),

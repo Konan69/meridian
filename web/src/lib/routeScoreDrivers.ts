@@ -25,7 +25,7 @@ export function routeScoreDriverDisplay(
 	const hasInvalidInput = inputs.some((value) => value != null && value !== '' && finiteNumber(value) == null);
 	const hasFiniteValue = fields.some((field) => field.value != null);
 
-	const missingValue = hasAnyInput ? 'n/a' : 'no evidence';
+	const missingValue = hasAnyInput ? 'n/a' : 'no ev';
 
 	return {
 		hasFiniteValue,

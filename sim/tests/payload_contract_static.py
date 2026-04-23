@@ -198,6 +198,108 @@ def assert_no_payload_doc_drift() -> None:
         f"{', '.join(missing_switch_doc_tokens)}"
     )
 
+    route_score_doc_tokens = {
+        "route_score",
+        "route_score_drivers",
+        "route_score_context",
+        "avg_route_score",
+        "avg_route_pressure_penalty",
+        "avg_sustainability_bias",
+        "route_score_pressure_drag",
+        "route_score_sustainability_lift",
+    }
+    missing_route_score_doc_tokens = sorted(route_score_doc_tokens - tokens)
+    assert missing_route_score_doc_tokens == [], (
+        "route-score rationale fields missing from payload contract: "
+        f"{', '.join(missing_route_score_doc_tokens)}"
+    )
+
+    required_route_score_phrases = {
+        "architecture route-score section": (
+            architecture,
+            "Route-Score Rationale",
+        ),
+        "architecture buyer-to-economy rationale": (
+            architecture,
+            "bridge between one agent transaction and the protocol economy",
+        ),
+        "architecture self-sustainability rationale": (
+            architecture,
+            "self-sustainability bias",
+        ),
+        "architecture protocol evolution rationale": (
+            architecture,
+            "protocols gain or lose usage",
+        ),
+        "payload route-score rationale": (
+            contract,
+            "Route-score rationale belongs beside those source fields",
+        ),
+        "payload selected buyer route": (
+            contract,
+            "explain the selected buyer route",
+        ),
+        "payload protocol-level route evidence": (
+            contract,
+            "protocol-level route evidence",
+        ),
+    }
+    missing_route_score_phrases = sorted(
+        label for label, (source, phrase) in required_route_score_phrases.items()
+        if not has_phrase(source, phrase)
+    )
+    assert missing_route_score_phrases == [], (
+        "route-score rationale docs missing: "
+        f"{', '.join(missing_route_score_phrases)}"
+    )
+
+    required_route_score_sources = {
+        "engine route score selected option": (
+            engine_source,
+            'best_option["route_score"]',
+        ),
+        "engine route score drivers selected option": (
+            engine_source,
+            'best_option["route_score_drivers"]',
+        ),
+        "engine route score context selected option": (
+            engine_source,
+            'best_option["route_score_context"]',
+        ),
+        "engine average route score summary": (
+            engine_source,
+            '"avg_route_score"',
+        ),
+        "engine average pressure penalty summary": (
+            engine_source,
+            '"avg_route_pressure_penalty"',
+        ),
+        "engine average sustainability bias summary": (
+            engine_source,
+            '"avg_sustainability_bias"',
+        ),
+        "engine merchant pressure drag evidence": (
+            engine_source,
+            '"route_score_pressure_drag"',
+        ),
+        "engine merchant sustainability lift evidence": (
+            engine_source,
+            '"route_score_sustainability_lift"',
+        ),
+        "report merchant route-score readout": (
+            report_source,
+            "Route-score merchant changes:",
+        ),
+    }
+    missing_route_score_sources = sorted(
+        label for label, (source, phrase) in required_route_score_sources.items()
+        if phrase not in source
+    )
+    assert missing_route_score_sources == [], (
+        "route-score rationale source anchors missing: "
+        f"{', '.join(missing_route_score_sources)}"
+    )
+
     merchant_switch_source_literals = {
         '"merchant_protocol_mix_changed"',
         '"reason"',

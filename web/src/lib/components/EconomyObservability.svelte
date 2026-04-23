@@ -766,11 +766,15 @@
 		display: inline-flex;
 		align-items: baseline;
 		gap: 4px;
+		max-width: 100%;
 		border: 1px solid var(--bd);
 		border-radius: 3px;
 		padding: 2px 5px;
 		background: color-mix(in srgb, var(--bg-3) 52%, transparent);
 		line-height: 1.25;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.score-driver-strip b {

@@ -66,6 +66,13 @@ Report grounding:
 - Do not add a compact `self_sustainability_summary`. Keeping the report tied
   to source fields makes route capacity, treasury fit, margin, and memory
   drivers auditable in the stream and final payload.
+- Route-score rationale belongs beside those source fields. `route_score`,
+  `route_score_drivers`, and `route_score_context` explain the selected buyer
+  route; `avg_route_score`, `avg_route_pressure_penalty`, and
+  `avg_sustainability_bias` explain protocol-level route evidence; merchant
+  switch readouts use `route_score_pressure_drag` and
+  `route_score_sustainability_lift` to show when route pressure or
+  self-sustainability changed protocol adoption.
 
 ## MiroFish Adaptation
 

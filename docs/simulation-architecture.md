@@ -64,6 +64,24 @@ Each simulation round:
 7. Lets merchants and agents shift protocol preference based on observed
    economics and accumulated trust.
 
+## Route-Score Rationale
+
+Route score is the bridge between one agent transaction and the protocol
+economy that grows around it. A buyer does not just pick the cheapest live rail;
+the score weighs fees, latency, reliability, route pressure, treasury fit, trust,
+and a self-sustainability bias. That makes protocol choice evidence, not a
+provider demo result.
+
+Keep the named route-score fields visible in payloads and docs:
+`route_score`, `route_score_drivers`, `route_score_context`,
+`avg_route_score`, `avg_route_pressure_penalty`, `avg_sustainability_bias`,
+`route_score_pressure_drag`, and `route_score_sustainability_lift`. Buyer
+choices expose the first three fields; protocol summaries aggregate the next
+three; merchant switch reports use pressure drag and sustainability lift when
+route evidence changes adoption. Together they explain self-sustainable
+protocol evolution: protocols gain or lose usage because simulated merchants
+and agents see route capacity, treasury posture, margin, and trust changing.
+
 ## Stream Contract
 
 The simulation API streams NDJSON. Important event types:
@@ -154,6 +172,13 @@ coverage entry to list at least one test file, one helper file, and one semantic
 surface, then checks that every listed path still exists. Deleting or renaming
 one of those files, or moving one of those protocol contracts, requires updating
 the metadata in the same change.
+For the service-level contract map, start from `SERVICE_OFFLINE_COVERAGE` in
+`benchmark_whole_app.py`, then follow the matching service docs:
+`services/cdp/README.md`, `services/stripe/README.md`,
+`services/atxp/README.md`, and `services/ap2/README.md`. Those READMEs name
+the same semantic surfaces plus the helper and test files that enforce them;
+`static_contracts` protects this architecture cross-reference and the README
+references so workers should not need to hunt through source to find the map.
 
 Focused service gates intentionally duplicate some of that validation after the
 full benchmark. Treat duplicate focused gate validation as expected correctness
