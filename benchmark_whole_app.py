@@ -81,6 +81,16 @@ def tail(text: str, limit: int = 5000) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
+def shared_cache_root() -> Path:
+    if os.environ.get("XDG_CACHE_HOME"):
+        return Path(os.environ["XDG_CACHE_HOME"]) / "meridian-evo-bench"
+    return Path(os.environ.get("HOME", "/tmp")) / ".cache" / "meridian-evo-bench"
+
+
+def python_cache_root() -> Path:
+    return Path(os.environ.get("XDG_CACHE_HOME", "/tmp")) / "meridian-evo-bench"
+
+
 def pnpm_cached_install_command(after_install: str) -> str:
     return (
         'CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench" && '
@@ -105,7 +115,75 @@ def cargo_cached_test_command() -> str:
     )
 
 
-def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = None, timeout: int = 180, target_seconds: float = 30.0) -> float:
+def rel(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def pnpm_trace_metadata(root: Path, package_root: Path) -> dict[str, Any]:
+    return {
+        "cache": {
+            "kind": "pnpm_store",
+            "store_dir": str(shared_cache_root() / "pnpm-store-v10"),
+            "key_inputs": [
+                rel(root, package_root / "package.json"),
+                rel(root, package_root / "pnpm-lock.yaml"),
+                "pnpm store content hash",
+            ],
+            "install_flags": [
+                "--frozen-lockfile",
+                "--prefer-offline",
+                "--ignore-scripts",
+            ],
+        }
+    }
+
+
+def cargo_trace_metadata(root: Path) -> dict[str, Any]:
+    cache_root = shared_cache_root()
+    return {
+        "cache": {
+            "kind": "cargo_target",
+            "target_dir_pattern": str(cache_root / "cargo-target-<short-key>"),
+            "lock_file_pattern": str(cache_root / "cargo-target-<short-key>.lock"),
+            "key_inputs": [
+                "rustc -Vv",
+                rel(root, root / "engine" / "Cargo.toml"),
+                rel(root, root / "engine" / "Cargo.lock"),
+            ],
+        }
+    }
+
+
+def python_sim_trace_metadata(root: Path) -> dict[str, Any]:
+    cache_root = python_cache_root()
+    return {
+        "cache": {
+            "kind": "python_sim_dependency_venv",
+            "venv_pattern": str(cache_root / "python-sim-venv-<py-tag>-<short-key>"),
+            "pip_cache_dir": str(cache_root / "pip-cache"),
+            "ready_marker_pattern": ".ready-<short-key>",
+            "key_inputs": [
+                "sys.implementation.cache_tag",
+                rel(root, root / "sim" / "pyproject.toml"),
+                rel(root, root / "sim" / "uv.lock"),
+            ],
+        }
+    }
+
+
+def run_command(
+    root: Path,
+    task_id: str,
+    command: str,
+    *,
+    cwd: Path | None = None,
+    timeout: int = 180,
+    target_seconds: float = 30.0,
+    trace_metadata: dict[str, Any] | None = None,
+) -> float:
     env = os.environ.copy()
     env.update(
         {
@@ -116,11 +194,13 @@ def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = No
             "SVELTEKIT_TELEMETRY_DISABLED": "1",
         }
     )
+    command_cwd = cwd or root
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     started = time.perf_counter()
     try:
         result = subprocess.run(
             command,
-            cwd=cwd or root,
+            cwd=command_cwd,
             shell=True,
             env=env,
             capture_output=True,
@@ -140,8 +220,17 @@ def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = No
                 {"stream": "stdout", "text": tail(result.stdout)},
                 {"stream": "stderr", "text": tail(result.stderr)},
             ],
+            started_at=started_at,
             elapsed_seconds=round(elapsed, 3),
             returncode=result.returncode,
+            command_context={
+                "cwd": str(command_cwd),
+                "timeout_seconds": timeout,
+                "target_seconds": target_seconds,
+                "shell": True,
+                "command": command,
+            },
+            trace_metadata=trace_metadata,
         )
         return score
     except subprocess.TimeoutExpired as exc:
@@ -155,7 +244,16 @@ def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = No
                 {"stream": "stdout", "text": tail(exc.stdout or "")},
                 {"stream": "stderr", "text": tail(exc.stderr or "")},
             ],
+            started_at=started_at,
             elapsed_seconds=round(elapsed, 3),
+            command_context={
+                "cwd": str(command_cwd),
+                "timeout_seconds": timeout,
+                "target_seconds": target_seconds,
+                "shell": True,
+                "command": command,
+            },
+            trace_metadata=trace_metadata,
         )
         return 0.0
 
@@ -322,6 +420,12 @@ def task_python_compile(root: Path) -> float:
         "python3 -m compileall -q sim/sim services/ap2/src",
         timeout=60,
         target_seconds=4,
+        trace_metadata={
+            "validation": {
+                "kind": "python_compileall",
+                "paths": ["sim/sim", "services/ap2/src"],
+            }
+        },
     )
 
 
@@ -347,6 +451,7 @@ def task_python_tests(root: Path) -> float:
         cwd=root / "sim",
         timeout=120,
         target_seconds=14,
+        trace_metadata=python_sim_trace_metadata(root),
     )
 
 
@@ -357,6 +462,7 @@ def task_rust_tests(root: Path) -> float:
         cargo_cached_test_command(),
         timeout=240,
         target_seconds=70,
+        trace_metadata=cargo_trace_metadata(root),
     )
 
 
@@ -371,6 +477,7 @@ def task_service_builds(root: Path) -> float:
                 cwd=root / "services" / service,
                 timeout=180,
                 target_seconds=target_seconds,
+                trace_metadata=pnpm_trace_metadata(root, root / "services" / service),
             )
         )
     score = sum(scores) / len(scores)
@@ -391,6 +498,7 @@ def task_web_check(root: Path) -> float:
         cwd=root / "web",
         timeout=240,
         target_seconds=70,
+        trace_metadata=pnpm_trace_metadata(root, root / "web"),
     )
 
 
