@@ -151,6 +151,62 @@ def _agent(agent_id: str, *, trust: dict[str, float] | None = None) -> AgentProf
     )
 
 
+def test_protocol_option_sustainability_bias_uses_margin_pressure_and_treasury_fit():
+    config = SimulationConfig(protocols=[Protocol.AP2, Protocol.ATXP])
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.AP2, Protocol.ATXP]
+    agent = _agent("agent_001", trust={"ap2": 0.65, "atxp": 0.65})
+    agent.protocol_preference = None
+
+    for state in engine.protocol_state.values():
+        state.reliability = 0.98
+        state.network_effect = 0.4
+        state.gross_volume_cents = 100_000
+    engine.protocol_state["ap2"].operator_margin_cents = 6_000
+    engine.protocol_state["atxp"].operator_margin_cents = -6_000
+
+    amount = 100_000
+
+    def option(protocol: Protocol, route_id: str, capacity_ratio: float) -> dict:
+        route = next(route for route in ROUTE_MATRIX if route.route_id == route_id)
+        route_fee = max(
+            (amount * route.fee_bps) // 10_000 + route.fixed_fee_cents,
+            route.fixed_fee_cents,
+        )
+        protocol_fee = 2_520 if protocol == Protocol.AP2 else 500
+        return {
+            "protocol": protocol,
+            "route": route,
+            "source_domain": route.source_domain,
+            "target_domain": route.target_domain,
+            "estimated_protocol_fee_cents": protocol_fee,
+            "route_fee_cents": route_fee,
+            "total_required_cents": amount + protocol_fee + route_fee,
+            "capacity_ratio": capacity_ratio,
+            "domain_mismatch": int(route.source_domain != route.target_domain),
+        }
+
+    sustainable = option(Protocol.AP2, "base_direct_usdc", 0.35)
+    stressed = option(Protocol.ATXP, "lifi_base_to_gateway", 1.25)
+
+    assert engine._protocol_self_sustainability_bias(merchant, amount, sustainable) > 0
+    assert engine._protocol_self_sustainability_bias(merchant, amount, stressed) < 0
+    assert engine._score_option(
+        agent,
+        merchant,
+        amount,
+        WorkloadType.TREASURY_REBALANCE,
+        sustainable,
+    ) > engine._score_option(
+        agent,
+        merchant,
+        amount,
+        WorkloadType.TREASURY_REBALANCE,
+        stressed,
+    )
+
+
 def test_world_event_records_summary_and_ndjson_contract(capsys):
     config = SimulationConfig(
         seed=11,

@@ -11,6 +11,12 @@ Session rules:
 - Meridian is a simulation of agents using different payment protocols to initiate transactions inside an evolving economy. Treat live protocol integrations as reference rails and constraints for the simulation, not as the product's primary purpose.
 - Use `ref/` for local reference checkouts such as MiroFish and protocol dependency repos. Reference code is for study and adaptation; do not vendor it into Meridian unless explicitly needed.
 
+Meridian product contract:
+
+- The main system is the simulated economy: autonomous buyer agents, merchants, payment protocols, settlement routes, treasury posture, trust, memory, and rail P&L.
+- Protocol integrations exist to make the simulation realistic. Do not recast Meridian as a wallet, payment gateway, funding dashboard, or SDK demo.
+- Every product-facing change should help agents initiate transactions, compare protocol outcomes, or visualize the ecosystem economy through graph, timeline, reports, and chat.
+
 Meridian work loop:
 
 - Start by reading `docs/simulation-architecture.md` and, for payload or UI stream changes, `docs/simulation-payload-contract.md`.
@@ -18,4 +24,4 @@ Meridian work loop:
 - Prefer small, complete edits that include the matching test, doc, or frontend normalization update in the same pass.
 - After a safe edit, run the narrowest relevant check first, then the whole-app gate when the change could affect contracts.
 - If a reference repo under `ref/` suggests useful behavior, adapt the idea into Meridian's payment-economy model instead of copying its source or shifting the app toward that repo's domain.
-- When a phase feels done, choose the next useful repo-backed step yourself. Do not ask the user what phase comes next.
+- When a phase feels done, choose the next useful repo-backed step yourself. Do not ask the user what phase comes next, and do not pause for phase approval unless the next action is destructive or blocked.

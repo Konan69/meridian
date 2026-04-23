@@ -5,6 +5,19 @@ rails are constraints and calibration points; the product surface is the
 simulation: agents, merchants, stablecoin domains, routes, protocol trust,
 treasury pressure, and emergent adoption.
 
+## Product Contract
+
+Meridian is a simulation of agents initiating transactions across payment
+protocols and settlement routes. The core job is to make the ecosystem economy
+legible: who bought what, which protocol moved the value, how route pressure and
+treasury posture changed, and why agents or merchants changed trust.
+
+Live CDP, Stripe, ATXP, AP2, x402, and related integrations are reference rails
+for realism. They should constrain fees, readiness, latency, failures, balances,
+and settlement vocabulary, but they are not the product center. Product-facing
+work should keep the graph, timeline, reports, and chat focused on the simulated
+economy rather than turning Meridian into an SDK console or funding dashboard.
+
 ## Reference Checkouts
 
 Local references live under `ref/` and are ignored by git.
@@ -82,3 +95,6 @@ Future Evo work should optimize for believable ecosystem behavior:
   margin pressure as economy signals, not just funding diagnostics.
 - The UI explains the simulation state through graph, timeline, report, and
   chat without treating funding status as the main product.
+- Autonomous workers should continue from repo evidence: pick the next safe
+  agent, merchant, route, treasury, report, or visualization improvement, run
+  the relevant check, and only stop for a real blocker.

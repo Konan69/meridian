@@ -40,6 +40,10 @@
 		return `$${(cents / 100).toFixed(2)}`;
 	}
 
+	function signedDollars(cents: number): string {
+		return `${cents >= 0 ? '+' : '-'}${fmtDollars(Math.abs(cents))}`;
+	}
+
 	function fmtMs(n: number): string {
 		if (n < 1) return `${(n * 1000).toFixed(0)}us`;
 		if (n < 100) return `${n.toFixed(1)}ms`;
@@ -73,10 +77,18 @@
 	);
 
 	let marginData = $derived(
-		metrics.map(m => ({
-			protocol: m.protocol,
-			margin_cents: ecosystem[m.protocol]?.operator_margin_cents ?? 0,
-		})).sort((a, b) => b.margin_cents - a.margin_cents)
+		metrics.map(m => {
+			const history = railPnlHistory[m.protocol] ?? [];
+			const finalFromHistory = history.length > 0 ? history[history.length - 1] : undefined;
+			const margin_cents = ecosystem[m.protocol]?.operator_margin_cents ?? finalFromHistory ?? 0;
+			const first_cents = history.length > 0 ? history[0] : margin_cents;
+			return {
+				protocol: m.protocol,
+				margin_cents,
+				delta_cents: margin_cents - first_cents,
+				snapshots: history.length || 1,
+			};
+		}).sort((a, b) => b.margin_cents - a.margin_cents)
 	);
 	let marginAbsMax = $derived(Math.max(...marginData.map(m => Math.abs(m.margin_cents)), 1));
 
@@ -220,9 +232,9 @@
 
 	<!-- 5. Rail P&L -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(marginData.length)}" role="img" aria-label="Rail PnL bar chart" style="width:100%; height:auto;">
-			<title>Rail PnL</title>
-			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Rail P&amp;L</text>
+		<svg viewBox="0 0 {chartWidth} {svgHeight(marginData.length)}" role="img" aria-label="Rail PnL final margin and drift chart" style="width:100%; height:auto;">
+			<title>Rail PnL Final Margin</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Rail P&amp;L Final Margin</text>
 			{#each marginData as m, i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
 				{@const width = (Math.abs(m.margin_cents) / marginAbsMax) * ((chartWidth - labelWidth - chartPadding.right) * 0.9)}
@@ -242,7 +254,7 @@
 					opacity="0.85"
 				/>
 				<text x={labelWidth + 100 + (positive ? width : 0)} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
-					{fmtDollars(m.margin_cents)}
+					{fmtDollars(m.margin_cents)} ({signedDollars(m.delta_cents)}, {m.snapshots}r)
 				</text>
 			{/each}
 		</svg>
@@ -290,18 +302,18 @@
 		</svg>
 	</div>
 
-	<!-- 8. Route Pressure -->
+	<!-- 8. Route Usage -->
 	<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:16px; overflow:hidden;">
-		<svg viewBox="0 0 {chartWidth} {svgHeight(routeData.length)}" role="img" aria-label="Route usage chart" style="width:100%; height:auto;">
-			<title>Route Usage</title>
-			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Route Usage</text>
-			{#each routeData as [route, count], i}
+		<svg viewBox="0 0 {chartWidth} {svgHeight(routeData.length)}" role="img" aria-label="Route reserved principal chart" style="width:100%; height:auto;">
+			<title>Route Usage Reserved Principal</title>
+			<text x="0" y="16" fill="var(--tx-2)" font-size="12" font-weight="600" font-family="var(--sans)">Route Usage · Reserved Principal</text>
+			{#each routeData as [route, usageCents], i}
 				{@const y = chartPadding.top + i * (barHeight + 8)}
-				{@const barW = routeMax > 0 ? (count / routeMax) * (chartWidth - labelWidth - chartPadding.right) : 0}
+				{@const barW = routeMax > 0 ? (usageCents / routeMax) * (chartWidth - labelWidth - chartPadding.right) : 0}
 				<text x="0" y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="10" font-family="var(--mono)">{route}</text>
 				<rect x={labelWidth} y={y} width={Math.max(barW, 2)} height={barHeight} rx="3" fill="var(--mpp)" opacity="0.85" />
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
-					{count}
+					{fmtDollars(usageCents)}
 				</text>
 			{/each}
 		</svg>

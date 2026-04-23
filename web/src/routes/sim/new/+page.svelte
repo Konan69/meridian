@@ -29,6 +29,7 @@
 	import SystemLogs from '$lib/components/SystemLogs.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
 	import MarketCharts from '$lib/components/MarketCharts.svelte';
+	import EconomyObservability from '$lib/components/EconomyObservability.svelte';
 	import { generateDemoGraph } from '$lib/components/graphDemo';
 
 	const ENGINE = 'http://localhost:4080';
@@ -111,7 +112,21 @@
 		);
 		const routeLines = Object.entries(simState.routeUsage)
 			.sort(([, a], [, b]) => b - a)
-			.map(([route, count]) => `  ${route}: ${count}`);
+			.map(([route, usageCents]) => `  ${route}: ${fmt(usageCents)} reserved principal`);
+		const routeMixLines = Object.entries(simState.ecosystem).flatMap(([protocol, state]) =>
+			Object.entries(state.route_mix ?? {})
+				.sort(([, a], [, b]) => b - a)
+				.slice(0, 4)
+				.map(([route, attempts]) => `  ${protocol.toUpperCase()} ${route}: ${attempts} attempts`)
+		);
+		const railPnlLines = Object.entries(simState.ecosystem)
+			.sort(([, a], [, b]) => Math.abs(b.operator_margin_cents) - Math.abs(a.operator_margin_cents))
+			.map(([protocol, state]) => {
+				const history = simState.railPnlHistory[protocol] ?? [];
+				const first = history.length > 0 ? history[0] : state.operator_margin_cents;
+				const drift = state.operator_margin_cents - first;
+				return `  ${protocol.toUpperCase()}: final margin ${fmt(state.operator_margin_cents)}, drift ${signedCents(drift)}, ${history.length || 1} snapshots`;
+			});
 		const routePressureLines = simState.routePressureSummary.slice(0, 6).map((route) =>
 			`  ${route.route_id}: peak ${pct(route.max_capacity_ratio)}, ${route.pressure_rounds} pressure rounds, ${route.source_domain} to ${route.target_domain}`
 		);
@@ -145,8 +160,12 @@
 			...ecosystemLines,
 			'Stablecoin float:',
 			...floatLines,
-			'Route usage:',
+			'Route usage reserved principal:',
 			...routeLines,
+			'Route mix attempt counts:',
+			...routeMixLines,
+			'Rail P&L history:',
+			...railPnlLines,
 			'Route pressure:',
 			...routePressureLines,
 			'Treasury posture:',
@@ -217,6 +236,7 @@
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
 	function pct(n: number) { return `${(n * 100).toFixed(0)}%`; }
 	function signed(n: number) { return `${n >= 0 ? '+' : ''}${n.toFixed(2)}`; }
+	function signedCents(n: number) { return `${n >= 0 ? '+' : '-'}${fmt(Math.abs(n))}`; }
 	function formatLabel(value: string) { return value.replaceAll('_', ' '); }
 	function topEntries<T>(record: Record<string, T>, limit = 6) {
 		return Object.entries(record).slice(0, limit);
@@ -582,7 +602,13 @@
 				title: 'Rail P&L',
 				content: Object.entries(simState.ecosystem)
 					.sort(([, a], [, b]) => b.operator_margin_cents - a.operator_margin_cents)
-					.map(([protocol, state]) => `${protocol.toUpperCase()}: margin ${fmt(state.operator_margin_cents)}`)
+					.map(([protocol, state]) => {
+						const history = simState.railPnlHistory[protocol] ?? [];
+						const first = history.length > 0 ? history[0] : state.operator_margin_cents;
+						const drift = state.operator_margin_cents - first;
+						const routeAttempts = Object.values(state.route_mix ?? {}).reduce((sum, count) => sum + count, 0);
+						return `${protocol.toUpperCase()}: margin ${fmt(state.operator_margin_cents)}, drift ${signedCents(drift)}, ${history.length || 1} snapshots, ${routeAttempts} route-mix attempts`;
+					})
 					.join('\n'),
 				status: 'complete',
 			},
@@ -590,7 +616,7 @@
 				title: 'Route Usage',
 				content: Object.entries(simState.routeUsage)
 					.sort(([, a], [, b]) => b - a)
-					.map(([route, count]) => `${route}: ${count}`)
+					.map(([route, usageCents]) => `${route}: ${fmt(usageCents)} reserved principal`)
 					.join('\n'),
 				status: 'complete',
 			},
@@ -792,6 +818,15 @@
 										</div>
 									{/each}
 								</div>
+
+								<EconomyObservability
+									metrics={simState.metrics}
+									ecosystem={simState.ecosystem}
+									routeUsage={simState.routeUsage}
+									railPnlHistory={simState.railPnlHistory}
+									worldEvents={simState.worldEvents}
+									events={simState.events}
+								/>
 
 								<div class="context-grid" style="gap:12px; margin-bottom:16px;">
 									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">

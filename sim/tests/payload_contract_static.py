@@ -28,7 +28,13 @@ def code_tokens(text: str) -> set[str]:
     return set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", text))
 
 
+def has_phrase(text: str, phrase: str) -> bool:
+    return re.search(r"\s+".join(re.escape(part) for part in phrase.split()), text) is not None
+
+
 def assert_no_payload_doc_drift() -> None:
+    agents_doc_path = ROOT / "AGENTS.md"
+    agents_doc = agents_doc_path.read_text() if agents_doc_path.exists() else ""
     contract = (ROOT / "docs/simulation-payload-contract.md").read_text()
     architecture = (ROOT / "docs/simulation-architecture.md").read_text()
     engine_source = (ROOT / "sim/sim/engine.py").read_text()
@@ -40,6 +46,41 @@ def assert_no_payload_doc_drift() -> None:
     tokens = code_tokens(contract)
 
     assert "docs/simulation-payload-contract.md" in architecture
+
+    required_intent_phrases = {
+        "AGENTS.md": (
+            (agents_doc, "Meridian product contract"),
+            (agents_doc, "agents initiate transactions"),
+            (agents_doc, "visualize the ecosystem economy"),
+            (agents_doc, "Do not ask the user what phase comes next"),
+            (agents_doc, "do not pause for phase approval"),
+        ),
+        "docs/simulation-architecture.md": (
+            (architecture, "Product Contract"),
+            (architecture, "agents initiating transactions across payment protocols"),
+            (architecture, "ecosystem economy"),
+            (architecture, "reference rails for realism"),
+            (architecture, "SDK console or funding dashboard"),
+            (architecture, "only stop for a real blocker"),
+        ),
+        "docs/simulation-payload-contract.md": (
+            (contract, "Simulation Intent"),
+            (contract, "Payloads describe an ecosystem economy"),
+            (contract, "Agent transaction attempts"),
+            (contract, "frontend to visualize why the economy moved"),
+            (contract, "not crowd out the agent/economy story"),
+        ),
+    }
+    missing_intent_phrases = sorted(
+        f"{doc_name}: {phrase}"
+        for doc_name, checks in required_intent_phrases.items()
+        for source, phrase in checks
+        if not has_phrase(source, phrase)
+    )
+    assert missing_intent_phrases == [], (
+        "simulation intent/autonomy guidance missing: "
+        f"{', '.join(missing_intent_phrases)}"
+    )
 
     for payload_type in (
         AgentMemoryEvent,
