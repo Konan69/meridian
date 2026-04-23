@@ -63,6 +63,7 @@ class SimulationEngine:
         self.agent_memory_log: list[AgentMemoryEvent] = []
         self.world_events: list[EconomyWorldEvent] = []
         self.route_pressure_log: list[dict] = []
+        self.treasury_posture_log: list[dict] = []
         self.active_protocols: list[Protocol] = list(self.config.protocols)
         self.protocol_state: dict[str, ProtocolEcosystemState] = {
             proto.value: ProtocolEcosystemState(
@@ -293,6 +294,73 @@ class SimulationEngine:
             key=lambda item: (
                 float(item["max_capacity_ratio"]),
                 int(item["total_usage_cents"]),
+            ),
+            reverse=True,
+        )
+        return rows
+
+    def _record_treasury_posture_events(self, summary: RoundSummary, round_num: int):
+        assert self.economy is not None
+        posture = self.economy.snapshot_treasury_posture()
+        summary.treasury_posture = posture
+        self.treasury_posture_log.extend(
+            {"round": round_num, **entry}
+            for entry in posture
+        )
+
+        visible_posture = [
+            entry for entry in posture
+            if entry["rebalance_ready"] or float(entry["preferred_ratio"]) < 0.55
+        ]
+        for entry in visible_posture[:2]:
+            self._record_world_event(
+                summary,
+                round_num,
+                "treasury_posture",
+                (
+                    f"{entry['merchant']} holds {float(entry['preferred_ratio']) * 100:.1f}% "
+                    f"of treasury in preferred {entry['preferred_domain']} with "
+                    f"${int(entry['preferred_shortfall_cents']) / 100:,.2f} shortfall."
+                ),
+                actor_id=str(entry["merchant_id"]),
+                data=entry,
+            )
+
+    def _build_treasury_posture_summary(self) -> list[dict]:
+        aggregate: dict[str, dict] = {}
+        for entry in self.treasury_posture_log:
+            merchant_id = str(entry["merchant_id"])
+            row = aggregate.setdefault(
+                merchant_id,
+                {
+                    "merchant_id": merchant_id,
+                    "merchant": entry["merchant"],
+                    "preferred_domain": entry["preferred_domain"],
+                    "max_preferred_shortfall_cents": 0,
+                    "min_preferred_ratio": 1.0,
+                    "rebalance_ready_rounds": 0,
+                    "last_preferred_ratio": entry["preferred_ratio"],
+                    "last_total_treasury_cents": entry["total_treasury_cents"],
+                },
+            )
+            row["max_preferred_shortfall_cents"] = max(
+                int(row["max_preferred_shortfall_cents"]),
+                int(entry["preferred_shortfall_cents"]),
+            )
+            row["min_preferred_ratio"] = min(
+                float(row["min_preferred_ratio"]),
+                float(entry["preferred_ratio"]),
+            )
+            if entry["rebalance_ready"]:
+                row["rebalance_ready_rounds"] += 1
+            row["last_preferred_ratio"] = entry["preferred_ratio"]
+            row["last_total_treasury_cents"] = entry["total_treasury_cents"]
+
+        rows = list(aggregate.values())
+        rows.sort(
+            key=lambda item: (
+                int(item["max_preferred_shortfall_cents"]),
+                -float(item["min_preferred_ratio"]),
             ),
             reverse=True,
         )
@@ -1250,6 +1318,7 @@ class SimulationEngine:
         self._record_route_pressure_events(summary, round_num)
         summary.balance_summary = self.economy.snapshot_float_summary()
         summary.treasury_distribution = self.economy.snapshot_treasury_distribution()
+        self._record_treasury_posture_events(summary, round_num)
 
         for event in self.economy.route_events:
             self._emit(event["type"], {k: v.value if hasattr(v, "value") else v for k, v in event.items() if k != "type"})
@@ -1319,6 +1388,7 @@ class SimulationEngine:
                 "protocol_attempts": summary.protocol_attempts,
                 "route_usage": summary.route_usage,
                 "route_pressure": summary.route_pressure,
+                "treasury_posture": summary.treasury_posture,
                 "memory_events": len(summary.agent_memories),
                 "trust_summary": trust_summary,
             },
@@ -1393,6 +1463,7 @@ class SimulationEngine:
         self.result.route_pressure_summary = self._build_route_pressure_summary()
         self.result.float_summary = self.economy.snapshot_float_summary()
         self.result.treasury_distribution = self.economy.snapshot_treasury_distribution()
+        self.result.treasury_posture_summary = self._build_treasury_posture_summary()
         self.result.trust_summary = self._protocol_trust_summary()
         self.result.agent_memory_log = list(self.agent_memory_log)
         self.result.world_events = list(self.world_events)
@@ -1429,6 +1500,7 @@ class SimulationEngine:
             "route_pressure_summary": self.result.route_pressure_summary,
             "float_summary": self.result.float_summary,
             "treasury_distribution": self.result.treasury_distribution,
+            "treasury_posture_summary": self.result.treasury_posture_summary,
             "rail_pnl_history": self.result.rail_pnl_history,
             "balances": self.economy.snapshot_balances(),
             "trust_summary": self.result.trust_summary,

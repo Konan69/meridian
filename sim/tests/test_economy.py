@@ -120,7 +120,7 @@ def test_float_summary_populated():
     assert sum(float_summary.values()) > 0
 
 
-def test_route_pressure_snapshot_marks_used_capacity():
+def test_economy_observability_snapshots_mark_route_and_treasury_pressure():
     agents = generate_agents(1, seed=13)
     merchant = _merchant()
     economy = StablecoinEconomy(
@@ -137,3 +137,23 @@ def test_route_pressure_snapshot_marks_used_capacity():
     assert pressure[0]["pressure_level"] == "elevated"
     assert pressure[0]["capacity_ratio"] == 0.8
     assert "x402" in pressure[0]["protocols"]
+
+    preferred_bucket = economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        merchant.preferred_settlement_domain,
+    )
+    preferred_bucket.available_cents = 1_000
+    gateway_bucket = economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.GATEWAY_UNIFIED_USDC,
+    )
+    gateway_bucket.available_cents = 10_000
+
+    posture = economy.snapshot_treasury_posture()
+
+    assert posture[0]["merchant_id"] == merchant.merchant_id
+    assert posture[0]["preferred_domain"] == BalanceDomain.BASE_USDC.value
+    assert posture[0]["preferred_shortfall_cents"] == 19_000
+    assert posture[0]["rebalance_ready"] is True

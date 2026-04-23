@@ -517,6 +517,18 @@ def test_self_sustainability_report_section():
             "last_pressure_level": "elevated",
         }
     ]
+    result.treasury_posture_summary = [
+        {
+            "merchant_id": "merchant_test",
+            "merchant": "merchant_test",
+            "preferred_domain": "base_usdc",
+            "max_preferred_shortfall_cents": 19_000,
+            "min_preferred_ratio": 0.09,
+            "rebalance_ready_rounds": 1,
+            "last_preferred_ratio": 0.09,
+            "last_total_treasury_cents": 11_000,
+        }
+    ]
     result.world_events = [
         EconomyWorldEvent(
             round_num=1,
@@ -524,6 +536,12 @@ def test_self_sustainability_report_section():
             summary="merchant_test rebalanced $25.00 from gateway_unified_usdc to base_usdc.",
             actor_id="merchant_test",
             protocol="atxp",
+        ),
+        EconomyWorldEvent(
+            round_num=1,
+            event_type="treasury_posture",
+            summary="merchant_test holds 9.0% of treasury in preferred base_usdc.",
+            actor_id="merchant_test",
         ),
         EconomyWorldEvent(
             round_num=1,
@@ -539,6 +557,8 @@ def test_self_sustainability_report_section():
     assert signals is not None
     assert signals["status"] == "ok"
     assert "Treasury rebalances: 1 succeeded, 0 failed" in signals["content"]
+    assert "Treasury posture events: 1" in signals["content"]
+    assert "merchant_test" in signals["content"]
     assert "base_direct_usdc" in signals["content"]
     assert "$20,000.00" in signals["content"]
 

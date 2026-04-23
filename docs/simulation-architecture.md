@@ -52,6 +52,8 @@ The simulation API streams NDJSON. Important event types:
   `world_event` data for economy analysis.
 - `treasury_rebalance`: merchant treasury recycling between settlement domains,
   also mirrored as `world_event` data.
+- `treasury_posture`: merchant preferred-domain shortfall and rebalance
+  readiness, mirrored as `world_event` data.
 - `merchant_switch`: merchant protocol adoption/removal.
 - `agent_preference_shift`: agent preference changed from memory.
 - `simulation_complete`: final summaries, balances, memory log, world events.

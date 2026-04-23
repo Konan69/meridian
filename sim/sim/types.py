@@ -431,6 +431,7 @@ class RoundSummary:
     route_pressure: list[dict[str, Any]] = field(default_factory=list)
     balance_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
+    treasury_posture: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -449,4 +450,5 @@ class SimulationResult:
     route_pressure_summary: list[dict[str, Any]] = field(default_factory=list)
     float_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
+    treasury_posture_summary: list[dict[str, Any]] = field(default_factory=list)
     rail_pnl_history: dict[str, list[int]] = field(default_factory=dict)

@@ -140,6 +140,10 @@ class ReportGenerator:
             event for event in self.result.world_events
             if event.event_type == "treasury_rebalance_failed"
         ]
+        treasury_posture_events = [
+            event for event in self.result.world_events
+            if event.event_type == "treasury_posture"
+        ]
         route_events = [
             event for event in self.result.world_events
             if event.event_type == "route_pressure"
@@ -151,7 +155,9 @@ class ReportGenerator:
         if (
             not treasury_ok
             and not treasury_failed
+            and not treasury_posture_events
             and not route_events
+            and not self.result.treasury_posture_summary
             and not self.result.route_pressure_summary
             and not has_margin
         ):
@@ -163,8 +169,20 @@ class ReportGenerator:
 
         lines = [
             f"Treasury rebalances: {len(treasury_ok)} succeeded, {len(treasury_failed)} failed",
+            f"Treasury posture events: {len(treasury_posture_events)}",
             f"Route pressure events: {len(route_events)}",
         ]
+
+        if self.result.treasury_posture_summary:
+            lines.append("")
+            lines.append("Treasury posture watchlist:")
+            for merchant in self.result.treasury_posture_summary[:5]:
+                lines.append(
+                    f"  {merchant['merchant']}: max_shortfall="
+                    f"{_cents_to_dollars(int(merchant['max_preferred_shortfall_cents']))}, "
+                    f"min_preferred={float(merchant['min_preferred_ratio']) * 100:.1f}%, "
+                    f"ready_rounds={merchant['rebalance_ready_rounds']}"
+                )
 
         if self.result.route_pressure_summary:
             lines.append("")
@@ -191,7 +209,7 @@ class ReportGenerator:
                     f"scale_pressure={state.scale_pressure:.2f}"
                 )
 
-        recent = (treasury_ok + treasury_failed + route_events)[-5:]
+        recent = (treasury_ok + treasury_failed + treasury_posture_events + route_events)[-5:]
         if recent:
             lines.append("")
             lines.append("Recent sustainability events:")
