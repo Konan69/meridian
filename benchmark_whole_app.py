@@ -305,13 +305,20 @@ def task_python_tests(root: Path) -> float:
     return run_command(
         root,
         "python_sim_tests",
-        'VENVDIR="${EVO_TRACES_DIR:-/tmp/meridian-evo-bench}/python-sim-venv" && '
-        'if [ ! -f "$VENVDIR/.ready" ]; then '
+        'CACHE_ROOT="${XDG_CACHE_HOME:-/tmp}/meridian-evo-bench" && '
+        'PY_TAG="$(python3 -c \'import sys; print(sys.implementation.cache_tag)\')" && '
+        'DEPS_KEY="$(sha256sum pyproject.toml uv.lock | sha256sum | cut -d " " -f 1)" && '
+        'SHORT_KEY="$(printf "%s" "$DEPS_KEY" | cut -c 1-16)" && '
+        'VENVDIR="$CACHE_ROOT/python-sim-venv-$PY_TAG-$SHORT_KEY" && '
+        'READY="$VENVDIR/.ready-$SHORT_KEY" && '
+        'if [ ! -f "$READY" ]; then '
+        'rm -rf "$VENVDIR" && '
         'python3 -m venv "$VENVDIR" && '
-        '"$VENVDIR/bin/python3" -m pip install -q -e \'.[dev]\' && '
-        'touch "$VENVDIR/.ready"; '
+        '"$VENVDIR/bin/python3" -m pip install -q --disable-pip-version-check '
+        '"aiohttp>=3.9.0" "pytest>=8.0" "pytest-asyncio>=0.23" && '
+        'touch "$READY"; '
         'fi && '
-        '"$VENVDIR/bin/python3" -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q',
+        'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" "$VENVDIR/bin/python3" -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q',
         cwd=root / "sim",
         timeout=120,
         target_seconds=14,
