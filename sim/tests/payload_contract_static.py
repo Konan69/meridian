@@ -41,6 +41,8 @@ def assert_no_payload_doc_drift() -> None:
     helper_source = (ROOT / "web/src/lib/simStream.ts").read_text()
     stream_contract_source = (ROOT / "web/src/lib/simStream.contract.ts").read_text()
     timeline_source = (ROOT / "web/src/lib/components/Timeline.svelte").read_text()
+    observability_source = (ROOT / "web/src/lib/components/EconomyObservability.svelte").read_text()
+    workbench_source = (ROOT / "web/src/routes/sim/new/+page.svelte").read_text()
     store_source = (ROOT / "web/src/lib/stores/simulation.svelte.ts").read_text()
     report_source = (ROOT / "sim/sim/report.py").read_text()
     tokens = code_tokens(contract)
@@ -61,6 +63,7 @@ def assert_no_payload_doc_drift() -> None:
             (architecture, "ecosystem economy"),
             (architecture, "reference rails for realism"),
             (architecture, "SDK console or funding dashboard"),
+            (architecture, "workbench economy observability surface"),
             (architecture, "only stop for a real blocker"),
         ),
         "docs/simulation-payload-contract.md": (
@@ -69,6 +72,11 @@ def assert_no_payload_doc_drift() -> None:
             (contract, "Agent transaction attempts"),
             (contract, "frontend to visualize why the economy moved"),
             (contract, "not crowd out the agent/economy story"),
+            (contract, "Economy Observability Surface"),
+            (contract, "Route Ledger"),
+            (contract, "Reserved Principal"),
+            (contract, "Merchant Switches"),
+            (contract, "Reason Evidence"),
         ),
     }
     missing_intent_phrases = sorted(
@@ -252,6 +260,109 @@ def assert_no_payload_doc_drift() -> None:
     assert missing_accounting_sources == [], (
         "accounting unit static anchors missing: "
         f"{', '.join(missing_accounting_sources)}"
+    )
+
+    required_observability_sources = {
+        "store observability field contract": (
+            store_source,
+            "export interface EconomyObservabilityStoreFields",
+        ),
+        "store observability metrics field": (
+            store_source,
+            "metrics: ProtoMetrics[]",
+        ),
+        "store observability route usage field": (
+            store_source,
+            "routeUsage: Record<string, number>",
+        ),
+        "store observability rail pnl field": (
+            store_source,
+            "railPnlHistory: Record<string, number[]>",
+        ),
+        "workbench observability import": (
+            workbench_source,
+            "import EconomyObservability from '$lib/components/EconomyObservability.svelte'",
+        ),
+        "workbench observability render": (
+            workbench_source,
+            "<EconomyObservability",
+        ),
+        "workbench observability route prop": (
+            workbench_source,
+            "routeUsage={simState.routeUsage}",
+        ),
+        "workbench observability rail prop": (
+            workbench_source,
+            "railPnlHistory={simState.railPnlHistory}",
+        ),
+        "workbench route usage normalizer": (
+            workbench_source,
+            "simState.routeUsage = normalizeNumberRecord(ev.route_usage_summary)",
+        ),
+        "workbench rail pnl normalizer": (
+            workbench_source,
+            "simState.railPnlHistory = normalizeNumberArrayRecord(ev.rail_pnl_history)",
+        ),
+        "observability route ledger label": (
+            observability_source,
+            "Route Ledger",
+        ),
+        "observability reserved principal label": (
+            observability_source,
+            "Reserved Principal",
+        ),
+        "observability route mix attempts label": (
+            observability_source,
+            "route-mix attempts",
+        ),
+        "observability rail pnl label": (
+            observability_source,
+            "Rail P&amp;L",
+        ),
+        "observability margin drift label": (
+            observability_source,
+            "Margin Drift",
+        ),
+        "observability merchant switch label": (
+            observability_source,
+            "Merchant Switches",
+        ),
+        "observability reason evidence label": (
+            observability_source,
+            "Reason Evidence",
+        ),
+        "observability direct merchant switch source": (
+            observability_source,
+            "event.type === 'merchant_switch'",
+        ),
+        "observability world merchant switch source": (
+            observability_source,
+            "merchant_protocol_mix_changed",
+        ),
+        "stream contract observability helper": (
+            stream_contract_source,
+            "requireEconomyObservabilityContract",
+        ),
+        "stream contract observability store type": (
+            stream_contract_source,
+            "EconomyObservabilityStoreFields",
+        ),
+        "stream contract observability route ledger value": (
+            stream_contract_source,
+            "routeLedgerValue",
+        ),
+        "stream contract observability merchant evidence": (
+            stream_contract_source,
+            "switchReason",
+        ),
+    }
+    missing_observability_sources = sorted(
+        label for label, (source, phrase) in required_observability_sources.items()
+        if phrase not in source
+    )
+    assert missing_observability_sources == [], (
+        "economy observability static anchors missing: "
+        f"{', '.join(missing_observability_sources)}"
     )
 
 

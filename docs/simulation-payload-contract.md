@@ -18,6 +18,24 @@ settlement domain, readiness, fee, latency, balance, failure, or route capacity.
 They should not crowd out the agent/economy story that graph, timeline, reports,
 and chat are expected to explain.
 
+## Economy Observability Surface
+
+The current workbench renders an `EconomyObservability` panel from `simState`.
+That surface uses `metrics`, `ecosystem`, `routeUsage`, `railPnlHistory`,
+`worldEvents`, and raw `events` to explain the economy after each stream update.
+
+Durable UI anchors:
+
+- Route Ledger / Reserved Principal: `route_usage_summary` plus `route_mix`.
+- Rail P&L / Margin Drift: `rail_pnl_history` plus
+  `ecosystem_summary.<protocol>.operator_margin_cents`.
+- Merchant Switches / Reason Evidence: `merchant_switch` events plus
+  `merchant_protocol_mix_changed` world events.
+
+Keep these as observability labels for simulated economy behavior. Provider
+readiness, funding, and settlement diagnostics can inform the trace, but they
+should not replace the route, rail, trust, and merchant evidence surfaced here.
+
 ## MiroFish Adaptation
 
 - `SimulationConfig.world_seed`, `scenario_prompt`, and `stable_universe`
