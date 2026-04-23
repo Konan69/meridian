@@ -728,6 +728,55 @@ def test_merchants_switch_protocols_from_trust_memory_and_world_pressure():
     assert removed["evidence"]["removal_risk"] >= 0.28
 
 
+def test_merchants_prune_protocols_from_recent_route_pressure_memory():
+    config = SimulationConfig(
+        seed=27,
+        protocols=[Protocol.X402, Protocol.AP2, Protocol.MPP],
+        social_memory_strength=0.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.X402, Protocol.AP2, Protocol.MPP]
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent("agent_001", trust={"x402": 0.54, "ap2": 0.74, "mpp": 0.74}),
+        _agent("agent_002", trust={"x402": 0.54, "ap2": 0.74, "mpp": 0.74}),
+    ]
+    for state in engine.protocol_state.values():
+        state.reliability = 0.97
+        state.network_effect = 0.5
+        state.operator_margin_cents = 0
+
+    engine.route_pressure_log = [
+        {
+            "round": 6,
+            "route_id": "gateway_batch_settle",
+            "source_domain": BalanceDomain.BASE_USDC.value,
+            "target_domain": BalanceDomain.GATEWAY_UNIFIED_USDC.value,
+            "primitive": "batched_nanopayment",
+            "protocols": ["x402"],
+            "usage_cents": 5_600_000,
+            "capacity_cents": 3_500_000,
+            "capacity_ratio": 1.6,
+            "pressure_level": "critical",
+        }
+    ]
+    summary = RoundSummary(round_num=7)
+
+    engine._evolve_market(7, summary)
+
+    assert Protocol.X402 not in merchant.accepted_protocols
+    removed = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "removed"
+    ][0]
+    assert removed["protocol"] == "x402"
+    assert removed["evidence"]["route_pressure"] == 1.36
+    assert removed["evidence"]["removal_risk"] >= 0.28
+
+
 class _OfflineEconomy:
     total_route_usage = {"base-direct": 1}
 

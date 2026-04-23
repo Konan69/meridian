@@ -114,6 +114,24 @@ const observabilityEvent = {
   }],
 } satisfies SimEvent;
 
+const partialObservabilityEvent = {
+  type: 'simulation_complete',
+  ecosystem_summary: {
+    ap2: {
+      operator_margin_cents: -25,
+      route_mix: {
+        'cdp-base->ap2': '-4',
+      },
+    },
+  },
+  route_usage_summary: {
+    'cdp-base->ap2': '-500',
+  },
+  rail_pnl_history: {
+    ap2: [120, 'bad', -25],
+  },
+} satisfies SimEvent;
+
 const merchantSwitchEvent = {
   type: 'merchant_switch',
   merchant_id: 'merchant_1',
@@ -158,6 +176,9 @@ simState.railPnlHistory = normalizeNumberArrayRecord(observabilityEvent.rail_pnl
 simState.worldEvents = observabilityWorldEvents;
 simState.events = [merchantSwitchEvent];
 
+const partialRouteUsage = normalizeNumberRecord(partialObservabilityEvent.route_usage_summary);
+const partialEcosystem = normalizeEcosystemSummary(partialObservabilityEvent.ecosystem_summary);
+const partialRailPnlHistory = normalizeNumberArrayRecord(partialObservabilityEvent.rail_pnl_history);
 const economyObservabilityState: EconomyObservabilityStoreFields = {
   metrics: simState.metrics,
   ecosystem: simState.ecosystem,
@@ -226,6 +247,9 @@ export const streamNormalizationContract = {
     worldSwitchType: economyObservabilityState.worldEvents[0]?.event_type,
     switchReason: economyObservabilityState.worldEvents[0]?.data?.reason,
     metricsProtocol: economyObservabilityState.metrics[0]?.protocol,
+    nonNegativeRouteLedgerValue: Math.max(0, partialRouteUsage['cdp-base->ap2'] ?? 0),
+    nonNegativeRouteMixAttempts: Math.max(0, Math.trunc(partialEcosystem.ap2?.route_mix?.['cdp-base->ap2'] ?? 0)),
+    railLossSnapshot: partialRailPnlHistory.ap2?.slice(-1)[0],
   }),
 };
 
@@ -237,6 +261,9 @@ type EconomyObservabilityContract = {
   worldSwitchType?: unknown;
   switchReason?: unknown;
   metricsProtocol?: unknown;
+  nonNegativeRouteLedgerValue: number;
+  nonNegativeRouteMixAttempts: number;
+  railLossSnapshot?: unknown;
 };
 
 function requireMemory(memory: AgentMemoryEvent | null): AgentMemoryEvent {
@@ -278,6 +305,15 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.metricsProtocol !== 'ap2') {
     throw new Error('economy observability contract missing protocol metrics');
+  }
+  if (contract.nonNegativeRouteLedgerValue !== 0) {
+    throw new Error('economy observability contract failed reserved principal clamp');
+  }
+  if (contract.nonNegativeRouteMixAttempts !== 0) {
+    throw new Error('economy observability contract failed route mix attempt clamp');
+  }
+  if (contract.railLossSnapshot !== -25) {
+    throw new Error('economy observability contract should preserve negative rail margin');
   }
   return contract;
 }

@@ -86,8 +86,10 @@
 		const mix = new Map<string, Map<string, number>>();
 		for (const [protocol, ecosystemState] of Object.entries(state)) {
 			for (const [route, count] of Object.entries(ecosystemState.route_mix ?? {})) {
+				const safeCount = wholeNonNegative(count);
+				if (safeCount <= 0) continue;
 				const protocolMix = mix.get(route) ?? new Map<string, number>();
-				protocolMix.set(protocol, (protocolMix.get(protocol) ?? 0) + count);
+				protocolMix.set(protocol, (protocolMix.get(protocol) ?? 0) + safeCount);
 				mix.set(route, protocolMix);
 			}
 		}
@@ -105,7 +107,7 @@
 					.sort((a, b) => b.count - a.count || a.protocol.localeCompare(b.protocol));
 				return {
 					route,
-					usageCents: usage[route] ?? 0,
+					usageCents: nonNegativeNumber(usage[route]),
 					attempts: protocols.reduce((sum, part) => sum + part.count, 0),
 					protocols,
 				};
@@ -126,20 +128,20 @@
 
 		return Array.from(protocols)
 			.map((protocol) => {
-				const history = historyByProtocol[protocol] ?? [];
+				const history = finiteValues(historyByProtocol[protocol]);
 				const ecosystemState = state[protocol];
 				const lastHistoryValue = history.length > 0 ? history[history.length - 1] : undefined;
-				const marginCents = ecosystemState?.operator_margin_cents ?? lastHistoryValue ?? 0;
+				const marginCents = numberFrom(ecosystemState?.operator_margin_cents, lastHistoryValue) ?? 0;
 				const firstHistoryValue = history.length > 0 ? history[0] : marginCents;
 				const routeAttempts = Object.values(ecosystemState?.route_mix ?? {})
-					.reduce((sum, count) => sum + count, 0);
+					.reduce((sum, count) => sum + wholeNonNegative(count), 0);
 				return {
 					protocol,
 					marginCents,
 					deltaCents: marginCents - firstHistoryValue,
 					snapshots: history.length,
 					routeAttempts,
-					reliability: ecosystemState?.reliability ?? null,
+					reliability: numberFrom(ecosystemState?.reliability),
 				};
 			})
 			.sort((a, b) => Math.abs(b.marginCents) - Math.abs(a.marginCents) || a.protocol.localeCompare(b.protocol));
@@ -206,7 +208,8 @@
 	}
 
 	function money(cents: number) {
-		const amount = cents / 100;
+		const safeCents = numberFrom(cents) ?? 0;
+		const amount = safeCents / 100;
 		if (Math.abs(amount) >= 1000) {
 			return amount.toLocaleString('en-US', {
 				style: 'currency',
@@ -223,15 +226,16 @@
 	}
 
 	function signedMoney(cents: number) {
-		return `${cents >= 0 ? '+' : ''}${money(cents)}`;
+		const safeCents = numberFrom(cents) ?? 0;
+		return `${safeCents >= 0 ? '+' : ''}${money(safeCents)}`;
 	}
 
 	function pct(value: number | null) {
-		return value == null ? 'n/a' : `${(value * 100).toFixed(0)}%`;
+		return value == null || !Number.isFinite(value) ? 'n/a' : `${(value * 100).toFixed(0)}%`;
 	}
 
 	function barWidth(value: number, max: number) {
-		if (!Number.isFinite(value) || value === 0 || max <= 0) return '0%';
+		if (!Number.isFinite(value) || !Number.isFinite(max) || value === 0 || max <= 0) return '0%';
 		return `${Math.max(2, Math.min(100, (Math.abs(value) / max) * 100)).toFixed(1)}%`;
 	}
 
@@ -269,6 +273,21 @@
 			}
 		}
 		return null;
+	}
+
+	function nonNegativeNumber(value: unknown) {
+		return Math.max(0, numberFrom(value) ?? 0);
+	}
+
+	function wholeNonNegative(value: unknown) {
+		return Math.max(0, Math.trunc(numberFrom(value) ?? 0));
+	}
+
+	function finiteValues(values: number[] | undefined) {
+		return (values ?? []).flatMap((value) => {
+			const numeric = numberFrom(value);
+			return numeric == null ? [] : [numeric];
+		});
 	}
 </script>
 

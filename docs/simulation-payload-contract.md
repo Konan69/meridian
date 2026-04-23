@@ -32,6 +32,14 @@ Durable UI anchors:
 - Merchant Switches / Reason Evidence: `merchant_switch` events plus
   `merchant_protocol_mix_changed` world events.
 
+Display edge rules:
+
+- Treat missing or non-finite display numbers as zero before drawing bars.
+- Clamp reserved principal and route-mix attempts at zero; rail P&L margins may
+  remain negative because losses are meaningful operator-margin data.
+- Keep partial merchant switch evidence readable with `unknown` / `n/a`
+  fallbacks instead of hiding the switch row.
+
 Keep these as observability labels for simulated economy behavior. Provider
 readiness, funding, and settlement diagnostics can inform the trace, but they
 should not replace the route, rail, trust, and merchant evidence surfaced here.

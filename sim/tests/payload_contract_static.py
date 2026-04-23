@@ -77,6 +77,8 @@ def assert_no_payload_doc_drift() -> None:
             (contract, "Reserved Principal"),
             (contract, "Merchant Switches"),
             (contract, "Reason Evidence"),
+            (contract, "Display edge rules"),
+            (contract, "non-finite display numbers"),
         ),
     }
     missing_intent_phrases = sorted(
@@ -339,6 +341,18 @@ def assert_no_payload_doc_drift() -> None:
             observability_source,
             "merchant_protocol_mix_changed",
         ),
+        "observability route principal clamp": (
+            observability_source,
+            "nonNegativeNumber(usage[route])",
+        ),
+        "observability route mix clamp": (
+            observability_source,
+            "wholeNonNegative(count)",
+        ),
+        "observability finite rail history": (
+            observability_source,
+            "finiteValues(historyByProtocol[protocol])",
+        ),
         "stream contract observability helper": (
             stream_contract_source,
             "requireEconomyObservabilityContract",
@@ -354,6 +368,22 @@ def assert_no_payload_doc_drift() -> None:
         "stream contract observability merchant evidence": (
             stream_contract_source,
             "switchReason",
+        ),
+        "stream contract partial observability fixture": (
+            stream_contract_source,
+            "partialObservabilityEvent",
+        ),
+        "stream contract route ledger clamp": (
+            stream_contract_source,
+            "nonNegativeRouteLedgerValue",
+        ),
+        "stream contract route mix clamp": (
+            stream_contract_source,
+            "nonNegativeRouteMixAttempts",
+        ),
+        "stream contract rail loss preserved": (
+            stream_contract_source,
+            "railLossSnapshot",
         ),
     }
     missing_observability_sources = sorted(

@@ -803,13 +803,28 @@ class SimulationEngine:
 
     def _route_pressure_by_protocol(self, summary: RoundSummary) -> dict[str, float]:
         pressure: dict[str, float] = defaultdict(float)
-        for entry in summary.route_pressure:
+        def apply_entry(entry: dict, weight: float = 1.0):
             protocols = entry.get("protocols")
             if not isinstance(protocols, list):
-                continue
-            capacity_ratio = float(entry.get("capacity_ratio", 0.0))
+                return
+            try:
+                capacity_ratio = float(entry.get("capacity_ratio", 0.0)) * weight
+            except (TypeError, ValueError):
+                return
             for protocol in protocols:
                 pressure[str(protocol)] = max(pressure[str(protocol)], capacity_ratio)
+
+        for entry in summary.route_pressure:
+            apply_entry(entry)
+
+        for entry in self.route_pressure_log[-24:]:
+            try:
+                age = summary.round_num - int(entry.get("round", summary.round_num))
+            except (TypeError, ValueError):
+                continue
+            if age < 1 or age > 3:
+                continue
+            apply_entry(entry, 0.85**age)
         return dict(pressure)
 
     def _merchant_treasury_posture(self, summary: RoundSummary, merchant: MerchantProfile) -> dict | None:
