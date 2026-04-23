@@ -48,9 +48,13 @@ export interface AgentMemoryEvent {
   sentiment_delta: number;
   trust_before: number;
   trust_after: number;
+  outcome?: string;
+  trust_driver?: string;
+  ecosystem_pressure?: number;
   amount_cents: number;
   merchant_id?: string | null;
   merchant_name?: string | null;
+  merchant_reputation?: number | null;
   product_name?: string | null;
   route_id?: string | null;
   reason: string;
@@ -94,6 +98,29 @@ export interface BalanceSnapshot {
   reserved_cents: number;
   pending_in_cents: number;
   pending_out_cents: number;
+}
+
+export interface RoutePressureSummary {
+  route_id: string;
+  source_domain: string;
+  target_domain: string;
+  primitive: string;
+  protocols: string[];
+  total_usage_cents: number;
+  max_capacity_ratio: number;
+  pressure_rounds: number;
+  last_pressure_level: string;
+}
+
+export interface TreasuryPostureSummary {
+  merchant_id: string;
+  merchant: string;
+  preferred_domain: string;
+  max_preferred_shortfall_cents: number;
+  min_preferred_ratio: number;
+  rebalance_ready_rounds: number;
+  last_preferred_ratio: number;
+  last_total_treasury_cents: number;
 }
 
 export interface SimConfig {
@@ -159,6 +186,8 @@ function createSimState() {
   let treasuryDistribution = $state<Record<string, Record<string, number>>>({});
   let railPnlHistory = $state<Record<string, number[]>>({});
   let floatSummary = $state<Record<string, number>>({});
+  let routePressureSummary = $state<RoutePressureSummary[]>([]);
+  let treasuryPostureSummary = $state<TreasuryPostureSummary[]>([]);
   let trustSummary = $state<Record<string, { avg: number; min: number; max: number }>>({});
   let agentMemories = $state<AgentMemoryEvent[]>([]);
   let worldEvents = $state<EconomyWorldEvent[]>([]);
@@ -203,6 +232,8 @@ function createSimState() {
     treasuryDistribution = {};
     railPnlHistory = {};
     floatSummary = {};
+    routePressureSummary = [];
+    treasuryPostureSummary = [];
     trustSummary = {};
     agentMemories = [];
     worldEvents = [];
@@ -349,6 +380,18 @@ function createSimState() {
     },
     set floatSummary(v: Record<string, number>) {
       floatSummary = v;
+    },
+    get routePressureSummary() {
+      return routePressureSummary;
+    },
+    set routePressureSummary(v: RoutePressureSummary[]) {
+      routePressureSummary = v;
+    },
+    get treasuryPostureSummary() {
+      return treasuryPostureSummary;
+    },
+    set treasuryPostureSummary(v: TreasuryPostureSummary[]) {
+      treasuryPostureSummary = v;
     },
     get trustSummary() {
       return trustSummary;

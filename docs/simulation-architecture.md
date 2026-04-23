@@ -22,6 +22,16 @@ MiroFish patterns adapted into Meridian:
 - Action stream: each round emits transaction, route, trust, and world events.
 - Deep interaction: reports and chat are grounded in the simulation trace.
 
+Reference use rules:
+
+- Borrow workflow shape from `ref/mirofish`, not its domain assumptions.
+- Use protocol repos under `ref/deps/*` for settlement vocabulary, latency,
+  fee, failure, and readiness constraints.
+- Use OASIS and CAMEL as multi-agent economy references for role design,
+  interaction loops, and evaluation ideas.
+- Do not vendor reference source into Meridian unless a future task explicitly
+  needs a small, attributed adaptation.
+
 ## Economy Loop
 
 Each simulation round:
@@ -57,6 +67,9 @@ The simulation API streams NDJSON. Important event types:
 - `merchant_switch`: merchant protocol adoption/removal.
 - `agent_preference_shift`: agent preference changed from memory.
 - `simulation_complete`: final summaries, balances, memory log, world events.
+
+For field-level payload details, frontend normalization helpers, and the
+MiroFish adaptation boundary, see `docs/simulation-payload-contract.md`.
 
 ## Optimization Target
 

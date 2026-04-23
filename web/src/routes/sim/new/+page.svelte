@@ -12,7 +12,9 @@
 		normalizeNumberArrayRecord,
 		normalizeNumberRecord,
 		normalizeProtocolSummaries,
+		normalizeRoutePressureSummaries,
 		normalizeTimelineEvent,
+		normalizeTreasuryPostureSummaries,
 		normalizeTrustSummary,
 		normalizeWorldEvent,
 		normalizeWorldEvents,
@@ -110,11 +112,20 @@
 		const routeLines = Object.entries(simState.routeUsage)
 			.sort(([, a], [, b]) => b - a)
 			.map(([route, count]) => `  ${route}: ${count}`);
+		const routePressureLines = simState.routePressureSummary.slice(0, 6).map((route) =>
+			`  ${route.route_id}: peak ${pct(route.max_capacity_ratio)}, ${route.pressure_rounds} pressure rounds, ${route.source_domain} to ${route.target_domain}`
+		);
+		const treasuryPostureLines = simState.treasuryPostureSummary.slice(0, 6).map((posture) =>
+			`  ${posture.merchant}: ${pct(posture.min_preferred_ratio)} min preferred ${posture.preferred_domain}, max shortfall ${fmt(posture.max_preferred_shortfall_cents)}, rebalance-ready rounds ${posture.rebalance_ready_rounds}`
+		);
 		const trustLines = Object.entries(simState.trustSummary).map(([protocol, trust]) =>
 			`  ${protocol.toUpperCase()}: avg ${trust.avg.toFixed(2)}, min ${trust.min.toFixed(2)}, max ${trust.max.toFixed(2)}`
 		);
 		const memoryLines = simState.agentMemories.slice(-8).map((memory) =>
-			`  R${memory.round_num} ${memory.agent_name}: ${memory.protocol.toUpperCase()} trust ${memory.trust_before.toFixed(2)} -> ${memory.trust_after.toFixed(2)} (${memory.reason})`
+			`  R${memory.round_num} ${memory.agent_name}: ${memory.protocol.toUpperCase()} trust ${memory.trust_before.toFixed(2)} -> ${memory.trust_after.toFixed(2)} (${memory.trust_driver ?? memory.reason})`
+		);
+		const driverLines = trustDriverRows(6).map((driver) =>
+			`  ${formatLabel(driver.label)}: ${driver.count} memories, net trust ${signed(driver.delta)}`
 		);
 		const worldLines = simState.worldEvents.slice(-8).map((event) =>
 			`  R${event.round_num}: ${event.summary}`
@@ -136,8 +147,14 @@
 			...floatLines,
 			'Route usage:',
 			...routeLines,
+			'Route pressure:',
+			...routePressureLines,
+			'Treasury posture:',
+			...treasuryPostureLines,
 			'Agent trust:',
 			...trustLines,
+			'Contextual trust drivers:',
+			...driverLines,
 			'Recent agent memories:',
 			...memoryLines,
 			'Recent world events:',
@@ -198,8 +215,30 @@
 
 	function fmt(n: number) { return `$${(n / 100).toFixed(2)}`; }
 	function ms(n: number) { return n < 1 ? `${(n * 1000).toFixed(0)}μs` : n < 100 ? `${n.toFixed(2)}ms` : `${n.toFixed(0)}ms`; }
+	function pct(n: number) { return `${(n * 100).toFixed(0)}%`; }
+	function signed(n: number) { return `${n >= 0 ? '+' : ''}${n.toFixed(2)}`; }
+	function formatLabel(value: string) { return value.replaceAll('_', ' '); }
 	function topEntries<T>(record: Record<string, T>, limit = 6) {
 		return Object.entries(record).slice(0, limit);
+	}
+	function trustDriverRows(limit = 4) {
+		const rows = new Map<string, { label: string; count: number; delta: number }>();
+		for (const memory of simState.agentMemories) {
+			const label = memory.trust_driver ?? memory.reason ?? memory.outcome ?? 'memory_event';
+			const row = rows.get(label) ?? { label, count: 0, delta: 0 };
+			row.count += 1;
+			row.delta += memory.sentiment_delta;
+			rows.set(label, row);
+		}
+		return Array.from(rows.values())
+			.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.count - a.count)
+			.slice(0, limit);
+	}
+	function marginRows(limit = 4) {
+		return Object.entries(simState.ecosystem)
+			.map(([protocol, state]) => ({ protocol, margin: state.operator_margin_cents }))
+			.sort((a, b) => Math.abs(b.margin) - Math.abs(a.margin))
+			.slice(0, limit);
 	}
 
 	type PurchaseLike = {
@@ -324,6 +363,8 @@
 		simState.agentMemories = [];
 		simState.worldEvents = [];
 		simState.trustSummary = {};
+		simState.routePressureSummary = [];
+		simState.treasuryPostureSummary = [];
 		simState.addLog('Starting simulation...');
 
 		try {
@@ -402,8 +443,10 @@
 					simState.ecosystem = normalizeEcosystemSummary(ev.ecosystem_summary);
 					simState.balances = normalizeBalanceSnapshots(ev.balances);
 					simState.routeUsage = normalizeNumberRecord(ev.route_usage_summary);
+					simState.routePressureSummary = normalizeRoutePressureSummaries(ev.route_pressure_summary);
 					simState.floatSummary = normalizeNumberRecord(ev.float_summary);
 					simState.treasuryDistribution = normalizeNestedNumberRecord(ev.treasury_distribution);
+					simState.treasuryPostureSummary = normalizeTreasuryPostureSummaries(ev.treasury_posture_summary);
 					simState.railPnlHistory = normalizeNumberArrayRecord(ev.rail_pnl_history);
 					simState.trustSummary = normalizeTrustSummary(ev.trust_summary);
 					simState.agentMemories = completeMemories ?? simState.agentMemories;
@@ -500,6 +543,21 @@
 					),
 					...simState.worldEvents.slice(-4).map((event) => `R${event.round_num}: ${event.summary}`),
 				].filter(Boolean).join('\n'),
+				status: 'complete',
+			},
+			{
+				title: 'Self-Sustainability Signals',
+				content: [
+					...simState.treasuryPostureSummary.slice(0, 4).map((posture) =>
+						`${posture.merchant}: ${pct(posture.min_preferred_ratio)} min preferred ${posture.preferred_domain}, max shortfall ${fmt(posture.max_preferred_shortfall_cents)}, rebalance-ready rounds ${posture.rebalance_ready_rounds}`
+					),
+					...simState.routePressureSummary.slice(0, 4).map((route) =>
+						`${route.route_id}: peak ${pct(route.max_capacity_ratio)}, pressure rounds ${route.pressure_rounds}, ${route.source_domain} to ${route.target_domain}`
+					),
+					...trustDriverRows(4).map((driver) =>
+						`${formatLabel(driver.label)}: ${driver.count} memories, net trust ${signed(driver.delta)}`
+					),
+				].join('\n') || 'No rebalance, route pressure, or contextual memory signal recorded.',
 				status: 'complete',
 			},
 			{
@@ -735,43 +793,58 @@
 									{/each}
 								</div>
 
-								<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
-									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Stablecoin Float</div>
-										{#each Object.entries(simState.floatSummary).sort(([, a], [, b]) => b - a).slice(0, 5) as [domain, amount]}
-											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
-												<span>{domain}</span>
-												<span>{fmt(amount)}</span>
+								<div class="context-grid" style="gap:12px; margin-bottom:16px;">
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Treasury Posture</div>
+										{#each simState.treasuryPostureSummary.slice(0, 3) as posture}
+											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
+												<div style="display:flex; justify-content:space-between; gap:10px;">
+													<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{posture.merchant}</span>
+													<span>{fmt(posture.max_preferred_shortfall_cents)}</span>
+												</div>
+												<div style="color:var(--tx-3); margin-top:3px;">{posture.preferred_domain} min {pct(posture.min_preferred_ratio)} · ready {posture.rebalance_ready_rounds}r</div>
 											</div>
+										{:else}
+											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">No posture gaps</div>
 										{/each}
 									</div>
-									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Top Routes</div>
-										{#each Object.entries(simState.routeUsage).sort(([, a], [, b]) => b - a).slice(0, 5) as [route, count]}
-											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
-												<span>{route}</span>
-												<span>{count}</span>
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Route Pressure</div>
+										{#each simState.routePressureSummary.slice(0, 3) as route}
+											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
+												<div style="display:flex; justify-content:space-between; gap:10px;">
+													<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{route.route_id}</span>
+													<span>{pct(route.max_capacity_ratio)}</span>
+												</div>
+												<div style="color:var(--tx-3); margin-top:3px;">{route.source_domain} to {route.target_domain} · {route.pressure_rounds}r</div>
 											</div>
+										{:else}
+											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">No route pressure</div>
 										{/each}
 									</div>
-								</div>
-
-								<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
-									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Agent Trust</div>
-										{#each Object.entries(simState.trustSummary).sort(([, a], [, b]) => b.avg - a.avg).slice(0, 5) as [protocol, trust]}
-											<div style="display:flex; justify-content:space-between; gap:12px; font-family:var(--mono); font-size:11px; padding:4px 0;">
-												<span>{protocol.toUpperCase()}</span>
-												<span>{trust.avg.toFixed(2)}</span>
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Trust Drivers</div>
+										{#each trustDriverRows(3) as driver}
+											<div style="font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
+												<div style="display:flex; justify-content:space-between; gap:10px;">
+													<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{formatLabel(driver.label)}</span>
+													<span>{signed(driver.delta)}</span>
+												</div>
+												<div style="color:var(--tx-3); margin-top:3px;">{driver.count} memories</div>
 											</div>
+										{:else}
+											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">No memory drivers</div>
 										{/each}
 									</div>
-									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px;">
-										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">World Events</div>
-										{#each simState.worldEvents.slice(-5) as event}
-											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-2); padding:4px 0;">
-												R{event.round_num}: {event.summary}
+									<div style="background:var(--bg-2); border:1px solid var(--bd); border-radius:6px; padding:14px; min-width:0;">
+										<div style="font-size:10px; font-weight:700; color:var(--tx-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:10px;">Rail Margin</div>
+										{#each marginRows(3) as row}
+											<div style="display:flex; justify-content:space-between; gap:10px; font-family:var(--mono); font-size:11px; padding:5px 0; border-bottom:1px solid var(--bg-3);">
+												<span>{row.protocol.toUpperCase()}</span>
+												<span>{fmt(row.margin)}</span>
 											</div>
+										{:else}
+											<div style="font-family:var(--mono); font-size:11px; color:var(--tx-3);">No margin signal</div>
 										{/each}
 									</div>
 								</div>
@@ -923,12 +996,17 @@
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
 	}
+	.context-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
 	.seed-actions {
 		flex-wrap: wrap;
 	}
 	@media (max-width: 1100px) {
 		.entity-grid { grid-template-columns: repeat(2, 1fr); }
 		.summary-grid { grid-template-columns: repeat(2, 1fr); }
+		.context-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	}
 	@media (max-width: 900px) {
 		.sim-shell {
@@ -961,6 +1039,7 @@
 	@media (max-width: 480px) {
 		.entity-grid { grid-template-columns: 1fr; }
 		.summary-grid { grid-template-columns: 1fr; }
+		.context-grid { grid-template-columns: 1fr; }
 		.seed-actions button {
 			width: 100%;
 		}
