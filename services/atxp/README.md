@@ -83,3 +83,13 @@ ATXP's auth server without relying on the MCP payment-request completion loop.
 `/atxp/authorize` creates a payer-side ATXP credential using the configured
 payer mode. In production Meridian should only treat the service as
 runtime-ready when `/health` reports `supportsDirectSettle=true`.
+
+## Offline Protocol Contracts
+
+The offline service tests document the ATXP helper contracts Meridian relies on
+without live ATXP or CDP credentials. Keep this list aligned with `pnpm run
+test:offline` and the helper files named here:
+
+- `src/cdpTreasuryTopUp.test.ts` covers ATXP cdp-base treasury top-up amount boundary and default planning in `src/cdpTreasuryTopUp.ts`.
+- `src/directTransfer.test.ts` covers ATXP direct-transfer raw transaction credential parsing in `src/directTransfer.ts`.
+- `src/directTransfer.test.ts` covers ATXP direct-transfer own-field request shape and USDC amount boundary contracts in `src/directTransfer.ts`.

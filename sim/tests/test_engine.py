@@ -535,6 +535,11 @@ def test_report_explains_route_score_driven_merchant_protocol_change():
     emergent = next((s for s in sections if s["title"] == "Emergent Agent Economy"), None)
 
     assert emergent is not None
+    assert (
+        "R8: merchant_test removed Stripe MPP after observing ecosystem evidence. "
+        "Route-score evidence for Stripe MPP: score 0.10, pressure drag 1.80, "
+        "sustainability lift -0.40."
+    ) in emergent["content"]
     assert "Route-score merchant changes:" in emergent["content"]
     assert (
         "R8: merchant_test removed Stripe MPP after route-score evidence "

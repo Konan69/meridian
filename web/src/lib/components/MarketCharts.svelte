@@ -399,8 +399,13 @@
 					CG {m.congestion.toFixed(2)} · {m.merchant_count} merchants
 				</text>
 				{#if m.score_drivers}
-					<text x={labelWidth} y={y + 35} fill="var(--tx-3)" font-size="9" font-family="'Berkeley Mono', var(--mono), monospace">
-						{m.score_drivers.text}
+					<text x={labelWidth} y={y + 35} fill="var(--tx-3)" font-size="9" font-family="'Berkeley Mono', var(--mono), monospace" aria-label={m.score_drivers.text}>
+						<title>{m.score_drivers.text}</title>
+						{#each m.score_drivers.fields as driver, driverIndex}
+							<tspan x={labelWidth + driverIndex * 76} class:driver-unavailable={!driver.available}>
+								{driver.label} {driver.value}
+							</tspan>
+						{/each}
 					</text>
 				{/if}
 			{:else}
@@ -602,5 +607,10 @@
 		border-color: color-mix(in srgb, var(--ap2) 55%, var(--bd));
 		background: color-mix(in srgb, var(--ap2) 12%, transparent);
 		color: var(--ap2);
+	}
+
+	.driver-unavailable {
+		fill: var(--tx-3);
+		opacity: 0.7;
 	}
 </style>

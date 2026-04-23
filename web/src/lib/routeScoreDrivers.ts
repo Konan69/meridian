@@ -1,6 +1,13 @@
 export interface RouteScoreDriverDisplay {
 	text: string;
 	hasFiniteValue: boolean;
+	fields: RouteScoreDriverField[];
+}
+
+export interface RouteScoreDriverField {
+	label: string;
+	value: string;
+	available: boolean;
 }
 
 export function routeScoreDriverDisplay(
@@ -24,6 +31,11 @@ export function routeScoreDriverDisplay(
 
 	return {
 		hasFiniteValue,
+		fields: fields.map((field) => ({
+			label: field.label,
+			value: formatDriverValue(field.value, field.prefix),
+			available: field.value != null,
+		})),
 		text: fields
 			.map((field) => `${field.label} ${formatDriverValue(field.value, field.prefix)}`)
 			.join(' · '),

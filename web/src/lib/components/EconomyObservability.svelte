@@ -440,7 +440,14 @@
 						</strong>
 						<small>{signedMoney(row.deltaCents)} · {row.snapshots || 1} snapshots · {row.routeAttempts} attempts · rel {pct(row.reliability)}</small>
 						{#if row.scoreDrivers}
-							<small class="score-drivers">{row.scoreDrivers.text}</small>
+							<div class="score-driver-strip" aria-label={row.scoreDrivers.text} title={row.scoreDrivers.text}>
+								{#each row.scoreDrivers.fields as driver}
+									<span class:driver-unavailable={!driver.available}>
+										<b>{driver.label}</b>
+										{driver.value}
+									</span>
+								{/each}
+							</div>
 						{/if}
 					</div>
 				</div>
@@ -744,6 +751,37 @@
 		color: var(--tx-3);
 	}
 
+	.score-driver-strip {
+		display: flex;
+		justify-content: flex-end;
+		flex-wrap: wrap;
+		gap: 4px;
+		max-width: 100%;
+		font-family: var(--mono);
+		font-size: 10px;
+		color: var(--tx-2);
+	}
+
+	.score-driver-strip span {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 4px;
+		border: 1px solid var(--bd);
+		border-radius: 3px;
+		padding: 2px 5px;
+		background: color-mix(in srgb, var(--bg-3) 52%, transparent);
+		line-height: 1.25;
+	}
+
+	.score-driver-strip b {
+		color: var(--tx-3);
+		font-weight: 700;
+	}
+
+	.score-driver-strip .driver-unavailable {
+		color: var(--tx-3);
+	}
+
 	.positive-text {
 		color: var(--x402);
 	}
@@ -807,6 +845,10 @@
 		.panel-total,
 		.rail-values {
 			align-items: flex-start;
+		}
+
+		.score-driver-strip {
+			justify-content: flex-start;
 		}
 
 		.rail-row {

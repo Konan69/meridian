@@ -117,6 +117,14 @@ selection accepts `--task-id web_check_build` repeatedly, or
 default `--profile benchmark` and `--profile gate` task lists still run their
 normal coverage, and selected tasks still execute their real install, build,
 test, or compile commands.
+The same output includes `metadata_schema` with
+`kind: list_tasks_metadata_schema`. Treat it as the schema for listing metadata:
+`task_entry_required_keys` covers `task_id`, `benchmark_profile`, and
+`gate_profile`; `task_entry_optional_keys` covers diagnostic fields such as
+`manual_validation_task_ids`, `duplicate_validation`, `semantic_surfaces`, and
+`preserved_gate_names`. Static contracts compare the live task catalog with
+that schema and require this docs anchor, so adding a new listing field means
+updating the schema and docs in the same change.
 For pnpm build tasks, `trace_metadata.cache.node_modules_seed` reports whether
 the benchmark hardlinked a compatible `node_modules` tree from another Evo
 worktree before running the frozen install.

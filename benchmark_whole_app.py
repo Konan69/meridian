@@ -98,6 +98,49 @@ FOCUSED_GATE_DUPLICATE_VALIDATION = [
         "reason": "The full benchmark already runs CDP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited treasury transfer semantics.",
     },
 ]
+LIST_TASKS_METADATA_SCHEMA = {
+    "kind": "list_tasks_metadata_schema",
+    "top_level_keys": [
+        "tasks",
+        "profiles",
+        "manual_selection",
+        "gate_guidance",
+        "metadata_schema",
+    ],
+    "task_entry_required_keys": [
+        "task_id",
+        "benchmark_profile",
+        "gate_profile",
+    ],
+    "task_entry_optional_keys": [
+        "category",
+        "parent_task_id",
+        "service",
+        "phase",
+        "command",
+        "target_seconds",
+        "manual_validation_task_ids",
+        "manual_selection",
+        "covered_test_files",
+        "covered_helper_files",
+        "coverage_points",
+        "semantic_surfaces",
+        "semantic_surfaces_by_service",
+        "duplicate_validation",
+        "preserved_gate_names",
+    ],
+    "metadata_rich_task_ids": [
+        "web_check_build",
+        "service_builds_summary",
+        "service_offline_protocol_tests",
+        "service_offline_cdp",
+        "service_offline_stripe",
+        "service_offline_atxp",
+        "service_offline_ap2",
+    ],
+    "docs_anchor": "list_tasks_metadata_schema",
+    "protects": "--list-tasks metadata shape stays explicit, documented, and cheap to statically validate.",
+}
 
 if _TRACES_DIR:
     _TRACES_DIR.mkdir(parents=True, exist_ok=True)
@@ -945,6 +988,91 @@ def check_inherited_gate_guidance_contract(
     }
 
 
+def list_tasks_payload() -> dict[str, Any]:
+    return {
+        "tasks": task_catalog(),
+        "profiles": {
+            "benchmark": BENCHMARK_PROFILE_TASK_IDS,
+            "gate": GATE_PROFILE_TASK_IDS,
+        },
+        "manual_selection": {
+            "single": "--task-id web_check_build",
+            "multiple": "--task-ids service_cdp_install,service_cdp_build",
+        },
+        "gate_guidance": inherited_gate_guidance_metadata(),
+        "metadata_schema": LIST_TASKS_METADATA_SCHEMA,
+    }
+
+
+def check_list_tasks_metadata_schema_contract(
+    root: Path, failures: list[str]
+) -> dict[str, Any]:
+    payload = list_tasks_payload()
+    schema = LIST_TASKS_METADATA_SCHEMA
+    expected_top_keys = set(schema["top_level_keys"])
+    actual_top_keys = set(payload)
+    missing_top_keys = sorted(actual_top_keys - expected_top_keys)
+    extra_top_keys = sorted(expected_top_keys - actual_top_keys)
+    for key in missing_top_keys:
+        failures.append(f"list_tasks_metadata_schema: top-level key {key!r} missing from schema")
+    for key in extra_top_keys:
+        failures.append(f"list_tasks_metadata_schema: schema key {key!r} missing from --list-tasks payload")
+
+    required_keys = set(schema["task_entry_required_keys"])
+    optional_keys = set(schema["task_entry_optional_keys"])
+    known_task_keys = required_keys | optional_keys
+    unexpected_task_keys = sorted(
+        key for task in payload["tasks"] for key in task if key not in known_task_keys
+    )
+    missing_required_task_keys = sorted(
+        f"{task.get('task_id', '<unknown>')}.{key}"
+        for task in payload["tasks"]
+        for key in required_keys
+        if key not in task
+    )
+    for key in unexpected_task_keys:
+        failures.append(f"list_tasks_metadata_schema: task key {key!r} missing from schema")
+    for item in missing_required_task_keys:
+        failures.append(f"list_tasks_metadata_schema: required task key missing: {item}")
+
+    docs_path = root / "docs/simulation-architecture.md"
+    docs_needles = [
+        schema["docs_anchor"],
+        "metadata_schema",
+        "task_entry_required_keys",
+        "task_entry_optional_keys",
+        "manual_validation_task_ids",
+        "duplicate_validation",
+        "semantic_surfaces",
+        "preserved_gate_names",
+    ]
+    missing_docs_needles = []
+    if not docs_path.exists():
+        failures.append("list_tasks_metadata_schema[docs/simulation-architecture.md]: missing file")
+        missing_docs_needles = docs_needles
+    else:
+        text = docs_path.read_text(encoding="utf-8", errors="replace")
+        missing_docs_needles = [needle for needle in docs_needles if needle not in text]
+        for needle in missing_docs_needles:
+            failures.append(
+                f"list_tasks_metadata_schema[docs/simulation-architecture.md]: missing {needle!r}"
+            )
+
+    return {
+        "kind": "list_tasks_metadata_schema_contract",
+        "source": "LIST_TASKS_METADATA_SCHEMA",
+        "checked_paths": ["docs/simulation-architecture.md"],
+        "top_level_keys": schema["top_level_keys"],
+        "task_entry_required_keys": schema["task_entry_required_keys"],
+        "task_entry_optional_keys": schema["task_entry_optional_keys"],
+        "metadata_rich_task_ids": schema["metadata_rich_task_ids"],
+        "unexpected_task_keys": unexpected_task_keys,
+        "missing_required_task_keys": missing_required_task_keys,
+        "missing_docs_needles": missing_docs_needles,
+        "protects": "--list-tasks metadata fields stay declared in the schema and linked from worker docs.",
+    }
+
+
 def static_contract_trace_metadata(
     required_files: list[str],
     contains_contracts: list[tuple[str, list[str]]],
@@ -952,6 +1080,7 @@ def static_contract_trace_metadata(
     service_offline_coverage_files: list[dict[str, Any]],
     raw_route_pressure_report_contract: dict[str, Any],
     inherited_gate_guidance_contract: dict[str, Any],
+    list_tasks_metadata_schema_contract: dict[str, Any],
 ) -> dict[str, Any]:
     needles_by_path = {path: len(needles) for path, needles in contains_contracts}
     return {
@@ -996,8 +1125,25 @@ def static_contract_trace_metadata(
                     ],
                     "protects": "Offline service trace coverage must name at least one test file, helper file, and protected semantic surface per service; every listed path must exist.",
                 },
+                {
+                    "kind": "service_readme_semantic_surface_contracts",
+                    "source": "SERVICE_OFFLINE_COVERAGE",
+                    "checked_paths": [
+                        item["readme_path"] for item in service_offline_coverage_files
+                    ],
+                    "required_surface_count": sum(
+                        item["semantic_surface_count"]
+                        for item in service_offline_coverage_files
+                    ),
+                    "missing_surface_count": sum(
+                        len(item["missing_readme_semantic_surfaces"])
+                        for item in service_offline_coverage_files
+                    ),
+                    "protects": "Service READMEs must mention each offline semantic surface named by service protocol trace metadata.",
+                },
                 raw_route_pressure_report_contract,
                 inherited_gate_guidance_contract,
+                list_tasks_metadata_schema_contract,
             ],
             "service_offline_coverage_files": service_offline_coverage_files,
             "gate_guidance": inherited_gate_guidance_metadata(),
@@ -1148,6 +1294,7 @@ def task_static_contracts(root: Path) -> float:
         (
             "docs/simulation-architecture.md",
             [
+                "list_tasks_metadata_schema",
                 "Manual Evo combines need a separate gate hygiene pass",
                 "evo gate list <source>",
                 "evo gate list <destination>",
@@ -1172,11 +1319,15 @@ def task_static_contracts(root: Path) -> float:
     inherited_gate_guidance_contract = check_inherited_gate_guidance_contract(
         root, failures
     )
+    list_tasks_metadata_schema_contract = check_list_tasks_metadata_schema_contract(
+        root, failures
+    )
 
     service_offline_coverage_files = []
     for service, coverage in SERVICE_OFFLINE_COVERAGE.items():
         required_fields = ["test_files", "helper_files", "semantic_surfaces"]
         path_fields = ["test_files", "helper_files"]
+        readme_path = f"services/{service}/README.md"
         empty_required_fields = [
             field for field in required_fields if len(coverage[field]) == 0
         ]
@@ -1193,20 +1344,36 @@ def task_static_contracts(root: Path) -> float:
             failures.append(
                 f"SERVICE_OFFLINE_COVERAGE[{service}]: missing listed file {path}"
             )
+        readme = root / readme_path
+        readme_text = readme.read_text(encoding="utf-8", errors="replace") if readme.exists() else ""
+        missing_readme_semantic_surfaces = [
+            surface
+            for surface in coverage["semantic_surfaces"]
+            if surface not in readme_text
+        ]
+        if not readme.exists():
+            failures.append(f"SERVICE_OFFLINE_COVERAGE[{service}]: missing README {readme_path}")
+        for surface in missing_readme_semantic_surfaces:
+            failures.append(
+                f"SERVICE_OFFLINE_COVERAGE[{service}]: {readme_path} missing semantic surface {surface!r}"
+            )
         service_offline_coverage_files.append(
             {
                 "service": service,
                 "checked_fields": path_fields,
                 "required_nonempty_fields": required_fields,
+                "readme_path": readme_path,
                 "test_files": coverage["test_files"],
                 "helper_files": coverage["helper_files"],
                 "semantic_surfaces": coverage["semantic_surfaces"],
+                "semantic_surface_count": len(coverage["semantic_surfaces"]),
                 "field_counts": {
                     field: len(coverage[field]) for field in required_fields
                 },
                 "empty_required_fields": empty_required_fields,
                 "file_count": len(checked_paths),
                 "missing_files": missing_paths,
+                "missing_readme_semantic_surfaces": missing_readme_semantic_surfaces,
             }
         )
 
@@ -1263,6 +1430,24 @@ def task_static_contracts(root: Path) -> float:
             ],
             "protects": "Manual Evo combines keep inherited focused gates visible, including AP2, Stripe MPP, ATXP, and CDP offline protocol gates.",
         },
+        {
+            "surface": "list_tasks_metadata_schema",
+            "paths": [
+                "benchmark_whole_app.py",
+                "docs/simulation-architecture.md",
+            ],
+            "protects": "--list-tasks metadata fields stay declared in the benchmark schema and linked from docs.",
+        },
+        {
+            "surface": "service_offline_protocol_docs",
+            "paths": [
+                "services/cdp/README.md",
+                "services/stripe/README.md",
+                "services/atxp/README.md",
+                "services/ap2/README.md",
+            ],
+            "protects": "Service docs expose the offline protocol helper contracts named by service trace metadata.",
+        },
     ]
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
     log_task(
@@ -1278,6 +1463,7 @@ def task_static_contracts(root: Path) -> float:
             service_offline_coverage_files,
             raw_route_pressure_report_contract,
             inherited_gate_guidance_contract,
+            list_tasks_metadata_schema_contract,
         ),
     )
     return score
@@ -1809,18 +1995,7 @@ def task_catalog() -> list[dict[str, Any]]:
 def list_tasks() -> float:
     print(
         json.dumps(
-            {
-                "tasks": task_catalog(),
-                "profiles": {
-                    "benchmark": BENCHMARK_PROFILE_TASK_IDS,
-                    "gate": GATE_PROFILE_TASK_IDS,
-                },
-                "manual_selection": {
-                    "single": "--task-id web_check_build",
-                    "multiple": "--task-ids service_cdp_install,service_cdp_build",
-                },
-                "gate_guidance": inherited_gate_guidance_metadata(),
-            },
+            list_tasks_payload(),
             indent=2,
         )
     )

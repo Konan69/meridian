@@ -32,6 +32,16 @@ uv run meridian-ap2-service
 The service returns AP2 `IntentMandate`, `CartMandate`, `PaymentMandate`, and
 `PaymentReceipt` objects using the official AP2 types package.
 
+## Offline Protocol Contracts
+
+The offline service tests document the AP2 helper contracts Meridian relies on
+without live AP2 credentials. Keep this list aligned with `PYTHONPATH=src
+python3 -m unittest discover -s tests -q` and the helper file named here:
+
+- `tests/test_contracts.py` covers AP2 canonical credential hashing in `src/meridian_ap2_direct/contracts.py`.
+- `tests/test_contracts.py` covers AP2 nested mandate actor, merchant, and amount settlement semantics in `src/meridian_ap2_direct/contracts.py`.
+- `tests/test_contracts.py` covers AP2 settlement mismatch diagnostics for merchant and amount drift in `src/meridian_ap2_direct/contracts.py`.
+
 ## Offline Contract Tests
 
 `tests/test_contracts.py` keeps a credential-free settlement contract around the

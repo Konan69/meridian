@@ -44,3 +44,13 @@ This should return a real HTTP 402 MPP challenge.
 Meridian does not currently expose `mpp` as engine-runtime-ready. The service is
 real, and when `MPP_MASTER_SEED` is configured it can execute the official MPP
 client payment flow for runtime calls.
+
+## Offline Protocol Contracts
+
+The offline service tests document the MPP helper contracts Meridian relies on
+without live Stripe credentials. Keep this list aligned with `pnpm run
+test:offline` and the helper files named here:
+
+- `src/mppKeys.test.ts` covers Stripe MPP deterministic actor and merchant key derivation in `src/mppKeys.ts`.
+- `src/mppRequest.test.ts` covers Stripe MPP authorize payment session URL semantics in `src/mppRequest.ts`.
+- `src/mppRequest.test.ts` covers Stripe MPP execute paid-resource URL and settlement response semantics in `src/mppRequest.ts`.

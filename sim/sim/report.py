@@ -153,6 +153,31 @@ def _merchant_switch_route_score_lines(events: list[object], limit: int = 5) -> 
     return lines
 
 
+def _world_event_readout_summary(event: object) -> str:
+    summary = normalize_protocol_labels_in_text(str(getattr(event, "summary", "")))
+    if getattr(event, "event_type", None) != "merchant_protocol_mix_changed":
+        return summary
+
+    data = getattr(event, "data", None)
+    if not isinstance(data, dict):
+        return summary
+    evidence = data.get("evidence")
+    if not isinstance(evidence, dict):
+        return summary
+
+    pressure_drag = _as_float(evidence.get("route_score_pressure_drag", 0.0))
+    sustainability_lift = _as_float(evidence.get("route_score_sustainability_lift", 0.0))
+    if pressure_drag == 0 and sustainability_lift == 0:
+        return summary
+
+    route_score = _as_float(evidence.get("route_score", 0.0))
+    protocol = protocol_display_label(data.get("protocol") or getattr(event, "protocol", None))
+    return (
+        f"{summary} Route-score evidence for {protocol}: score {route_score:.2f}, "
+        f"pressure drag {pressure_drag:.2f}, sustainability lift {sustainability_lift:+.2f}."
+    )
+
+
 # Canonical protocol display order
 _PROTO_ORDER = ["acp", "ap2", "x402", "mpp", "atxp"]
 
@@ -268,7 +293,7 @@ class ReportGenerator:
             lines.append("Recent world events:")
             for event in self.result.world_events[-5:]:
                 lines.append(
-                    f"  R{event.round_num}: {normalize_protocol_labels_in_text(event.summary)}"
+                    f"  R{event.round_num}: {_world_event_readout_summary(event)}"
                 )
 
             switch_lines = _merchant_switch_route_score_lines(self.result.world_events)

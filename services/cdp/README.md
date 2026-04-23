@@ -25,3 +25,14 @@ compatible with Meridian's backend-owned x402 flow.
 npm install
 npm run dev
 ```
+
+## Offline Protocol Contracts
+
+The offline service tests document the protocol helper contracts Meridian relies
+on without live CDP credentials. Keep this list aligned with `pnpm run
+test:offline` and the helper files named here:
+
+- `src/signMessage.test.ts` covers CDP sign-message exact byte preservation and own-field validation in `src/signMessage.ts`.
+- `src/sendTransaction.test.ts` covers CDP send-transaction network/value normalization and own-field validation in `src/sendTransaction.ts`.
+- `src/signTypedData.test.ts` covers CDP sign-typed-data exact key, primaryType, nested own-key, and message own-field semantics in `src/signTypedData.ts`.
+- `src/treasury.test.ts` covers CDP treasury native and USDC transfer route request/response contracts in `src/treasury.ts`.
