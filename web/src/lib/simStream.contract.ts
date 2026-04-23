@@ -5,6 +5,7 @@ import {
   normalizeTreasuryPostureSummaries,
 } from './simStream';
 import { simState, type AgentMemoryEvent, type RoutePressureSummary, type SimEvent, type TreasuryPostureSummary } from './stores/simulation.svelte';
+import { timelineMetaItems } from './timelineMetadata';
 
 const completeEvent = {
   type: 'simulation_complete',
@@ -57,6 +58,19 @@ const routePressure: RoutePressureSummary[] = normalizeRoutePressureSummaries(co
 const treasuryPosture: TreasuryPostureSummary[] = normalizeTreasuryPostureSummaries(completeEvent.treasury_posture_summary);
 const batchMemories: AgentMemoryEvent[] = normalizeAgentMemoryEvents(completeEvent.agent_memory_log) ?? [];
 const singleMemory = requireMemory(normalizeAgentMemoryEvent(completeEvent.agent_memory_log[0] as SimEvent));
+const routeTimelineMeta = requireTimelineMeta(timelineMetaItems({
+  type: 'world_event',
+  event_type: 'route_pressure',
+  summary: 'route pressure',
+  data: completeEvent.route_pressure_summary[0],
+}));
+const treasuryTimelineMeta = requireTimelineMeta(timelineMetaItems({
+  type: 'world_event',
+  event_type: 'treasury_posture',
+  summary: 'treasury posture',
+  data: completeEvent.treasury_posture_summary[0],
+}));
+const memoryTimelineMeta = requireTimelineMeta(timelineMetaItems(completeEvent.agent_memory_log[0]));
 
 simState.routePressureSummary = routePressure;
 simState.treasuryPostureSummary = treasuryPosture;
@@ -91,9 +105,44 @@ export const streamNormalizationContract = {
     merchant_reputation: simState.agentMemories[0]?.merchant_reputation,
     route_id: simState.agentMemories[0]?.route_id,
   },
+  timeline: {
+    route: requireTimelineLabels(routeTimelineMeta, [
+      'from: cdp-base',
+      'to: ap2',
+      'mode: settlement',
+      'route: cdp-base->ap2',
+      'pressure: high',
+      'capacity: 72.0%',
+    ]),
+    treasury: requireTimelineLabels(treasuryTimelineMeta, [
+      'merchant: Merchant 1',
+      'preferred: 80.0%',
+      'shortfall: $4.00',
+    ]),
+    memory: requireTimelineLabels(memoryTimelineMeta, [
+      'merchant: Merchant 1',
+      'route: cdp-base->ap2',
+      'driver: ecosystem pressure',
+      'outcome: route pressure',
+      'stress: 72.0%',
+    ]),
+  },
 };
 
 function requireMemory(memory: AgentMemoryEvent | null): AgentMemoryEvent {
   if (!memory) throw new Error('agent memory stream contract did not normalize');
   return memory;
+}
+
+function requireTimelineMeta(meta: string[]): string[] {
+  if (meta.length === 0) throw new Error('timeline metadata contract did not render');
+  return meta;
+}
+
+function requireTimelineLabels(meta: string[], expected: string[]): string[] {
+  const missing = expected.filter((label) => !meta.includes(label));
+  if (missing.length > 0) {
+    throw new Error(`timeline metadata contract missing labels: ${missing.join(', ')}`);
+  }
+  return meta;
 }

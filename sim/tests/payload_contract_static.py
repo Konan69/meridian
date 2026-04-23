@@ -32,6 +32,8 @@ def assert_no_payload_doc_drift() -> None:
     contract = (ROOT / "docs/simulation-payload-contract.md").read_text()
     architecture = (ROOT / "docs/simulation-architecture.md").read_text()
     helper_source = (ROOT / "web/src/lib/simStream.ts").read_text()
+    stream_contract_source = (ROOT / "web/src/lib/simStream.contract.ts").read_text()
+    timeline_source = (ROOT / "web/src/lib/components/Timeline.svelte").read_text()
     tokens = code_tokens(contract)
 
     assert "docs/simulation-payload-contract.md" in architecture
@@ -110,6 +112,31 @@ def assert_no_payload_doc_drift() -> None:
     assert missing_phrases == [], (
         "reference/maintenance guidance missing from payload contract: "
         f"{', '.join(missing_phrases)}"
+    )
+
+    assert "timelineMetaItems(evt)" in timeline_source
+    assert "import { timelineMetaItems" in stream_contract_source
+    required_timeline_labels = (
+        "from: cdp-base",
+        "to: ap2",
+        "mode: settlement",
+        "route: cdp-base->ap2",
+        "pressure: high",
+        "capacity: 72.0%",
+        "merchant: Merchant 1",
+        "preferred: 80.0%",
+        "shortfall: $4.00",
+        "driver: ecosystem pressure",
+        "outcome: route pressure",
+        "stress: 72.0%",
+    )
+    missing_timeline_labels = sorted(
+        label for label in required_timeline_labels
+        if label not in stream_contract_source
+    )
+    assert missing_timeline_labels == [], (
+        "timeline metadata labels missing from stream contract: "
+        f"{', '.join(missing_timeline_labels)}"
     )
 
 

@@ -518,6 +518,110 @@ def test_social_memory_diffusion_uses_outcome_for_direction():
     assert after_choice["protocol"] == Protocol.AP2
 
 
+def test_merchants_switch_protocols_from_trust_memory_and_world_pressure():
+    config = SimulationConfig(
+        seed=25,
+        protocols=list(Protocol),
+        social_memory_strength=1.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.X402, Protocol.MPP, Protocol.ACP]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent(
+            "agent_001",
+            trust={"ap2": 0.92, "atxp": 0.55, "x402": 0.25, "mpp": 0.5, "acp": 0.48},
+        ),
+        _agent(
+            "agent_002",
+            trust={"ap2": 0.9, "atxp": 0.58, "x402": 0.28, "mpp": 0.52, "acp": 0.5},
+        ),
+    ]
+    engine.protocol_state["ap2"].reliability = 0.99
+    engine.protocol_state["ap2"].network_effect = 0.7
+    engine.protocol_state["x402"].reliability = 0.65
+    engine.protocol_state["x402"].operator_margin_cents = -8_000
+    engine.protocol_state["x402"].network_effect = 0.2
+    engine.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=4,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="ap2",
+            workload_type="consumer_checkout",
+            sentiment_delta=0.13,
+            trust_before=0.79,
+            trust_after=0.92,
+            outcome="success",
+            trust_driver="settled_on_reliable_protocol",
+        ),
+        AgentMemoryEvent(
+            round_num=4,
+            agent_id="agent_002",
+            agent_name="Agent_002",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="consumer_checkout",
+            sentiment_delta=-0.12,
+            trust_before=0.4,
+            trust_after=0.28,
+            outcome="failure",
+            trust_driver="failed_low_protocol_reliability",
+        ),
+    ]
+    summary = RoundSummary(
+        round_num=5,
+        route_pressure=[
+            {
+                "route_id": "gateway_batch_settle",
+                "source_domain": "base_usdc",
+                "target_domain": "gateway_unified_usdc",
+                "primitive": "batched_nanopayment",
+                "protocols": ["x402"],
+                "usage_cents": 3_800_000,
+                "capacity_cents": 3_500_000,
+                "capacity_ratio": 1.08,
+                "pressure_level": "critical",
+            }
+        ],
+        treasury_posture=[
+            {
+                "merchant_id": merchant.merchant_id,
+                "merchant": merchant.name,
+                "preferred_domain": "base_usdc",
+                "preferred_available_cents": 4_000,
+                "non_preferred_cents": 16_000,
+                "total_treasury_cents": 20_000,
+                "preferred_shortfall_cents": 16_000,
+                "preferred_ratio": 0.2,
+                "rebalance_ready": True,
+                "rebalance_threshold_cents": merchant.rebalance_threshold_cents,
+            }
+        ],
+    )
+
+    engine._evolve_market(5, summary)
+
+    assert Protocol.AP2 in merchant.accepted_protocols
+    assert Protocol.X402 not in merchant.accepted_protocols
+    switches = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+    ]
+    assert switches[0]["action"] == "adopted"
+    assert switches[0]["protocol"] == "ap2"
+    assert switches[0]["reason"] == "ecosystem_evidence"
+    assert switches[0]["evidence"]["avg_trust"] > 0.9
+    assert switches[0]["evidence"]["treasury_pressure"] > 0.7
+    assert switches[1]["action"] == "removed"
+    assert switches[1]["protocol"] == "x402"
+    assert switches[1]["evidence"]["route_pressure"] > 1.0
+
+
 class _OfflineEconomy:
     total_route_usage = {"base-direct": 1}
 

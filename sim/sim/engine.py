@@ -17,6 +17,7 @@ from .agents import generate_agents
 from .commerce import CommerceClient
 from .economy import StablecoinEconomy
 from .memory import MemoryUpdater
+from .routes import routes_for_protocol
 from .types import (
     BalanceDomain,
     DOMAIN_LABELS,
@@ -767,6 +768,59 @@ class SimulationEngine:
                 * 0.30,
             )
 
+    def _avg_trust_by_protocol(self) -> dict[str, float]:
+        if not self.agents:
+            return {protocol.value: 0.6 for protocol in self.active_protocols}
+        return {
+            protocol.value: sum(
+                agent.protocol_trust.get(protocol.value, 0.6)
+                for agent in self.agents
+            )
+            / len(self.agents)
+            for protocol in self.active_protocols
+        }
+
+    def _recent_memory_signal_by_protocol(self, round_num: int) -> dict[str, float]:
+        signals: dict[str, list[float]] = defaultdict(list)
+        for event in self.agent_memory_log[-50:]:
+            if not (round_num - 3 <= event.round_num < round_num):
+                continue
+            try:
+                protocol = Protocol(event.protocol)
+            except ValueError:
+                continue
+            if protocol not in self.active_protocols:
+                continue
+            signal = self._social_memory_signal(event)
+            if signal:
+                signals[protocol.value].append(signal)
+
+        return {
+            protocol: sum(values) / len(values)
+            for protocol, values in signals.items()
+            if values
+        }
+
+    def _route_pressure_by_protocol(self, summary: RoundSummary) -> dict[str, float]:
+        pressure: dict[str, float] = defaultdict(float)
+        for entry in summary.route_pressure:
+            protocols = entry.get("protocols")
+            if not isinstance(protocols, list):
+                continue
+            capacity_ratio = float(entry.get("capacity_ratio", 0.0))
+            for protocol in protocols:
+                pressure[str(protocol)] = max(pressure[str(protocol)], capacity_ratio)
+        return dict(pressure)
+
+    def _merchant_treasury_posture(self, summary: RoundSummary, merchant: MerchantProfile) -> dict | None:
+        for entry in summary.treasury_posture:
+            if entry.get("merchant_id") == merchant.merchant_id:
+                return entry
+        return None
+
+    def _protocol_serves_domain(self, protocol: Protocol, domain: BalanceDomain) -> bool:
+        return any(route.target_domain == domain for route in routes_for_protocol(protocol))
+
     def _choose_active_agents(self) -> list[AgentProfile]:
         eligible = [agent for agent in self.agents if agent.remaining_budget > 0]
         if not eligible:
@@ -1360,6 +1414,9 @@ class SimulationEngine:
                 )
 
     def _evolve_market(self, round_num: int, summary: RoundSummary):
+        avg_trust = self._avg_trust_by_protocol()
+        memory_signal = self._recent_memory_signal_by_protocol(round_num)
+        route_pressure = self._route_pressure_by_protocol(summary)
         ranked = sorted(
             self.protocol_state.values(),
             key=lambda state: (
@@ -1369,42 +1426,107 @@ class SimulationEngine:
             ),
             reverse=True,
         )
-        top_two = {state.protocol for state in ranked[:2]}
+        top_two = [state.protocol for state in ranked[:2]]
         switches: list[dict] = []
 
         for merchant in self.merchants:
-            if self.rng.random() < 0.12:
-                best_missing = [
-                    protocol
-                    for protocol in top_two
-                    if protocol not in merchant.accepted_protocols
-                ]
-                if best_missing:
-                    merchant.accepted_protocols.append(best_missing[0])
+            posture = self._merchant_treasury_posture(summary, merchant)
+            treasury_pressure = 0.0
+            if posture:
+                treasury_pressure = min(
+                    1.0,
+                    float(posture.get("preferred_shortfall_cents", 0))
+                    / max(1, merchant.working_capital_cents),
+                )
+
+            adoption_candidates = []
+            for protocol in self.active_protocols:
+                if protocol in merchant.accepted_protocols:
+                    continue
+                state = self.protocol_state[protocol.value]
+                serves_preferred = self._protocol_serves_domain(
+                    protocol,
+                    merchant.preferred_settlement_domain,
+                )
+                score = (
+                    state.reliability * 0.35
+                    + state.network_effect * 0.25
+                    + avg_trust.get(protocol.value, 0.6) * 0.35
+                    + memory_signal.get(protocol.value, 0.0) * 1.4
+                    + (0.18 if treasury_pressure and serves_preferred else 0.0)
+                    - route_pressure.get(protocol.value, 0.0) * 0.08
+                )
+                adoption_candidates.append((score, protocol, serves_preferred))
+
+            adoption_candidates.sort(key=lambda item: item[0], reverse=True)
+            if adoption_candidates:
+                score, candidate, serves_preferred = adoption_candidates[0]
+                legacy_candidate = next(
+                    (protocol for protocol in top_two if protocol not in merchant.accepted_protocols),
+                    None,
+                )
+                if score >= 0.92 or self.rng.random() < 0.12:
+                    protocol = candidate if score >= 0.92 or legacy_candidate is None else legacy_candidate
+                    merchant.accepted_protocols.append(protocol)
+                    reason = "ecosystem_evidence" if protocol == candidate and score >= 0.92 else "rail_economics"
                     switches.append(
                         {
                             "merchant_id": merchant.merchant_id,
                             "merchant": merchant.name,
                             "action": "adopted",
-                            "protocol": best_missing[0].value,
+                            "protocol": protocol.value,
                             "round": round_num,
+                            "reason": reason,
+                            "evidence": {
+                                "adoption_score": round(score, 4),
+                                "avg_trust": round(avg_trust.get(protocol.value, 0.6), 4),
+                                "recent_memory_signal": round(memory_signal.get(protocol.value, 0.0), 4),
+                                "route_pressure": round(route_pressure.get(protocol.value, 0.0), 4),
+                                "treasury_pressure": round(treasury_pressure, 4),
+                                "serves_preferred_domain": serves_preferred,
+                            },
                         }
                     )
-            if self.rng.random() < 0.06 and len(merchant.accepted_protocols) > 2:
-                worst = min(
-                    merchant.accepted_protocols,
-                    key=lambda protocol: self.protocol_state[protocol.value].operator_margin_cents,
+
+            removal_candidates = []
+            for protocol in merchant.accepted_protocols:
+                state = self.protocol_state[protocol.value]
+                trust_gap = max(0.0, 0.62 - avg_trust.get(protocol.value, 0.6))
+                reliability_gap = max(0.0, 0.9 - state.reliability)
+                margin_drag = max(0.0, -state.operator_margin_cents / 20_000)
+                risk = (
+                    trust_gap * 0.9
+                    + reliability_gap * 0.7
+                    - memory_signal.get(protocol.value, 0.0) * 1.5
+                    + route_pressure.get(protocol.value, 0.0) * 0.18
+                    + min(0.25, margin_drag)
                 )
-                merchant.accepted_protocols.remove(worst)
-                switches.append(
-                    {
-                        "merchant_id": merchant.merchant_id,
-                        "merchant": merchant.name,
-                        "action": "removed",
-                        "protocol": worst.value,
-                        "round": round_num,
-                    }
-                )
+                removal_candidates.append((risk, protocol))
+
+            removal_candidates.sort(key=lambda item: item[0], reverse=True)
+            if removal_candidates and len(merchant.accepted_protocols) > 2:
+                risk, worst = removal_candidates[0]
+                if risk >= 0.28 or self.rng.random() < 0.06:
+                    merchant.accepted_protocols.remove(worst)
+                    reason = "ecosystem_evidence" if risk >= 0.28 else "rail_economics"
+                    switches.append(
+                        {
+                            "merchant_id": merchant.merchant_id,
+                            "merchant": merchant.name,
+                            "action": "removed",
+                            "protocol": worst.value,
+                            "round": round_num,
+                            "reason": reason,
+                            "evidence": {
+                                "removal_risk": round(risk, 4),
+                                "avg_trust": round(avg_trust.get(worst.value, 0.6), 4),
+                                "recent_memory_signal": round(memory_signal.get(worst.value, 0.0), 4),
+                                "route_pressure": round(route_pressure.get(worst.value, 0.0), 4),
+                                "reliability": round(self.protocol_state[worst.value].reliability, 4),
+                                "operator_margin_cents": self.protocol_state[worst.value].operator_margin_cents,
+                            },
+                        }
+                    )
 
         self._refresh_protocol_market_state()
         for switch in switches:
@@ -1413,7 +1535,10 @@ class SimulationEngine:
                 summary,
                 round_num,
                 "merchant_protocol_mix_changed",
-                f"{switch['merchant']} {switch['action']} {switch['protocol'].upper()} after observing rail economics.",
+                (
+                    f"{switch['merchant']} {switch['action']} {switch['protocol'].upper()} "
+                    f"after observing {switch.get('reason', 'rail_economics').replace('_', ' ')}."
+                ),
                 actor_id=switch["merchant_id"],
                 protocol=switch["protocol"],
                 data=switch,
