@@ -243,14 +243,14 @@
 				<thead>
 					<tr style="border-bottom:1px solid var(--bd); color:var(--tx-3); text-align:left;">
 						<th style="padding:8px 12px; font-weight:600;">Route</th>
-						<th style="padding:8px 8px; text-align:right; font-weight:600;">Usage</th>
+						<th style="padding:8px 8px; text-align:right; font-weight:600;">Reserved Principal</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each Object.entries(routeUsage).sort(([, a], [, b]) => b - a) as [route, count]}
+					{#each Object.entries(routeUsage).sort(([, a], [, b]) => b - a) as [route, usageCents]}
 						<tr style="border-bottom:1px solid var(--bg-3);">
 							<td style="padding:10px 12px; font-family:var(--mono);">{route}</td>
-							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{count}</td>
+							<td style="padding:10px 8px; text-align:right; font-family:var(--mono);">{fmt(usageCents)}</td>
 						</tr>
 					{/each}
 				</tbody>
