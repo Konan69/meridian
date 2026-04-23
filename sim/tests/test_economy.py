@@ -4,6 +4,7 @@ import json
 from sim.agents import generate_agents
 from sim.economy import StablecoinEconomy
 from sim.engine import SimulationEngine
+from sim.routes import ROUTE_MATRIX
 from sim.types import (
     AgentMemoryEvent,
     AgentProfile,
@@ -402,7 +403,7 @@ def test_social_memory_diffusion_discounts_old_events_and_caps_failure():
 def test_social_memory_diffusion_uses_outcome_for_direction():
     config = SimulationConfig(
         seed=24,
-        protocols=[Protocol.X402],
+        protocols=[Protocol.X402, Protocol.AP2],
         social_memory_strength=1.0,
     )
     engine = SimulationEngine(config)
@@ -451,6 +452,70 @@ def test_social_memory_diffusion_uses_outcome_for_direction():
 
     assert success_adjustments[0]["trust_delta"] > 0
     assert peer.protocol_trust["x402"] > 0.6
+
+    route = next(route for route in ROUTE_MATRIX if route.route_id == "base_direct_usdc")
+    route_choice_options = [
+        {
+            "protocol": Protocol.X402,
+            "route": route,
+            "estimated_protocol_fee_cents": 1,
+            "route_fee_cents": 1,
+            "capacity_ratio": 0.0,
+            "domain_mismatch": 0,
+        },
+        {
+            "protocol": Protocol.AP2,
+            "route": route,
+            "estimated_protocol_fee_cents": 1,
+            "route_fee_cents": 1,
+            "capacity_ratio": 0.0,
+            "domain_mismatch": 0,
+        },
+    ]
+
+    class _RouteChoiceEconomy:
+        def enumerate_payment_options(self, **_kwargs):
+            return route_choice_options
+
+    engine.active_protocols = [Protocol.X402, Protocol.AP2]
+    engine.economy = _RouteChoiceEconomy()
+    peer.protocol_trust = {"x402": 0.62, "ap2": 0.61}
+    peer.protocol_preference = None
+    engine.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="consumer_checkout",
+            sentiment_delta=-0.14,
+            trust_before=0.74,
+            trust_after=0.2,
+            outcome="failure",
+            trust_driver="failed_low_protocol_reliability",
+        )
+    ]
+    before_choice = engine._choose_payment_option(
+        agent=peer,
+        merchant=_merchant(),
+        amount=1_000,
+        workload_type=WorkloadType.CONSUMER_CHECKOUT,
+        available_protocols=[Protocol.X402, Protocol.AP2],
+        target_domains=[BalanceDomain.BASE_USDC],
+    )
+    engine._diffuse_social_memory(2, RoundSummary(round_num=2))
+    after_choice = engine._choose_payment_option(
+        agent=peer,
+        merchant=_merchant(),
+        amount=1_000,
+        workload_type=WorkloadType.CONSUMER_CHECKOUT,
+        available_protocols=[Protocol.X402, Protocol.AP2],
+        target_domains=[BalanceDomain.BASE_USDC],
+    )
+
+    assert before_choice["protocol"] == Protocol.X402
+    assert after_choice["protocol"] == Protocol.AP2
 
 
 class _OfflineEconomy:

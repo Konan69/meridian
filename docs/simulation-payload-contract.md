@@ -78,7 +78,8 @@ Memory and world events:
 - `world_event`: one `EconomyWorldEvent`; important `event_type` values are
   `world_seeded`, `route_pressure`, `treasury_rebalance`,
   `treasury_rebalance_failed`, `treasury_posture`, `round_closed`,
-  `merchant_protocol_mix_changed`, and `agent_preference_shift`.
+  `merchant_protocol_mix_changed`, `agent_preference_shift`, and
+  `social_memory_diffusion`.
 - `merchant_switch`: merchant protocol adoption or removal.
 - `agent_preference_shift`: agent preference changed after accumulated memory.
 - `treasury_rebalance`: merchant treasury recycling success, also mirrored as a
@@ -139,7 +140,9 @@ mixed stream data before updating stores:
 - Memory/world rows: `normalizeAgentMemoryEvent`,
   `normalizeAgentMemoryEvents`, `normalizeWorldEvent`, `normalizeWorldEvents`.
 - Summaries: `normalizeTrustSummary`, `normalizeProtocolSummaries`,
-  `normalizeEcosystemSummary`, `normalizeBalanceSnapshots`.
+  `normalizeEcosystemSummary`, `normalizeBalanceSnapshots`,
+  `normalizeRoutePressureSummaries`, and
+  `normalizeTreasuryPostureSummaries`.
 - Numeric records: `normalizeNumberRecord`, `normalizeNestedNumberRecord`,
   `normalizeNumberArrayRecord`, `numberFrom`.
 

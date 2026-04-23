@@ -82,6 +82,7 @@ def assert_no_payload_doc_drift() -> None:
         "treasury_rebalance",
         "treasury_rebalance_failed",
         "treasury_posture",
+        "social_memory_diffusion",
         "merchant_switch",
         "agent_preference_shift",
         "rail_pnl_update",
