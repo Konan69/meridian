@@ -107,6 +107,9 @@ For `static_contracts`, use `trace_metadata.validation.coverage_areas` before
 editing a needle. The areas explain whether a string protects local startup,
 funding guidance, ATXP settlement, frontend navigation, or engine capability
 readiness.
+For synthetic summary tasks such as `service_builds_summary`, inspect
+`trace_metadata.aggregation.component_tasks`; the summary is only an average,
+and the component task traces show the real commands and caches.
 
 ## Optimization Target
 

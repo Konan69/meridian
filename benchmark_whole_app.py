@@ -237,6 +237,18 @@ def python_sim_trace_metadata(root: Path) -> dict[str, Any]:
     }
 
 
+def service_builds_summary_trace_metadata(component_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "aggregation": {
+            "kind": "mean_component_score",
+            "component_count": len(component_tasks),
+            "component_tasks": component_tasks,
+            "score_formula": "sum(component_scores) / len(component_scores)",
+            "note": "This synthetic summary runs no shell command; inspect component traces for cache, validation, and logs.",
+        }
+    }
+
+
 def run_command(
     root: Path,
     task_id: str,
@@ -609,11 +621,22 @@ def task_rust_tests(root: Path) -> float:
 
 def task_service_builds(root: Path) -> float:
     scores = []
-    for service, target_seconds in [("cdp", 22), ("stripe", 22), ("atxp", 35)]:
+    component_tasks = []
+    service_targets = [("cdp", 22), ("stripe", 22), ("atxp", 35)]
+    for service, target_seconds in service_targets:
+        task_id = f"service_build_{service}"
+        component_tasks.append(
+            {
+                "task_id": task_id,
+                "service": service,
+                "package_root": f"services/{service}",
+                "target_seconds": target_seconds,
+            }
+        )
         scores.append(
             run_command(
                 root,
-                f"service_build_{service}",
+                task_id,
                 pnpm_cached_install_command("pnpm run build"),
                 cwd=root / "services" / service,
                 timeout=180,
@@ -631,6 +654,7 @@ def task_service_builds(root: Path) -> float:
         score,
         summary=f"mean service build score {score:.4f}",
         component_scores=scores,
+        trace_metadata=service_builds_summary_trace_metadata(component_tasks),
     )
     return score
 
