@@ -406,9 +406,9 @@ class ReportGenerator:
         if not self.result.route_usage_summary:
             return {"title": "Route Usage", "content": "No route usage data available.", "status": "empty"}
 
-        lines = ["Most used settlement routes:"]
-        for route, count in sorted(self.result.route_usage_summary.items(), key=lambda item: item[1], reverse=True):
-            lines.append(f"  {route}: {count}")
+        lines = ["Most used settlement routes by reserved principal:"]
+        for route, usage_cents in sorted(self.result.route_usage_summary.items(), key=lambda item: item[1], reverse=True):
+            lines.append(f"  {route}: {_cents_to_dollars(usage_cents)} reserved")
         return {"title": "Route Usage", "content": "\n".join(lines), "status": "ok"}
 
     def _agent_behavior(self) -> dict:
