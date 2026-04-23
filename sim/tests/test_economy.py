@@ -399,6 +399,60 @@ def test_social_memory_diffusion_discounts_old_events_and_caps_failure():
     assert round(peer.protocol_trust["x402"], 4) == 0.575
 
 
+def test_social_memory_diffusion_uses_outcome_for_direction():
+    config = SimulationConfig(
+        seed=24,
+        protocols=[Protocol.X402],
+        social_memory_strength=1.0,
+    )
+    engine = SimulationEngine(config)
+    source = _agent("agent_001", trust={"x402": 0.6})
+    peer = _agent("agent_002", trust={"x402": 0.6})
+    peer.social_influence = 1.0
+    engine.agents = [source, peer]
+
+    engine.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=0.2,
+            trust_before=0.7,
+            trust_after=0.5,
+            outcome="failure",
+            trust_driver="failed_payment_error",
+        )
+    ]
+    failed_adjustments = engine._diffuse_social_memory(2, RoundSummary(round_num=2))
+
+    assert failed_adjustments[0]["trust_delta"] < 0
+    assert peer.protocol_trust["x402"] < 0.6
+
+    peer.protocol_trust["x402"] = 0.6
+    engine.agent_memory_log = [
+        AgentMemoryEvent(
+            round_num=1,
+            agent_id="agent_001",
+            agent_name="Agent_001",
+            event_type="protocol_experience",
+            protocol="x402",
+            workload_type="api_micro",
+            sentiment_delta=-0.2,
+            trust_before=0.5,
+            trust_after=0.7,
+            outcome="success",
+            trust_driver="settled_payment",
+        )
+    ]
+    success_adjustments = engine._diffuse_social_memory(2, RoundSummary(round_num=2))
+
+    assert success_adjustments[0]["trust_delta"] > 0
+    assert peer.protocol_trust["x402"] > 0.6
+
+
 class _OfflineEconomy:
     total_route_usage = {"base-direct": 1}
 

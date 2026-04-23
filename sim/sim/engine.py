@@ -197,6 +197,10 @@ class SimulationEngine:
                 raw_delta = -0.06
             else:
                 return 0.0
+        elif event.outcome == "success":
+            raw_delta = abs(raw_delta)
+        elif event.outcome == "failure":
+            raw_delta = -abs(raw_delta)
 
         sign = 1.0 if raw_delta > 0 else -1.0
         driver_weight = {
