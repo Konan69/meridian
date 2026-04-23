@@ -36,37 +36,42 @@
 	}
 
 	function fmtDollars(cents: number): string {
-		const sign = cents < 0 ? '-' : '';
-		const absCents = Math.abs(cents);
+		const safeCents = numberFrom(cents) ?? 0;
+		const sign = safeCents < 0 ? '-' : '';
+		const absCents = Math.abs(safeCents);
 		if (absCents >= 100_000) return `${sign}$${(absCents / 100).toFixed(0)}`;
 		return `${sign}$${(absCents / 100).toFixed(2)}`;
 	}
 
 	function signedDollars(cents: number): string {
-		return `${cents >= 0 ? '+' : '-'}${fmtDollars(Math.abs(cents))}`;
+		const safeCents = numberFrom(cents) ?? 0;
+		return `${safeCents >= 0 ? '+' : '-'}${fmtDollars(Math.abs(safeCents))}`;
 	}
 
 	function fmtMs(n: number): string {
-		if (n < 1) return `${(n * 1000).toFixed(0)}us`;
-		if (n < 100) return `${n.toFixed(1)}ms`;
-		return `${n.toFixed(0)}ms`;
+		const safeMs = nonNegativeNumber(n);
+		if (safeMs < 1) return `${(safeMs * 1000).toFixed(0)}us`;
+		if (safeMs < 100) return `${safeMs.toFixed(1)}ms`;
+		return `${safeMs.toFixed(0)}ms`;
 	}
+
+	let metricData = $derived(metrics.map(cleanMetric));
 
 	let railProtocols = $derived(
 		Array.from(new Set([
-			...metrics.map(m => m.protocol),
+			...metricData.map(m => m.protocol),
 			...Object.keys(ecosystem),
 			...Object.keys(railPnlHistory),
 		])).sort()
 	);
 
 	let volumeData = $derived(
-		[...metrics].sort((a, b) => b.total_volume_cents - a.total_volume_cents)
+		[...metricData].sort((a, b) => b.total_volume_cents - a.total_volume_cents)
 	);
-	let volumeMax = $derived(Math.max(...metrics.map(m => m.total_volume_cents), 1));
+	let volumeMax = $derived(Math.max(...volumeData.map(m => m.total_volume_cents), 1));
 
 	let feeData = $derived(
-		metrics.map(m => ({
+		metricData.map(m => ({
 			...m,
 			feeRate: m.total_volume_cents > 0 ? (m.total_fees_cents / m.total_volume_cents) * 100 : 0,
 		})).sort((a, b) => a.feeRate - b.feeRate)
@@ -74,22 +79,22 @@
 	let feeMax = $derived(Math.max(...feeData.map(m => m.feeRate), 0.01));
 
 	let execData = $derived(
-		[...metrics].sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms)
+		[...metricData].sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms)
 	);
-	let execMax = $derived(Math.max(...metrics.map(m => m.avg_settlement_ms), 1));
+	let execMax = $derived(Math.max(...execData.map(m => m.avg_settlement_ms), 1));
 
 	let successData = $derived(
-		metrics.map(m => ({
+		metricData.map(m => ({
 			...m,
-			rate: m.total_transactions > 0 ? (m.successful_transactions / m.total_transactions) * 100 : 0,
+			rate: m.total_transactions > 0 ? unit(m.successful_transactions / m.total_transactions) * 100 : 0,
 		})).sort((a, b) => b.rate - a.rate)
 	);
 
 	let marginData = $derived(
 		railProtocols.map(protocol => {
-			const history = railPnlHistory[protocol] ?? [];
+			const history = finiteValues(railPnlHistory[protocol]);
 			const finalFromHistory = history.length > 0 ? history[history.length - 1] : undefined;
-			const margin_cents = ecosystem[protocol]?.operator_margin_cents ?? finalFromHistory ?? 0;
+			const margin_cents = numberFrom(ecosystem[protocol]?.operator_margin_cents, finalFromHistory) ?? 0;
 			const first_cents = history.length > 0 ? history[0] : margin_cents;
 			return {
 				protocol,
@@ -104,19 +109,26 @@
 	let adoptionData = $derived(
 		railProtocols.map(protocol => ({
 			protocol,
-			merchant_count: ecosystem[protocol]?.merchant_count ?? 0,
-			network_effect: ecosystem[protocol]?.network_effect ?? 0,
-			congestion: ecosystem[protocol]?.congestion ?? 0,
+			merchant_count: wholeNonNegative(ecosystem[protocol]?.merchant_count),
+			network_effect: unit(numberFrom(ecosystem[protocol]?.network_effect) ?? 0),
+			congestion: unit(numberFrom(ecosystem[protocol]?.congestion) ?? 0),
 		})).sort((a, b) => b.network_effect - a.network_effect)
 	);
 
 	let floatData = $derived(
-		Object.entries(floatSummary).sort(([, a], [, b]) => b - a)
+		Object.entries(floatSummary)
+			.map(([domain, amount]) => [domain, nonNegativeNumber(amount)] as [string, number])
+			.filter(([, amount]) => amount > 0)
+			.sort(([, a], [, b]) => b - a)
 	);
 	let floatMax = $derived(Math.max(...floatData.map(([, amount]) => amount), 1));
 
 	let routeData = $derived(
-		Object.entries(routeUsage).sort(([, a], [, b]) => b - a).slice(0, 8)
+		Object.entries(routeUsage)
+			.map(([route, usageCents]) => [route, nonNegativeNumber(usageCents)] as [string, number])
+			.filter(([, usageCents]) => usageCents > 0)
+			.sort(([, a], [, b]) => b - a)
+			.slice(0, 8)
 	);
 	let routeMax = $derived(Math.max(...routeData.map(([, count]) => count), 1));
 
@@ -134,12 +146,12 @@
 
 	/** Log-scale mapping for execution time: compress large values */
 	function logScale(value: number, max: number): number {
-		if (value <= 0 || max <= 0) return 0;
+		if (!Number.isFinite(value) || !Number.isFinite(max) || value <= 0 || max <= 0) return 0;
 		return Math.log(value + 1) / Math.log(max + 1);
 	}
 
 	function scaledWidth(value: number, max: number, maxWidth = plotWidth): number {
-		if (!Number.isFinite(value) || value <= 0 || max <= 0) return 0;
+		if (!Number.isFinite(value) || !Number.isFinite(max) || value <= 0 || max <= 0) return 0;
 		return Math.max(2, Math.min(maxWidth, (value / max) * maxWidth));
 	}
 
@@ -150,6 +162,46 @@
 
 	function compactLabel(value: string, max = 18): string {
 		return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+	}
+
+	function cleanMetric(metric: ProtoMetric): ProtoMetric {
+		const protocol = typeof metric.protocol === 'string' ? metric.protocol.trim() : '';
+		return {
+			protocol: protocol || 'unknown',
+			total_transactions: wholeNonNegative(metric.total_transactions),
+			total_volume_cents: nonNegativeNumber(metric.total_volume_cents),
+			total_fees_cents: nonNegativeNumber(metric.total_fees_cents),
+			avg_settlement_ms: nonNegativeNumber(metric.avg_settlement_ms),
+			micropayment_count: wholeNonNegative(metric.micropayment_count),
+			successful_transactions: wholeNonNegative(metric.successful_transactions),
+			failed_transactions: wholeNonNegative(metric.failed_transactions),
+		};
+	}
+
+	function numberFrom(...values: unknown[]) {
+		for (const value of values) {
+			if (typeof value === 'number' && Number.isFinite(value)) return value;
+			if (typeof value === 'string' && value.trim()) {
+				const parsed = Number(value);
+				if (Number.isFinite(parsed)) return parsed;
+			}
+		}
+		return null;
+	}
+
+	function nonNegativeNumber(value: unknown) {
+		return Math.max(0, numberFrom(value) ?? 0);
+	}
+
+	function wholeNonNegative(value: unknown) {
+		return Math.max(0, Math.trunc(numberFrom(value) ?? 0));
+	}
+
+	function finiteValues(values: number[] | undefined) {
+		return (values ?? []).flatMap((value) => {
+			const numeric = numberFrom(value);
+			return numeric == null ? [] : [numeric];
+		});
 	}
 </script>
 

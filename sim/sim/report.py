@@ -13,6 +13,20 @@ def _pct(numerator: float, denominator: float) -> str:
     return f"{numerator / denominator * 100:.2f}%"
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # Canonical protocol display order
 _PROTO_ORDER = ["acp", "ap2", "x402", "mpp", "atxp"]
 
@@ -174,23 +188,36 @@ class ReportGenerator:
         ]
 
         if self.result.route_pressure_summary:
-            peak_route = max(
+            peak_route = sorted(
                 self.result.route_pressure_summary,
-                key=lambda route: float(route.get("max_capacity_ratio", 0)),
-            )
-            pressure = float(peak_route.get("max_capacity_ratio", 0))
+                key=lambda route: (
+                    -_as_float(route.get("max_capacity_ratio", 0)),
+                    str(route.get("route_id", "")),
+                ),
+            )[0]
+            pressure = _as_float(peak_route.get("max_capacity_ratio", 0))
+            route_id = str(peak_route.get("route_id") or "unknown_route")
+            usage_cents = _as_int(peak_route.get("total_usage_cents", 0))
+            pressure_rounds = _as_int(peak_route.get("pressure_rounds", 0))
+            round_label = "pressure round" if pressure_rounds == 1 else "pressure rounds"
+            pressure_level = str(peak_route.get("last_pressure_level") or "observed")
             if pressure >= 1.0:
-                lines.append(
-                    f"Readout: {peak_route['route_id']} is over round capacity; self-sustainability depends on rerouting or more float."
+                route_action = (
+                    "reroute demand or add float before more volume lands here"
                 )
             elif pressure >= 0.7:
-                lines.append(
-                    f"Readout: {peak_route['route_id']} is nearing capacity, so route pressure can start shaping protocol choice."
+                route_action = (
+                    "watch agent memory and treasury mix before raising volume"
                 )
             else:
-                lines.append(
-                    f"Readout: route capacity is not the main constraint; treasury mix, margin, and trust carry more signal."
+                route_action = (
+                    "route capacity is available; treasury mix, margin, and trust carry more signal"
                 )
+            lines.append(
+                f"Readout: {route_id} peaked at {pressure * 100:.1f}% capacity "
+                f"({pressure_level}) across {pressure_rounds} {round_label} with "
+                f"{_cents_to_dollars(usage_cents)} reserved principal; {route_action}."
+            )
 
         if self.result.treasury_posture_summary:
             tightest = min(
@@ -228,14 +255,58 @@ class ReportGenerator:
                 driver_counts[driver] = driver_counts.get(driver, 0) + 1
             drivers = sorted(
                 driver_totals,
-                key=lambda driver: (abs(driver_totals[driver]), driver_counts[driver]),
-                reverse=True,
+                key=lambda driver: (
+                    -abs(driver_totals[driver]),
+                    -driver_counts[driver],
+                    driver,
+                ),
             )
             if drivers:
                 driver = drivers[0]
                 lines.append(
                     f"Memory driver: {driver.replace('_', ' ')} produced "
                     f"{driver_counts[driver]} memories with net trust {driver_totals[driver]:+.2f}."
+                )
+
+            pressure_memories = [
+                memory for memory in self.result.agent_memory_log
+                if (
+                    memory.ecosystem_pressure > 0
+                    or "route_pressure" in (memory.trust_driver or "")
+                    or "route pressure" in (memory.reason or "")
+                )
+            ]
+            pressure_buckets = {}
+            for memory in pressure_memories:
+                proto = (memory.protocol or "unknown").lower()
+                route_id = memory.route_id or "unknown_route"
+                bucket = pressure_buckets.setdefault(
+                    (proto, route_id),
+                    {"count": 0, "net": 0.0, "max_pressure": 0.0, "amount": 0},
+                )
+                bucket["count"] += 1
+                bucket["net"] += memory.sentiment_delta
+                bucket["max_pressure"] = max(bucket["max_pressure"], memory.ecosystem_pressure)
+                bucket["amount"] += memory.amount_cents
+
+            if pressure_buckets:
+                (proto, route_id), bucket = sorted(
+                    pressure_buckets.items(),
+                    key=lambda item: (
+                        -abs(float(item[1]["net"])),
+                        -int(item[1]["count"]),
+                        item[0][0],
+                        item[0][1],
+                    ),
+                )[0]
+                count = int(bucket["count"])
+                memory_label = "memory" if count == 1 else "memories"
+                lines.append(
+                    f"Route-pressure memory: {proto.upper()} on {route_id} recorded "
+                    f"{count} pressure-linked {memory_label}, max pressure "
+                    f"{float(bucket['max_pressure']) * 100:.1f}%, net trust "
+                    f"{float(bucket['net']):+.2f}, attempt value "
+                    f"{_cents_to_dollars(int(bucket['amount']))}."
                 )
 
         if self.result.treasury_posture_summary:
@@ -264,8 +335,32 @@ class ReportGenerator:
             lines.append("Rail margin pressure:")
             states = sorted(
                 self.result.ecosystem_summary.items(),
-                key=lambda item: item[1].operator_margin_cents,
+                key=lambda item: (item[1].operator_margin_cents, item[0]),
             )
+            worst_name, worst_state = states[0]
+            best_name, best_state = states[-1]
+            if worst_state.operator_margin_cents < 0:
+                if worst_name == best_name:
+                    lines.append(
+                        f"Rail margin watch: {worst_name.upper()} is losing "
+                        f"{_cents_to_dollars(abs(worst_state.operator_margin_cents))} "
+                        f"after {_cents_to_dollars(worst_state.fee_revenue_cents)} revenue and "
+                        f"{_cents_to_dollars(worst_state.infrastructure_cost_cents)} infrastructure cost."
+                    )
+                else:
+                    lines.append(
+                        f"Rail margin watch: {worst_name.upper()} is losing "
+                        f"{_cents_to_dollars(abs(worst_state.operator_margin_cents))} "
+                        f"after {_cents_to_dollars(worst_state.fee_revenue_cents)} revenue and "
+                        f"{_cents_to_dollars(worst_state.infrastructure_cost_cents)} infrastructure cost; "
+                        f"{best_name.upper()} leads at {_cents_to_dollars(best_state.operator_margin_cents)}."
+                    )
+            else:
+                lines.append(
+                    f"Rail margin watch: {best_name.upper()} leads at "
+                    f"{_cents_to_dollars(best_state.operator_margin_cents)}; lowest margin is "
+                    f"{worst_name.upper()} at {_cents_to_dollars(worst_state.operator_margin_cents)}."
+                )
             for name, state in states:
                 lines.append(
                     f"  {name.upper()}: margin={_cents_to_dollars(state.operator_margin_cents)}, "
@@ -282,7 +377,7 @@ class ReportGenerator:
                 lines.append(f"  R{event.round_num}: {event.summary}")
 
         status = "warn" if treasury_failed or any(
-            route.get("max_capacity_ratio", 0) >= 1.0
+            _as_float(route.get("max_capacity_ratio", 0)) >= 1.0
             for route in self.result.route_pressure_summary
         ) else "ok"
         return {"title": "Self-Sustainability Signals", "content": "\n".join(lines), "status": status}

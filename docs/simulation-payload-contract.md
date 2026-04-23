@@ -44,6 +44,16 @@ Keep these as observability labels for simulated economy behavior. Provider
 readiness, funding, and settlement diagnostics can inform the trace, but they
 should not replace the route, rail, trust, and merchant evidence surfaced here.
 
+Report grounding:
+
+- Self-sustainability report readouts should be computed from
+  `route_pressure_summary`, `treasury_posture_summary`,
+  `ecosystem_summary.<protocol>.operator_margin_cents`, `trust_summary`, and
+  `agent_memory_log`.
+- Do not add a compact `self_sustainability_summary`. Keeping the report tied
+  to source fields makes route capacity, treasury fit, margin, and memory
+  drivers auditable in the stream and final payload.
+
 ## MiroFish Adaptation
 
 - `SimulationConfig.world_seed`, `scenario_prompt`, and `stable_universe`

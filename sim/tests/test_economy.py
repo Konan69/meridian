@@ -11,6 +11,7 @@ from sim.types import (
     AgentRole,
     BalanceDomain,
     MerchantProfile,
+    PROTOCOL_FEE_FORMULAS,
     Protocol,
     RoundSummary,
     SimulationConfig,
@@ -205,6 +206,58 @@ def test_protocol_option_sustainability_bias_uses_margin_pressure_and_treasury_f
         WorkloadType.TREASURY_REBALANCE,
         stressed,
     )
+
+
+def test_rebalance_option_prefers_intended_surplus_source_domain():
+    config = SimulationConfig(protocols=[Protocol.AP2, Protocol.ATXP])
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.AP2, Protocol.ATXP]
+    amount = 2_500
+    intent = {
+        "source_domain": BalanceDomain.SOLANA_USDC,
+        "target_domain": BalanceDomain.BASE_USDC,
+        "amount_cents": amount,
+    }
+
+    def option(protocol: Protocol, route_id: str) -> dict:
+        route = next(route for route in ROUTE_MATRIX if route.route_id == route_id)
+        route_fee = max(
+            (amount * route.fee_bps) // 10_000 + route.fixed_fee_cents,
+            route.fixed_fee_cents,
+        )
+        protocol_fee = PROTOCOL_FEE_FORMULAS[protocol](amount)
+        return {
+            "protocol": protocol,
+            "route": route,
+            "source_domain": route.source_domain,
+            "target_domain": route.target_domain,
+            "estimated_protocol_fee_cents": protocol_fee,
+            "route_fee_cents": route_fee,
+            "total_required_cents": amount + protocol_fee + route_fee,
+            "capacity_ratio": 0.1,
+            "domain_mismatch": int(route.source_domain != route.target_domain),
+        }
+
+    cheaper_preferred_source = option(Protocol.AP2, "base_direct_usdc")
+    intended_surplus_source = option(Protocol.AP2, "cctp_solana_to_base")
+
+    chosen = engine._choose_rebalance_option(
+        merchant,
+        intent,
+        [cheaper_preferred_source, intended_surplus_source],
+    )
+
+    assert chosen["source_domain"] == BalanceDomain.SOLANA_USDC
+    assert chosen["route"].route_id == "cctp_solana_to_base"
+
+    fallback = engine._choose_rebalance_option(
+        merchant,
+        {**intent, "source_domain": BalanceDomain.TEMPO_USD},
+        [cheaper_preferred_source],
+    )
+
+    assert fallback["route"].route_id == "base_direct_usdc"
 
 
 def test_world_event_records_summary_and_ndjson_contract(capsys):

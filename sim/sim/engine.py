@@ -984,6 +984,36 @@ class SimulationEngine:
             return None
         return best_option
 
+    def _choose_rebalance_option(
+        self,
+        merchant: MerchantProfile,
+        intent: dict,
+        options: list[dict],
+    ) -> dict | None:
+        intended_source = intent.get("source_domain")
+        source_options = [
+            option
+            for option in options
+            if option.get("source_domain") == intended_source
+        ]
+        candidates = source_options or options
+        if not candidates:
+            return None
+
+        return max(
+            candidates,
+            key=lambda candidate: (
+                self._protocol_self_sustainability_bias(
+                    merchant,
+                    intent["amount_cents"],
+                    candidate,
+                ),
+                self.protocol_state[candidate["protocol"].value].reliability,
+                -candidate["route_fee_cents"],
+                -candidate["estimated_protocol_fee_cents"],
+            ),
+        )
+
     def _margin_delta(self, protocol: Protocol, route_fee: int, protocol_fee: int) -> int:
         infra_cost = int(route_fee * 0.55 + protocol_fee * 0.25 + PROTOCOL_FIXED_COST_CENTS[protocol] * 0.01)
         return protocol_fee - infra_cost
@@ -1339,19 +1369,13 @@ class SimulationEngine:
             if not options:
                 continue
 
-            option = max(
+            option = self._choose_rebalance_option(
+                merchant,
+                intent,
                 options,
-                key=lambda candidate: (
-                    self._protocol_self_sustainability_bias(
-                        merchant,
-                        intent["amount_cents"],
-                        candidate,
-                    ),
-                    self.protocol_state[candidate["protocol"].value].reliability,
-                    -candidate["route_fee_cents"],
-                    -candidate["estimated_protocol_fee_cents"],
-                ),
             )
+            if option is None:
+                continue
             reservation = self.economy.reserve(
                 owner_kind=AgentRole.MERCHANT,
                 owner_id=merchant.merchant_id,

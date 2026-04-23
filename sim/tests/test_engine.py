@@ -524,6 +524,7 @@ def test_self_sustainability_report_section():
             trust_driver="failed_under_route_pressure",
             ecosystem_pressure=0.8,
             amount_cents=100,
+            route_id="base_direct_usdc",
             reason="route pressure raised settlement risk",
         )
     ]
@@ -602,8 +603,21 @@ def test_self_sustainability_report_section():
     assert "merchant_test" in signals["content"]
     assert "base_direct_usdc" in signals["content"]
     assert "$20,000.00" in signals["content"]
+    assert (
+        "Readout: base_direct_usdc peaked at 80.0% capacity (elevated) "
+        "across 1 pressure round with $20,000.00 reserved principal"
+    ) in signals["content"]
     assert "X402 leads at avg 0.74" in signals["content"]
     assert "failed under route pressure" in signals["content"]
+    assert (
+        "Route-pressure memory: X402 on base_direct_usdc recorded 1 "
+        "pressure-linked memory, max pressure 80.0%, net trust -0.08, "
+        "attempt value $1.00."
+    ) in signals["content"]
+    assert (
+        "Rail margin watch: ATXP is losing $2.00 after $3.00 revenue and "
+        "$5.00 infrastructure cost; X402 leads at $4.50."
+    ) in signals["content"]
     assert "margin=$4.50" in signals["content"]
 
 
