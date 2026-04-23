@@ -48,6 +48,10 @@ The simulation API streams NDJSON. Important event types:
 - `agent_memory`: per-agent protocol trust update.
 - `trust_snapshot`: aggregate trust summary by protocol.
 - `world_event`: simulation-level narrative event.
+- `route_pressure`: round-level route capacity pressure, mirrored as
+  `world_event` data for economy analysis.
+- `treasury_rebalance`: merchant treasury recycling between settlement domains,
+  also mirrored as `world_event` data.
 - `merchant_switch`: merchant protocol adoption/removal.
 - `agent_preference_shift`: agent preference changed from memory.
 - `simulation_complete`: final summaries, balances, memory log, world events.
@@ -59,5 +63,7 @@ Future Evo work should optimize for believable ecosystem behavior:
 - Protocol choices respond to fees, latency, reliability, capacity, workload,
   and social memory.
 - Treasury rebalancing changes route pressure and rail P&L.
+- Self-sustainability reports show rebalance outcomes, route pressure, and rail
+  margin pressure as economy signals, not just funding diagnostics.
 - The UI explains the simulation state through graph, timeline, report, and
   chat without treating funding status as the main product.

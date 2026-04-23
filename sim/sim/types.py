@@ -428,6 +428,7 @@ class RoundSummary:
     merchant_sales: dict[str, int] = field(default_factory=dict)
     ecosystem: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
     route_usage: dict[str, int] = field(default_factory=dict)
+    route_pressure: list[dict[str, Any]] = field(default_factory=list)
     balance_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
 
@@ -445,6 +446,7 @@ class SimulationResult:
     duration_seconds: float = 0.0
     ecosystem_summary: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
     route_usage_summary: dict[str, int] = field(default_factory=dict)
+    route_pressure_summary: list[dict[str, Any]] = field(default_factory=list)
     float_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
     rail_pnl_history: dict[str, list[int]] = field(default_factory=dict)

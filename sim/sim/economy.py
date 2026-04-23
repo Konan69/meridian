@@ -454,6 +454,50 @@ class StablecoinEconomy:
             )
         return dict(summary)
 
+    def snapshot_route_pressure(self) -> list[dict[str, object]]:
+        pressure: list[dict[str, object]] = []
+        for route_id, usage_cents in self.round_route_usage.items():
+            route = self.routes.get(route_id)
+            if route is None or usage_cents <= 0:
+                continue
+
+            capacity_ratio = usage_cents / max(1, route.capacity_cents_per_round)
+            if capacity_ratio >= 1.0:
+                pressure_level = "critical"
+            elif capacity_ratio >= 0.65:
+                pressure_level = "elevated"
+            elif capacity_ratio >= 0.25:
+                pressure_level = "active"
+            else:
+                pressure_level = "low"
+
+            pressure.append(
+                {
+                    "route_id": route.route_id,
+                    "source_domain": route.source_domain.value,
+                    "target_domain": route.target_domain.value,
+                    "primitive": route.primitive.value,
+                    "protocols": [
+                        protocol.value
+                        for protocol in route.supported_protocols
+                        if protocol in self.protocols
+                    ],
+                    "usage_cents": int(usage_cents),
+                    "capacity_cents": route.capacity_cents_per_round,
+                    "capacity_ratio": round(capacity_ratio, 4),
+                    "pressure_level": pressure_level,
+                }
+            )
+
+        pressure.sort(
+            key=lambda item: (
+                float(item["capacity_ratio"]),
+                int(item["usage_cents"]),
+            ),
+            reverse=True,
+        )
+        return pressure
+
     def snapshot_treasury_distribution(self) -> dict[str, dict[str, int]]:
         distribution: dict[str, dict[str, int]] = {}
         for merchant in self.merchants:

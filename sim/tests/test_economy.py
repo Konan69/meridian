@@ -118,3 +118,22 @@ def test_float_summary_populated():
     float_summary = economy.snapshot_float_summary()
     assert float_summary
     assert sum(float_summary.values()) > 0
+
+
+def test_route_pressure_snapshot_marks_used_capacity():
+    agents = generate_agents(1, seed=13)
+    merchant = _merchant()
+    economy = StablecoinEconomy(
+        agents=agents,
+        merchants=[merchant],
+        protocols=list(Protocol),
+        rng=__import__("random").Random(13),
+    )
+    economy.round_route_usage["base_direct_usdc"] = 2_000_000
+
+    pressure = economy.snapshot_route_pressure()
+
+    assert pressure[0]["route_id"] == "base_direct_usdc"
+    assert pressure[0]["pressure_level"] == "elevated"
+    assert pressure[0]["capacity_ratio"] == 0.8
+    assert "x402" in pressure[0]["protocols"]

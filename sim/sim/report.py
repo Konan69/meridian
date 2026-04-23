@@ -33,6 +33,7 @@ class ReportGenerator:
         sections.append(self._executive_summary())
         sections.append(self._ecosystem_summary())
         sections.append(self._emergent_world_summary())
+        sections.append(self._self_sustainability_signals())
         sections.append(self._float_summary())
         sections.extend(self._per_protocol_sections())
         sections.append(self._comparative_ranking())
@@ -129,6 +130,79 @@ class ReportGenerator:
                 lines.append(f"  R{event.round_num}: {event.summary}")
 
         return {"title": "Emergent Agent Economy", "content": "\n".join(lines), "status": "ok"}
+
+    def _self_sustainability_signals(self) -> dict:
+        treasury_ok = [
+            event for event in self.result.world_events
+            if event.event_type == "treasury_rebalance"
+        ]
+        treasury_failed = [
+            event for event in self.result.world_events
+            if event.event_type == "treasury_rebalance_failed"
+        ]
+        route_events = [
+            event for event in self.result.world_events
+            if event.event_type == "route_pressure"
+        ]
+        has_margin = any(
+            state.operator_margin_cents or state.fee_revenue_cents or state.infrastructure_cost_cents
+            for state in self.result.ecosystem_summary.values()
+        )
+        if (
+            not treasury_ok
+            and not treasury_failed
+            and not route_events
+            and not self.result.route_pressure_summary
+            and not has_margin
+        ):
+            return {
+                "title": "Self-Sustainability Signals",
+                "content": "No treasury rebalance, route pressure, or rail margin data available.",
+                "status": "empty",
+            }
+
+        lines = [
+            f"Treasury rebalances: {len(treasury_ok)} succeeded, {len(treasury_failed)} failed",
+            f"Route pressure events: {len(route_events)}",
+        ]
+
+        if self.result.route_pressure_summary:
+            lines.append("")
+            lines.append("Most pressured routes:")
+            for route in self.result.route_pressure_summary[:5]:
+                lines.append(
+                    f"  {route['route_id']}: max={float(route['max_capacity_ratio']) * 100:.1f}%, "
+                    f"usage={_cents_to_dollars(int(route['total_usage_cents']))}, "
+                    f"rounds={route['pressure_rounds']}"
+                )
+
+        if self.result.ecosystem_summary:
+            lines.append("")
+            lines.append("Rail margin pressure:")
+            states = sorted(
+                self.result.ecosystem_summary.items(),
+                key=lambda item: item[1].operator_margin_cents,
+            )
+            for name, state in states:
+                lines.append(
+                    f"  {name.upper()}: margin={_cents_to_dollars(state.operator_margin_cents)}, "
+                    f"revenue={_cents_to_dollars(state.fee_revenue_cents)}, "
+                    f"infra={_cents_to_dollars(state.infrastructure_cost_cents)}, "
+                    f"scale_pressure={state.scale_pressure:.2f}"
+                )
+
+        recent = (treasury_ok + treasury_failed + route_events)[-5:]
+        if recent:
+            lines.append("")
+            lines.append("Recent sustainability events:")
+            for event in recent:
+                lines.append(f"  R{event.round_num}: {event.summary}")
+
+        status = "warn" if treasury_failed or any(
+            route.get("max_capacity_ratio", 0) >= 1.0
+            for route in self.result.route_pressure_summary
+        ) else "ok"
+        return {"title": "Self-Sustainability Signals", "content": "\n".join(lines), "status": status}
 
     def _float_summary(self) -> dict:
         if not self.result.float_summary:
