@@ -81,6 +81,15 @@ def tail(text: str, limit: int = 5000) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
+def pnpm_cached_install_command(after_install: str) -> str:
+    return (
+        'CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/meridian-evo-bench" && '
+        'PNPM_STORE_DIR="$CACHE_ROOT/pnpm-store-v10" && '
+        'pnpm install --store-dir "$PNPM_STORE_DIR" --frozen-lockfile --prefer-offline --ignore-scripts && '
+        f"{after_install}"
+    )
+
+
 def run_command(root: Path, task_id: str, command: str, *, cwd: Path | None = None, timeout: int = 180, target_seconds: float = 30.0) -> float:
     env = os.environ.copy()
     env.update(
@@ -343,7 +352,7 @@ def task_service_builds(root: Path) -> float:
             run_command(
                 root,
                 f"service_build_{service}",
-                "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run build",
+                pnpm_cached_install_command("pnpm run build"),
                 cwd=root / "services" / service,
                 timeout=180,
                 target_seconds=target_seconds,
@@ -363,7 +372,7 @@ def task_web_check(root: Path) -> float:
     return run_command(
         root,
         "web_check_build",
-        "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts && pnpm run check && pnpm run build",
+        pnpm_cached_install_command("pnpm run check && pnpm run build"),
         cwd=root / "web",
         timeout=240,
         target_seconds=70,
