@@ -37,6 +37,11 @@ ROUTE_SCORE_RATIONALE_FIELDS = [
     "route_score_pressure_drag",
     "route_score_sustainability_lift",
 ]
+ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS = [
+    "avg_route_score",
+    "avg_route_pressure_penalty",
+    "avg_sustainability_bias",
+]
 INHERITED_GATE_GUIDANCE = [
     {
         "name": "whole_app_contract_gate",
@@ -982,7 +987,47 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
                 "Route-score rationale",
                 "explain the selected buyer",
                 "protocol-level route evidence",
+                "frontend route-score",
                 *ROUTE_SCORE_RATIONALE_FIELDS,
+            ],
+        ),
+        (
+            "frontend_stream_contract",
+            root / "web/src/lib/simStream.contract.ts",
+            [
+                "routeScoreDriverDisplay",
+                "metricsRouteScore",
+                "metricsPressureDrag",
+                "metricsSustainabilityLift",
+                *ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
+            ],
+        ),
+        (
+            "frontend_display_helper",
+            root / "web/src/lib/routeScoreDrivers.ts",
+            [
+                "routeScoreDriverDisplay",
+                "score",
+                "pressure",
+                "sustain",
+            ],
+        ),
+        (
+            "frontend_observability_display",
+            root / "web/src/lib/components/EconomyObservability.svelte",
+            [
+                "routeScoreDriverDisplay",
+                "score-driver-strip",
+                *ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
+            ],
+        ),
+        (
+            "frontend_market_chart_display",
+            root / "web/src/lib/components/MarketCharts.svelte",
+            [
+                "routeScoreDriverDisplay",
+                "score_drivers",
+                *ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
             ],
         ),
     ]
@@ -1010,9 +1055,10 @@ def check_route_score_rationale_contract(root: Path, failures: list[str]) -> dic
     return {
         "kind": "route_score_rationale_contract",
         "source_fields": ROUTE_SCORE_RATIONALE_FIELDS,
+        "frontend_display_fields": ROUTE_SCORE_FRONTEND_DISPLAY_FIELDS,
         "checked_paths": checked_paths,
         "missing_needles": missing_needles,
-        "protects": "Route-score docs keep buyer choice, protocol summary, merchant switch evidence, and self-sustainable protocol evolution tied to exact payload fields.",
+        "protects": "Route-score docs and frontend displays stay tied to exact payload fields for buyer choice, protocol summary, merchant switch evidence, and self-sustainable protocol evolution.",
     }
 
 
@@ -1224,16 +1270,36 @@ def static_contract_trace_metadata(
                 {
                     "kind": "service_readme_enforcing_file_contracts",
                     "source": "SERVICE_OFFLINE_COVERAGE",
+                    "source_task_id": "service_offline_protocol_tests",
+                    "source_task_metadata_fields": [
+                        "covered_test_files",
+                        "covered_helper_files",
+                    ],
+                    "source_fields": ["test_files", "helper_files"],
                     "checked_paths": [
                         item["readme_path"] for item in service_offline_coverage_files
                     ],
                     "required_file_count": sum(
                         item["file_count"] for item in service_offline_coverage_files
                     ),
+                    "reference_check_count": sum(
+                        len(item["readme_file_reference_checks"])
+                        for item in service_offline_coverage_files
+                    ),
+                    "expected_file_references": [
+                        check
+                        for item in service_offline_coverage_files
+                        for check in item["readme_file_reference_checks"]
+                    ],
                     "missing_file_reference_count": sum(
                         len(item["missing_readme_file_references"])
                         for item in service_offline_coverage_files
                     ),
+                    "missing_file_references": [
+                        detail
+                        for item in service_offline_coverage_files
+                        for detail in item["missing_readme_file_reference_details"]
+                    ],
                     "protects": "Service READMEs must point to each offline test and helper file named by service protocol trace metadata.",
                 },
                 raw_route_pressure_report_contract,
@@ -1444,6 +1510,20 @@ def task_static_contracts(root: Path) -> float:
             *coverage["test_files"],
             *coverage["helper_files"],
         ]
+        readme_file_reference_checks = [
+            {
+                "service": service,
+                "readme_path": readme_path,
+                "source": "SERVICE_OFFLINE_COVERAGE",
+                "source_task_id": f"service_offline_{service}",
+                "source_field": field,
+                "source_index": index,
+                "expected_path": path,
+                "expected_path_exists": (root / path).exists(),
+            }
+            for field in path_fields
+            for index, path in enumerate(coverage[field])
+        ]
         missing_paths = [path for path in checked_paths if not (root / path).exists()]
         for path in missing_paths:
             failures.append(
@@ -1457,9 +1537,26 @@ def task_static_contracts(root: Path) -> float:
             if surface not in readme_text
         ]
         missing_readme_file_references = [
-            path
-            for path in checked_paths
-            if path not in readme_text
+            check["expected_path"]
+            for check in readme_file_reference_checks
+            if check["expected_path"] not in readme_text
+        ]
+        missing_readme_file_reference_details = [
+            {
+                **check,
+                "readme_exists": readme.exists(),
+                "readme_reference_present": False,
+            }
+            for check in readme_file_reference_checks
+            if check["expected_path"] not in readme_text
+        ]
+        readme_file_reference_checks = [
+            {
+                **check,
+                "readme_exists": readme.exists(),
+                "readme_reference_present": check["expected_path"] in readme_text,
+            }
+            for check in readme_file_reference_checks
         ]
         if not readme.exists():
             failures.append(f"SERVICE_OFFLINE_COVERAGE[{service}]: missing README {readme_path}")
@@ -1487,8 +1584,10 @@ def task_static_contracts(root: Path) -> float:
                 "empty_required_fields": empty_required_fields,
                 "file_count": len(checked_paths),
                 "missing_files": missing_paths,
+                "readme_file_reference_checks": readme_file_reference_checks,
                 "missing_readme_semantic_surfaces": missing_readme_semantic_surfaces,
                 "missing_readme_file_references": missing_readme_file_references,
+                "missing_readme_file_reference_details": missing_readme_file_reference_details,
             }
         )
 

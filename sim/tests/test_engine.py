@@ -584,11 +584,19 @@ def test_report_explains_route_score_driven_merchant_protocol_change():
     ) in emergent["content"]
     assert "Route-score merchant changes:" in emergent["content"]
     assert emergent["content"].index("  merchant_alpha:") < emergent["content"].index("  merchant_test:")
+    assert emergent["content"].count("  merchant_alpha:") == 1
     assert emergent["content"].count("  merchant_test:") == 1
-    assert "  merchant_test:" in emergent["content"]
     assert (
+        "  merchant_alpha:\n"
+        "    R7: added AP2 after route-score evidence\n"
+        "      score 0.90; pressure drag -0.20; sustainability lift +0.60; "
+        "reason ecosystem_evidence\n"
+        "  merchant_test:\n"
         "    R8: removed Stripe MPP after route-score evidence\n"
         "      score 0.10; pressure drag 1.80; sustainability lift -0.40; "
+        "reason ecosystem_evidence\n"
+        "    R9: added AP2 after route-score evidence\n"
+        "      score 0.80; pressure drag -0.10; sustainability lift +0.50; "
         "reason ecosystem_evidence"
     ) in emergent["content"]
 

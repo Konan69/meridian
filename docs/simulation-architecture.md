@@ -114,6 +114,26 @@ economy more believable, the workbench explanation clearer, or future
 regression diagnosis easier; they should not relax static contracts, compile
 checks, or build/test commands.
 
+Current protected surfaces checkpoint:
+
+- `static_contracts` / `whole_app_contract_gate`: static runtime, funding,
+  trace metadata, docs, and Python compile contracts. Validate with
+  `evo gate list <checkpoint>` and
+  `python3 benchmark_whole_app.py --target . --profile gate --min-score 1.0`.
+- `service_offline_protocol_tests`: aggregate CDP, Stripe MPP, ATXP, and AP2
+  credential-free helper semantics. Validate with
+  `python3 benchmark_whole_app.py --target . --profile benchmark --task-id service_offline_protocol_tests`
+  or inspect `benchmark_whole_app.py --list-tasks` for component task ids.
+- Focused service gates: `cdp_offline_treasury_transfer_contract`,
+  `stripe_mpp_offline_semantics`,
+  `atxp_offline_direct_transfer_topup_contract`, and
+  `ap2_offline_settlement_semantics`. Validate by preserving the exact commands
+  from `evo gate list <checkpoint>`; these intentionally rerun part of the
+  aggregate service suite.
+- `route_score_merchant_switch_report_readout`: report wording must explain
+  route-score-driven merchant protocol switches. Validate with the inherited
+  gate from `evo gate list <checkpoint>` or the focused pytest named there.
+
 Benchmark traces are part of the handoff between workers. Keep command context,
 cache key inputs, and static contract coverage visible so the next worker can
 separate a real validation failure from cache setup or timing variance.

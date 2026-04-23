@@ -72,7 +72,10 @@ Report grounding:
   `avg_sustainability_bias` explain protocol-level route evidence; merchant
   switch readouts use `route_score_pressure_drag` and
   `route_score_sustainability_lift` to show when route pressure or
-  self-sustainability changed protocol adoption.
+  self-sustainability changed protocol adoption. The frontend route-score
+  display contract maps the protocol summary fields through
+  `routeScoreDriverDisplay` in the economy observability and market chart
+  panels, so docs and payload names cannot drift away from rendered evidence.
 
 ## MiroFish Adaptation
 
