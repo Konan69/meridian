@@ -161,13 +161,11 @@ export function normalizeTrustSummary(value: unknown): TrustSummary {
 }
 
 export function normalizeProtocolSummaries(value: unknown): ProtoMetrics[] {
-  const record = asRecord(value);
-  if (!record) return [];
+  const entries = namedRecordEntries(value, ['protocol']);
+  if (entries.length === 0) return [];
 
-  return Object.entries(record)
-    .flatMap(([protocol, raw]) => {
-      const item = asRecord(raw);
-      if (!item) return [];
+  return entries
+    .map(([protocol, item]) => {
       return [{
         protocol: textFrom(item.protocol) ?? protocol,
         total_transactions: wholeNumberFrom(item.total_transactions) ?? 0,
@@ -180,17 +178,16 @@ export function normalizeProtocolSummaries(value: unknown): ProtoMetrics[] {
         micropayment_count: wholeNumberFrom(item.micropayment_count) ?? 0,
       }];
     })
+    .flat()
     .sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
 }
 
 export function normalizeEcosystemSummary(value: unknown): Record<string, ProtocolEcosystem> {
-  const record = asRecord(value);
-  if (!record) return {};
+  const entries = namedRecordEntries(value, ['protocol']);
+  if (entries.length === 0) return {};
 
   return Object.fromEntries(
-    Object.entries(record).flatMap(([protocol, raw]) => {
-      const item = asRecord(raw);
-      if (!item) return [];
+    entries.flatMap(([protocol, item]) => {
       return [[protocol, {
         merchant_count: wholeNumberFrom(item.merchant_count) ?? 0,
         network_effect: numberFrom(item.network_effect) ?? 0,
@@ -223,10 +220,35 @@ export function normalizeBalanceSnapshots(value: unknown): BalanceSnapshot[] {
 
 export function normalizeNumberRecord(value: unknown): Record<string, number> {
   const record = asRecord(value);
-  if (!record) return {};
+  if (!record && !Array.isArray(value)) return {};
+
+  if (Array.isArray(value)) {
+    return Object.fromEntries(
+      value.flatMap((raw, index) => {
+        const item = asRecord(raw);
+        if (!item) return [];
+        const key =
+          textFrom(item.route_id) ??
+          textFrom(item.route) ??
+          textFrom(item.domain) ??
+          textFrom(item.protocol) ??
+          textFrom(item.key) ??
+          `item_${index + 1}`;
+        const amount = numberFrom(
+          item.value,
+          item.amount,
+          item.amount_cents,
+          item.usage_cents,
+          item.total_usage_cents,
+          item.reserved_cents,
+        );
+        return amount == null ? [] : [[key, amount]];
+      }),
+    );
+  }
 
   return Object.fromEntries(
-    Object.entries(record).flatMap(([key, raw]) => {
+    Object.entries(record ?? {}).flatMap(([key, raw]) => {
       const value = numberFrom(raw);
       return value == null ? [] : [[key, value]];
     }),
@@ -247,27 +269,38 @@ export function normalizeNestedNumberRecord(value: unknown): Record<string, Reco
 
 export function normalizeNumberArrayRecord(value: unknown): Record<string, number[]> {
   const record = asRecord(value);
-  if (!record) return {};
+  if (!record && !Array.isArray(value)) return {};
+
+  if (Array.isArray(value)) {
+    return Object.fromEntries(
+      value.flatMap((raw, index) => {
+        const item = asRecord(raw);
+        if (!item) return [];
+        const key =
+          textFrom(item.protocol) ??
+          textFrom(item.rail) ??
+          textFrom(item.key) ??
+          `item_${index + 1}`;
+        const values = numberSeriesFrom(item.history, item.values, item.snapshots, item.margin_cents, item.operator_margin_cents);
+        return values.length === 0 ? [] : [[key, values]];
+      }),
+    );
+  }
 
   return Object.fromEntries(
-    Object.entries(record).flatMap(([key, raw]) => {
-      if (!Array.isArray(raw)) return [];
-      const values = raw.flatMap((item) => {
-        const value = numberFrom(item);
-        return value == null ? [] : [value];
-      });
+    Object.entries(record ?? {}).flatMap(([key, raw]) => {
+      const values = numberSeriesFrom(raw);
       return values.length === 0 ? [] : [[key, values]];
     }),
   );
 }
 
 export function normalizeRoutePressureSummaries(value: unknown): RoutePressureSummary[] {
-  if (!Array.isArray(value)) return [];
+  const entries = namedRecordEntries(value, ['route_id', 'route']);
+  if (entries.length === 0) return [];
 
-  return value.flatMap((raw) => {
-    const item = asRecord(raw);
-    if (!item) return [];
-    const routeId = textFrom(item.route_id);
+  return entries.flatMap(([fallbackRouteId, item]) => {
+    const routeId = textFrom(item.route_id) ?? textFrom(item.route) ?? fallbackRouteId;
     if (!routeId) return [];
 
     return [{
@@ -290,12 +323,11 @@ export function normalizeRoutePressureSummaries(value: unknown): RoutePressureSu
 }
 
 export function normalizeTreasuryPostureSummaries(value: unknown): TreasuryPostureSummary[] {
-  if (!Array.isArray(value)) return [];
+  const entries = namedRecordEntries(value, ['merchant_id', 'merchant']);
+  if (entries.length === 0) return [];
 
-  return value.flatMap((raw) => {
-    const item = asRecord(raw);
-    if (!item) return [];
-    const merchantId = textFrom(item.merchant_id);
+  return entries.flatMap(([fallbackMerchantId, item]) => {
+    const merchantId = textFrom(item.merchant_id) ?? fallbackMerchantId;
     if (!merchantId) return [];
 
     return [{
@@ -322,9 +354,51 @@ export function numberFrom(...values: unknown[]) {
   return null;
 }
 
+function numberSeriesFrom(...values: unknown[]) {
+  return values.flatMap((value) => {
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => {
+        const numeric = numberFrom(item);
+        return numeric == null ? [] : [numeric];
+      });
+    }
+    const numeric = numberFrom(value);
+    return numeric == null ? [] : [numeric];
+  });
+}
+
 function wholeNumberFrom(...values: unknown[]) {
   const value = numberFrom(...values);
   return value == null ? null : Math.trunc(value);
+}
+
+function namedRecordEntries(value: unknown, nameKeys: string[]): [string, JsonRecord][] {
+  const record = asRecord(value);
+  if (record) {
+    return Object.entries(record).flatMap(([fallbackKey, raw]) => {
+      const item = asRecord(raw);
+      if (!item) return [];
+      const key = firstText(item, nameKeys) ?? fallbackKey;
+      return [[key, item]];
+    });
+  }
+
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw, index) => {
+    const item = asRecord(raw);
+    if (!item) return [];
+    const key = firstText(item, nameKeys) ?? `item_${index + 1}`;
+    return [[key, item]];
+  });
+}
+
+function firstText(record: JsonRecord, keys: string[]) {
+  for (const key of keys) {
+    const value = textFrom(record[key]);
+    if (value) return value;
+  }
+  return null;
 }
 
 function eventType(record: JsonRecord) {

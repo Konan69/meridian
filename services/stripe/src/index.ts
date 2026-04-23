@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { Mppx as ClientMppx, tempo as tempoClient } from "mppx/client";
@@ -10,6 +10,14 @@ import { createClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { tempoModerato } from "viem/chains";
 import { Actions } from "viem/tempo";
+import {
+  amountUsdFromRequest,
+  isHexAddress,
+  merchantFromRequest,
+  validateMppExecuteRequest,
+  type MppExecuteRequest,
+} from "./mppRequest.js";
+import { deriveMppPrivateKey } from "./mppKeys.js";
 
 const app = new Hono();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3020;
@@ -36,35 +44,6 @@ type MppAuthorizeRequest = {
   memo?: string;
 };
 
-type MppExecuteRequest = {
-  actorId: string;
-  merchant: string;
-  amountUsd: number;
-};
-
-function isHexAddress(value: string): value is `0x${string}` {
-  return /^0x[a-fA-F0-9]{40}$/.test(value);
-}
-
-function amountUsdFromRequest(request: Request): string {
-  const url = new URL(request.url);
-  const requested = Number(url.searchParams.get("amountUsd") ?? "0.01");
-  return requested > 0 ? requested.toFixed(2) : "0.01";
-}
-
-function merchantFromRequest(request: Request): string {
-  const url = new URL(request.url);
-  return url.searchParams.get("merchant")?.trim() || "meridian-mpp-merchant";
-}
-
-function derivePrivateKey(scope: "mpp-actor" | "mpp-merchant", id: string): `0x${string}` {
-  if (!mppMasterSeed) {
-    throw new Error("MPP_MASTER_SEED is required for runtime MPP execution");
-  }
-  const digest = createHmac("sha256", mppMasterSeed).update(`${scope}:${id}`).digest("hex");
-  return `0x${digest}` as `0x${string}`;
-}
-
 function recipientForRequest(request: Request): `0x${string}` {
   const authHeader = request.headers.get("authorization");
   if (authHeader && Credential.extractPaymentScheme(authHeader)) {
@@ -76,11 +55,11 @@ function recipientForRequest(request: Request): `0x${string}` {
     throw new Error("Invalid MPP recipient address");
   }
   const merchant = merchantFromRequest(request);
-  return privateKeyToAccount(derivePrivateKey("mpp-merchant", merchant)).address;
+  return privateKeyToAccount(deriveMppPrivateKey("mpp-merchant", merchant, mppMasterSeed)).address;
 }
 
 async function ensureActorFunded(actorId: string) {
-  const privateKey = derivePrivateKey("mpp-actor", actorId);
+  const privateKey = deriveMppPrivateKey("mpp-actor", actorId, mppMasterSeed);
   const account = privateKeyToAccount(privateKey);
   if (fundedActors.has(account.address.toLowerCase())) {
     return account;
@@ -153,13 +132,9 @@ app.get("/mpp/paid", async (c, next) => {
 
 app.post("/mpp/execute", async (c) => {
   try {
-    const body = (await c.req.json()) as Partial<MppExecuteRequest>;
-    const actorId = String(body.actorId ?? "").trim();
-    const merchant = String(body.merchant ?? "").trim();
-    const amountUsd = Number(body.amountUsd ?? 0);
-    if (!actorId || !merchant || !(amountUsd > 0)) {
-      return c.json({ error: "actorId, merchant, and amountUsd are required" }, 400);
-    }
+    const { actorId, merchant, amountUsd } = validateMppExecuteRequest(
+      (await c.req.json()) as Partial<MppExecuteRequest>,
+    );
 
     const account = await ensureActorFunded(actorId);
     const client = createClient({
@@ -196,6 +171,12 @@ app.post("/mpp/execute", async (c) => {
       response: payload,
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "actorId, merchant, and amountUsd are required"
+    ) {
+      return c.json({ error: error.message }, 400);
+    }
     return c.json(
       {
         error: error instanceof Error ? error.message : String(error),

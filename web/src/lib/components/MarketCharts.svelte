@@ -141,7 +141,7 @@
 	const marginHalfWidth = Math.max(24, plotWidth / 2 - 6);
 
 	function svgHeight(count: number): number {
-		return chartPadding.top + count * (barHeight + 8) + chartPadding.bottom;
+		return chartPadding.top + Math.max(count, 1) * (barHeight + 8) + chartPadding.bottom;
 	}
 
 	/** Log-scale mapping for execution time: compress large values */
@@ -225,6 +225,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{fmtDollars(m.total_volume_cents)}
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No finite protocol volume yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -245,6 +247,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{m.feeRate.toFixed(2)}%
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No finite fee data yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -265,6 +269,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{fmtMs(m.avg_settlement_ms)}
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No finite execution data yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -288,6 +294,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{m.rate.toFixed(1)}%
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No transaction success data yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -318,6 +326,8 @@
 				<text x={labelWidth + plotWidth + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{fmtDollars(m.margin_cents)} ({signedDollars(m.delta_cents)}, {m.snapshots}r)
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No rail margin snapshots yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -344,6 +354,8 @@
 				<text x={labelWidth + congestionW + 6} y={y + 23} fill="var(--tx-3)" font-size="10" font-family="'Berkeley Mono', var(--mono), monospace">
 					CG {m.congestion.toFixed(2)} · {m.merchant_count} merchants
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No ecosystem adoption data yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -361,6 +373,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{fmtDollars(amount)}
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No positive stablecoin float yet</text>
 			{/each}
 		</svg>
 	</div>
@@ -378,6 +392,8 @@
 				<text x={labelWidth + barW + 6} y={y + barHeight / 2 + 4} fill="var(--tx-2)" font-size="11" font-family="'Berkeley Mono', var(--mono), monospace">
 					{fmtDollars(usageCents)}
 				</text>
+			{:else}
+				<text x="0" y={chartPadding.top + 16} fill="var(--tx-3)" font-size="11" font-family="var(--mono)">No positive route principal yet</text>
 			{/each}
 		</svg>
 	</div>

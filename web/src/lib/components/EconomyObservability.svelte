@@ -74,9 +74,19 @@
 	let routeTotalCents = $derived(routeRows.reduce((sum, row) => sum + row.usageCents, 0));
 	let routeMaxCents = $derived(Math.max(...routeRows.map((row) => row.usageCents), 1));
 	let visibleRouteRows = $derived(routeRows.slice(0, 5));
+	let routeCoverage = $derived({
+		withLedger: routeRows.filter((row) => row.usageCents > 0).length,
+		mixOnly: routeRows.filter((row) => row.usageCents === 0 && row.attempts > 0).length,
+		ledgerOnly: routeRows.filter((row) => row.usageCents > 0 && row.attempts === 0).length,
+	});
 	let railRows = $derived(buildRailRows(metrics, ecosystem, railPnlHistory));
 	let railMaxAbs = $derived(Math.max(...railRows.map((row) => Math.abs(row.marginCents)), 1));
 	let visibleRailRows = $derived(railRows.slice(0, 5));
+	let railCoverage = $derived({
+		withMargin: railRows.filter((row) => row.marginCents !== 0).length,
+		historyOnly: railRows.filter((row) => row.snapshots > 0 && row.routeAttempts === 0).length,
+		noHistory: railRows.filter((row) => row.snapshots === 0).length,
+	});
 	let switchRows = $derived(collectMerchantSwitches(events, worldEvents));
 
 	function buildRouteRows(
@@ -300,7 +310,7 @@
 			</div>
 			<div class="panel-total">
 				<span>{money(routeTotalCents)}</span>
-				<small>{routeRows.length} routes</small>
+				<small>{routeCoverage.withLedger} ledger · {routeCoverage.mixOnly} mix only · {routeCoverage.ledgerOnly} ledger only</small>
 			</div>
 		</div>
 
@@ -339,7 +349,7 @@
 				<div class="eyebrow">Rail P&amp;L</div>
 				<h3>Margin Drift</h3>
 			</div>
-			<div class="panel-note">final margin, per-round history</div>
+			<div class="panel-note">{railCoverage.withMargin} margins · {railCoverage.historyOnly} history only · {railCoverage.noHistory} no history</div>
 		</div>
 
 		<div class="rail-list">

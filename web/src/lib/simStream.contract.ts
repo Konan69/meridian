@@ -132,6 +132,67 @@ const partialObservabilityEvent = {
   },
 } satisfies SimEvent;
 
+const mixedShapeObservabilityEvent = {
+  type: 'simulation_complete',
+  protocol_summaries: [{
+    protocol: 'x402',
+    total_transactions: '2',
+    successful_transactions: '1',
+    failed_transactions: '1',
+    total_volume_cents: '900',
+    total_fees_cents: '9',
+    avg_settlement_ms: '4.5',
+    avg_authorization_ms: '1.2',
+    micropayment_count: '2',
+  }],
+  ecosystem_summary: [{
+    protocol: 'x402',
+    merchant_count: '1',
+    network_effect: '0.4',
+    congestion: 'bad',
+    operator_margin_cents: '35',
+    reliability: '0.75',
+    route_mix: {
+      'ap2->x402': '2',
+    },
+  }],
+  route_usage_summary: [{
+    route_id: 'ap2->x402',
+    reserved_cents: '900',
+  }],
+  rail_pnl_history: [{
+    protocol: 'x402',
+    history: ['10', 'bad', '35'],
+  }],
+} satisfies SimEvent;
+
+const keyedSummaryEvent = {
+  type: 'simulation_complete',
+  route_pressure_summary: {
+    'ap2->x402': {
+      source_domain: 'ap2',
+      target_domain: 'x402',
+      primitive: 'authorization',
+      protocols: ['ap2', 'x402'],
+      total_usage_cents: '900',
+      max_capacity_ratio: '0.66',
+      pressure_rounds: '2',
+      last_pressure_level: 'medium',
+    },
+  },
+  treasury_posture_summary: {
+    merchant_2: {
+      merchant: 'Merchant 2',
+      preferred_domain: 'x402',
+      max_preferred_shortfall_cents: '250',
+      min_preferred_ratio: '0.55',
+      rebalance_ready_rounds: '1',
+      last_preferred_ratio: '0.7',
+      last_total_treasury_cents: '8000',
+    },
+  },
+} satisfies SimEvent;
+
 const merchantSwitchEvent = {
   type: 'merchant_switch',
   merchant_id: 'merchant_1',
@@ -179,6 +240,12 @@ simState.events = [merchantSwitchEvent];
 const partialRouteUsage = normalizeNumberRecord(partialObservabilityEvent.route_usage_summary);
 const partialEcosystem = normalizeEcosystemSummary(partialObservabilityEvent.ecosystem_summary);
 const partialRailPnlHistory = normalizeNumberArrayRecord(partialObservabilityEvent.rail_pnl_history);
+const mixedMetrics = normalizeProtocolSummaries(mixedShapeObservabilityEvent.protocol_summaries);
+const mixedEcosystem = normalizeEcosystemSummary(mixedShapeObservabilityEvent.ecosystem_summary);
+const mixedRouteUsage = normalizeNumberRecord(mixedShapeObservabilityEvent.route_usage_summary);
+const mixedRailPnlHistory = normalizeNumberArrayRecord(mixedShapeObservabilityEvent.rail_pnl_history);
+const keyedRoutePressure = normalizeRoutePressureSummaries(keyedSummaryEvent.route_pressure_summary);
+const keyedTreasuryPosture = normalizeTreasuryPostureSummaries(keyedSummaryEvent.treasury_posture_summary);
 const economyObservabilityState: EconomyObservabilityStoreFields = {
   metrics: simState.metrics,
   ecosystem: simState.ecosystem,
@@ -250,6 +317,12 @@ export const streamNormalizationContract = {
     nonNegativeRouteLedgerValue: Math.max(0, partialRouteUsage['cdp-base->ap2'] ?? 0),
     nonNegativeRouteMixAttempts: Math.max(0, Math.trunc(partialEcosystem.ap2?.route_mix?.['cdp-base->ap2'] ?? 0)),
     railLossSnapshot: partialRailPnlHistory.ap2?.slice(-1)[0],
+    mixedMetricsProtocol: mixedMetrics[0]?.protocol,
+    mixedRouteUsageValue: mixedRouteUsage['ap2->x402'],
+    mixedRouteMixAttempts: mixedEcosystem.x402?.route_mix?.['ap2->x402'],
+    mixedRailLossSnapshot: mixedRailPnlHistory.x402?.slice(-1)[0],
+    keyedRoutePressureId: keyedRoutePressure[0]?.route_id,
+    keyedTreasuryMerchantId: keyedTreasuryPosture[0]?.merchant_id,
   }),
 };
 
@@ -264,6 +337,12 @@ type EconomyObservabilityContract = {
   nonNegativeRouteLedgerValue: number;
   nonNegativeRouteMixAttempts: number;
   railLossSnapshot?: unknown;
+  mixedMetricsProtocol?: unknown;
+  mixedRouteUsageValue?: unknown;
+  mixedRouteMixAttempts?: unknown;
+  mixedRailLossSnapshot?: unknown;
+  keyedRoutePressureId?: unknown;
+  keyedTreasuryMerchantId?: unknown;
 };
 
 function requireMemory(memory: AgentMemoryEvent | null): AgentMemoryEvent {
@@ -314,6 +393,24 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.railLossSnapshot !== -25) {
     throw new Error('economy observability contract should preserve negative rail margin');
+  }
+  if (contract.mixedMetricsProtocol !== 'x402') {
+    throw new Error('economy observability contract failed mixed protocol summaries');
+  }
+  if (contract.mixedRouteUsageValue !== 900) {
+    throw new Error('economy observability contract failed mixed route usage');
+  }
+  if (contract.mixedRouteMixAttempts !== 2) {
+    throw new Error('economy observability contract failed mixed route mix');
+  }
+  if (contract.mixedRailLossSnapshot !== 35) {
+    throw new Error('economy observability contract failed mixed rail history');
+  }
+  if (contract.keyedRoutePressureId !== 'ap2->x402') {
+    throw new Error('economy observability contract failed keyed route pressure summary');
+  }
+  if (contract.keyedTreasuryMerchantId !== 'merchant_2') {
+    throw new Error('economy observability contract failed keyed treasury posture summary');
   }
   return contract;
 }

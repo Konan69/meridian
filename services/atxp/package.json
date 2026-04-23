@@ -7,6 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
+    "test:offline": "node --import tsx --test src/*.test.ts",
     "probe": "tsx src/probeClient.ts",
     "probe:direct": "ATXP_PROBE_MODE=direct-atxp tsx src/probeClient.ts",
     "recover": "tsx src/recover.ts"

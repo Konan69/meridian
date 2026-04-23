@@ -58,7 +58,7 @@ type AtxpCredential = {
   options?: unknown[];
 };
 
-type RawTxCredential = {
+export type RawTxCredential = {
   transactionId: Hex;
   chain: "polygon" | "polygon_amoy" | "base" | "base_sepolia";
   currency: string;
@@ -291,12 +291,7 @@ async function verifyAndRecordRawTransfer(args: {
 
   const verifier = evmVerifierForCredential(args.credential, args.payerMode);
   const recipient = expectedRecipientForChain(args.credential.chain, args.payeeSources);
-  const expectedAmountUnits = BigInt(
-    new BigNumber(args.request.amountUsd.toString())
-      .multipliedBy(10 ** 6)
-      .integerValue(BigNumber.ROUND_CEIL)
-      .toFixed(0),
-  );
+  const expectedAmountUnits = expectedUsdcUnits(args.request.amountUsd);
   const txHash = args.credential.transactionId.toLowerCase();
 
   const priorSettlement = await settlementStore.get(txHash);
@@ -472,20 +467,32 @@ function expectedRecipientForChain(
   return getAddress(fallback.address as Address);
 }
 
-function parseAtxpCredential(credential: string): AtxpCredential | null {
+export function expectedUsdcUnits(amountUsd: number): bigint {
+  return BigInt(
+    new BigNumber(amountUsd.toString())
+      .multipliedBy(10 ** 6)
+      .integerValue(BigNumber.ROUND_CEIL)
+      .toFixed(0),
+  );
+}
+
+export function parseAtxpCredential(credential: string): AtxpCredential | null {
   try {
     const parsed = JSON.parse(credential) as AtxpCredential;
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed
+      : null;
   } catch {
     return null;
   }
 }
 
-function parseRawTxCredential(credential: string): RawTxCredential | null {
+export function parseRawTxCredential(credential: string): RawTxCredential | null {
   try {
     const parsed = JSON.parse(credential) as Partial<RawTxCredential>;
     if (
       typeof parsed.transactionId === "string" &&
+      /^0x[a-fA-F0-9]{64}$/.test(parsed.transactionId) &&
       typeof parsed.chain === "string" &&
       typeof parsed.currency === "string" &&
       (parsed.chain === "polygon" ||

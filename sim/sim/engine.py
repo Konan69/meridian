@@ -836,6 +836,73 @@ class SimulationEngine:
     def _protocol_serves_domain(self, protocol: Protocol, domain: BalanceDomain) -> bool:
         return any(route.target_domain == domain for route in routes_for_protocol(protocol))
 
+    def _merchant_rebalance_source_domain(
+        self,
+        merchant: MerchantProfile,
+    ) -> BalanceDomain | None:
+        if self.economy is None:
+            return None
+        intent = self.economy.merchant_needs_rebalance(merchant)
+        if not intent:
+            return None
+        source_domain = intent.get("source_domain")
+        return source_domain if isinstance(source_domain, BalanceDomain) else None
+
+    def _protocol_rebalance_feasibility(
+        self,
+        protocol: Protocol,
+        merchant: MerchantProfile,
+        source_domain: BalanceDomain | None,
+    ) -> dict[str, bool]:
+        target_domain = merchant.preferred_settlement_domain
+        routes = routes_for_protocol(protocol)
+        source_feasible = (
+            source_domain is not None
+            and any(
+                route.source_domain == source_domain
+                and route.target_domain == target_domain
+                for route in routes
+            )
+        )
+        target_feasible = any(route.target_domain == target_domain for route in routes)
+        return {
+            "target_feasible": target_feasible,
+            "source_feasible": source_feasible,
+        }
+
+    def _merchant_treasury_pressure(self, merchant: MerchantProfile) -> float:
+        if self.economy is None:
+            return 0.0
+        try:
+            buckets = self.economy.available_buckets(
+                AgentRole.MERCHANT,
+                merchant.merchant_id,
+            )
+        except AttributeError:
+            return 0.0
+
+        preferred_cents = sum(
+            bucket.available_cents + bucket.pending_in_cents
+            for bucket in buckets
+            if bucket.domain == merchant.preferred_settlement_domain
+        )
+        non_preferred_cents = sum(
+            bucket.available_cents + bucket.pending_in_cents
+            for bucket in buckets
+            if bucket.domain != merchant.preferred_settlement_domain
+        )
+        shortfall_pressure = max(
+            0.0,
+            (merchant.working_capital_cents - preferred_cents)
+            / max(1, merchant.working_capital_cents),
+        )
+        surplus_pressure = (
+            min(1.0, non_preferred_cents / max(1, merchant.working_capital_cents))
+            if non_preferred_cents > merchant.rebalance_threshold_cents
+            else 0.0
+        )
+        return min(1.0, max(shortfall_pressure, surplus_pressure))
+
     def _choose_active_agents(self) -> list[AgentProfile]:
         eligible = [agent for agent in self.agents if agent.remaining_budget > 0]
         if not eligible:
@@ -1043,10 +1110,11 @@ class SimulationEngine:
             1,
         )
         target_domain = option.get("target_domain", option["route"].target_domain)
+        treasury_pressure = self._merchant_treasury_pressure(merchant)
         treasury_fit = (
-            0.05
+            0.05 + treasury_pressure * 0.12
             if target_domain == merchant.preferred_settlement_domain
-            else -0.035
+            else -0.035 - treasury_pressure * 0.10
         )
         route_pressure_penalty = max(0.0, option["capacity_ratio"] - 0.75) * 0.10
         reliability_floor_penalty = max(0.0, 0.94 - state.reliability) * 0.08
@@ -1367,6 +1435,29 @@ class SimulationEngine:
                 available_protocols=[p for p in merchant.accepted_protocols if p in self.active_protocols],
             )
             if not options:
+                self._record_world_event(
+                    summary,
+                    round_num,
+                    "treasury_rebalance_failed",
+                    (
+                        f"{merchant.name} could not find a feasible treasury route "
+                        f"from {intent['source_domain'].value} to {intent['target_domain'].value}."
+                    ),
+                    actor_id=merchant.merchant_id,
+                    data={
+                        "merchant_id": merchant.merchant_id,
+                        "merchant": merchant.name,
+                        "amount_cents": intent["amount_cents"],
+                        "source_domain": intent["source_domain"].value,
+                        "target_domain": intent["target_domain"].value,
+                        "accepted_protocols": [
+                            protocol.value
+                            for protocol in merchant.accepted_protocols
+                            if protocol in self.active_protocols
+                        ],
+                        "error": "no_feasible_rebalance_route",
+                    },
+                )
                 continue
 
             option = self._choose_rebalance_option(
@@ -1517,6 +1608,7 @@ class SimulationEngine:
 
         for merchant in self.merchants:
             posture = self._merchant_treasury_posture(summary, merchant)
+            rebalance_source_domain = self._merchant_rebalance_source_domain(merchant)
             treasury_pressure = 0.0
             if posture:
                 treasury_pressure = min(
@@ -1534,25 +1626,48 @@ class SimulationEngine:
                     protocol,
                     merchant.preferred_settlement_domain,
                 )
+                rebalance_fit = self._protocol_rebalance_feasibility(
+                    protocol,
+                    merchant,
+                    rebalance_source_domain,
+                )
+                treasury_feasibility_bonus = 0.0
+                if treasury_pressure:
+                    if rebalance_fit["source_feasible"]:
+                        treasury_feasibility_bonus = 0.26
+                    elif rebalance_fit["target_feasible"]:
+                        treasury_feasibility_bonus = 0.08
+                    else:
+                        treasury_feasibility_bonus = -0.16
                 score = (
                     state.reliability * 0.35
                     + state.network_effect * 0.25
                     + avg_trust.get(protocol.value, 0.6) * 0.35
                     + memory_signal.get(protocol.value, 0.0) * 1.4
-                    + (0.18 if treasury_pressure and serves_preferred else 0.0)
+                    + treasury_feasibility_bonus * treasury_pressure
                     - route_pressure.get(protocol.value, 0.0) * 0.08
                 )
-                adoption_candidates.append((score, protocol, serves_preferred))
+                adoption_candidates.append((score, protocol, serves_preferred, rebalance_fit))
 
             adoption_candidates.sort(key=lambda item: item[0], reverse=True)
             if adoption_candidates:
-                score, candidate, serves_preferred = adoption_candidates[0]
+                score, candidate, serves_preferred, rebalance_fit = adoption_candidates[0]
                 legacy_candidate = next(
                     (protocol for protocol in top_two if protocol not in merchant.accepted_protocols),
                     None,
                 )
                 if score >= 0.92 or self.rng.random() < 0.12:
                     protocol = candidate if score >= 0.92 or legacy_candidate is None else legacy_candidate
+                    if protocol != candidate:
+                        rebalance_fit = self._protocol_rebalance_feasibility(
+                            protocol,
+                            merchant,
+                            rebalance_source_domain,
+                        )
+                        serves_preferred = self._protocol_serves_domain(
+                            protocol,
+                            merchant.preferred_settlement_domain,
+                        )
                     merchant.accepted_protocols.append(protocol)
                     reason = "ecosystem_evidence" if protocol == candidate and score >= 0.92 else "rail_economics"
                     switches.append(
@@ -1570,6 +1685,13 @@ class SimulationEngine:
                                 "route_pressure": round(route_pressure.get(protocol.value, 0.0), 4),
                                 "treasury_pressure": round(treasury_pressure, 4),
                                 "serves_preferred_domain": serves_preferred,
+                                "rebalance_source_domain": (
+                                    rebalance_source_domain.value
+                                    if rebalance_source_domain
+                                    else None
+                                ),
+                                "rebalance_source_feasible": rebalance_fit["source_feasible"],
+                                "rebalance_target_feasible": rebalance_fit["target_feasible"],
                             },
                         }
                     )
@@ -1581,12 +1703,21 @@ class SimulationEngine:
                     protocol,
                     merchant.preferred_settlement_domain,
                 )
+                rebalance_fit = self._protocol_rebalance_feasibility(
+                    protocol,
+                    merchant,
+                    rebalance_source_domain,
+                )
                 trust_gap = max(0.0, 0.62 - avg_trust.get(protocol.value, 0.6))
                 reliability_gap = max(0.0, 0.9 - state.reliability)
                 margin_drag = max(0.0, -state.operator_margin_cents / 20_000)
-                settlement_domain_fit = treasury_pressure * (
-                    -0.06 if serves_preferred else 0.30
-                )
+                if rebalance_fit["source_feasible"]:
+                    treasury_fit = -0.08
+                elif rebalance_fit["target_feasible"] or serves_preferred:
+                    treasury_fit = -0.03
+                else:
+                    treasury_fit = 0.34
+                settlement_domain_fit = treasury_pressure * treasury_fit
                 risk = (
                     trust_gap * 0.9
                     + reliability_gap * 0.7
@@ -1595,11 +1726,11 @@ class SimulationEngine:
                     + min(0.25, margin_drag)
                     + settlement_domain_fit
                 )
-                removal_candidates.append((risk, protocol))
+                removal_candidates.append((risk, protocol, rebalance_fit))
 
             removal_candidates.sort(key=lambda item: item[0], reverse=True)
             if removal_candidates and len(merchant.accepted_protocols) > 2:
-                risk, worst = removal_candidates[0]
+                risk, worst, rebalance_fit = removal_candidates[0]
                 if risk >= 0.28 or self.rng.random() < 0.06:
                     merchant.accepted_protocols.remove(worst)
                     reason = "ecosystem_evidence" if risk >= 0.28 else "rail_economics"
@@ -1618,6 +1749,14 @@ class SimulationEngine:
                                 "route_pressure": round(route_pressure.get(worst.value, 0.0), 4),
                                 "reliability": round(self.protocol_state[worst.value].reliability, 4),
                                 "operator_margin_cents": self.protocol_state[worst.value].operator_margin_cents,
+                                "treasury_pressure": round(treasury_pressure, 4),
+                                "rebalance_source_domain": (
+                                    rebalance_source_domain.value
+                                    if rebalance_source_domain
+                                    else None
+                                ),
+                                "rebalance_source_feasible": rebalance_fit["source_feasible"],
+                                "rebalance_target_feasible": rebalance_fit["target_feasible"],
                             },
                         }
                     )

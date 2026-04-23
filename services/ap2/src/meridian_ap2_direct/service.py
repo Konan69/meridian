@@ -33,17 +33,19 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
 
+from .contracts import canonical_hash, canonical_json, settlement_contract_errors
+
 
 def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
 
 def _json_dumps(value: Any) -> bytes:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+    return canonical_json(value)
 
 
 def _canonical_hash(value: Any) -> str:
-    return hashlib.sha256(_json_dumps(value)).hexdigest()
+    return canonical_hash(value)
 
 
 def _require_env(name: str) -> str:
@@ -269,6 +271,10 @@ def create_app() -> FastAPI:
             credential = json.loads(x_ap2_credential)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="invalid AP2 credential JSON") from exc
+
+        contract_errors = settlement_contract_errors(credential, body.merchant, body.amount_usd)
+        if contract_errors:
+            raise HTTPException(status_code=400, detail=contract_errors[0])
 
         actor_id = credential["actorId"]
         issuer_key = _derive_signing_key(master_seed, "ap2:issuer", actor_id)

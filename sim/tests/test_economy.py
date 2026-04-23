@@ -208,6 +208,104 @@ def test_protocol_option_sustainability_bias_uses_margin_pressure_and_treasury_f
     )
 
 
+def test_payment_option_refills_preferred_domain_when_treasury_is_under_pressure():
+    config = SimulationConfig(protocols=[Protocol.ATXP, Protocol.MPP])
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.ATXP, Protocol.MPP]
+    merchant.accepted_settlement_domains = [
+        BalanceDomain.BASE_USDC,
+        BalanceDomain.TEMPO_USD,
+    ]
+    merchant.working_capital_cents = 20_000
+    agent = _agent("agent_001", trust={"atxp": 0.7, "mpp": 0.7})
+    agent.protocol_preference = None
+    agent.checkout_patience = 0.95
+    agent.price_sensitivity = 0.3
+    amount = 10_000
+
+    for state in engine.protocol_state.values():
+        state.reliability = 0.98
+        state.network_effect = 0.5
+        state.gross_volume_cents = 100_000
+        state.operator_margin_cents = 0
+
+    def option(protocol: Protocol, route_id: str) -> dict:
+        route = next(route for route in ROUTE_MATRIX if route.route_id == route_id)
+        route_fee = max(
+            (amount * route.fee_bps) // 10_000 + route.fixed_fee_cents,
+            route.fixed_fee_cents,
+        )
+        protocol_fee = PROTOCOL_FEE_FORMULAS[protocol](amount)
+        return {
+            "protocol": protocol,
+            "route": route,
+            "source_domain": route.source_domain,
+            "target_domain": route.target_domain,
+            "estimated_protocol_fee_cents": protocol_fee,
+            "route_fee_cents": route_fee,
+            "total_required_cents": amount + protocol_fee + route_fee,
+            "capacity_ratio": 0.1,
+            "domain_mismatch": int(route.source_domain != route.target_domain),
+        }
+
+    options = [
+        option(Protocol.ATXP, "lifi_tempo_to_base"),
+        option(Protocol.MPP, "tempo_direct_session"),
+    ]
+
+    class _Bucket:
+        def __init__(self, domain: BalanceDomain, available_cents: int):
+            self.domain = domain
+            self.available_cents = available_cents
+            self.pending_in_cents = 0
+
+    class _TreasuryRouteEconomy:
+        def __init__(self, buckets: list[_Bucket]):
+            self.buckets = buckets
+
+        def available_buckets(self, *_args, **_kwargs):
+            return self.buckets
+
+        def enumerate_payment_options(self, **_kwargs):
+            return options
+
+    engine.economy = _TreasuryRouteEconomy(
+        [
+            _Bucket(BalanceDomain.BASE_USDC, 20_000),
+            _Bucket(BalanceDomain.TEMPO_USD, 0),
+        ]
+    )
+    funded_choice = engine._choose_payment_option(
+        agent=agent,
+        merchant=merchant,
+        amount=amount,
+        workload_type=WorkloadType.CONSUMER_CHECKOUT,
+        available_protocols=merchant.accepted_protocols,
+        target_domains=merchant.accepted_settlement_domains,
+    )
+
+    engine.economy = _TreasuryRouteEconomy(
+        [
+            _Bucket(BalanceDomain.BASE_USDC, 0),
+            _Bucket(BalanceDomain.TEMPO_USD, 20_000),
+        ]
+    )
+    pressured_choice = engine._choose_payment_option(
+        agent=agent,
+        merchant=merchant,
+        amount=amount,
+        workload_type=WorkloadType.CONSUMER_CHECKOUT,
+        available_protocols=merchant.accepted_protocols,
+        target_domains=merchant.accepted_settlement_domains,
+    )
+
+    assert funded_choice["protocol"] == Protocol.MPP
+    assert funded_choice["target_domain"] == BalanceDomain.TEMPO_USD
+    assert pressured_choice["protocol"] == Protocol.ATXP
+    assert pressured_choice["target_domain"] == BalanceDomain.BASE_USDC
+
+
 def test_rebalance_option_prefers_intended_surplus_source_domain():
     config = SimulationConfig(protocols=[Protocol.AP2, Protocol.ATXP])
     engine = SimulationEngine(config)
@@ -258,6 +356,191 @@ def test_rebalance_option_prefers_intended_surplus_source_domain():
     )
 
     assert fallback["route"].route_id == "base_direct_usdc"
+
+
+def test_rebalance_without_feasible_protocol_route_records_world_event(capsys):
+    config = SimulationConfig(protocols=[Protocol.MPP])
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.MPP]
+    merchant.accepted_settlement_domains = [
+        BalanceDomain.BASE_USDC,
+        BalanceDomain.TEMPO_USD,
+    ]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [_agent("agent_001")]
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=config.protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+    summary = RoundSummary(round_num=4)
+
+    asyncio.run(engine._handle_rebalances(4, summary))
+
+    assert summary.transactions == []
+    failed = summary.world_events[0]
+    assert failed.event_type == "treasury_rebalance_failed"
+    assert failed.data["error"] == "no_feasible_rebalance_route"
+    assert failed.data["source_domain"] == BalanceDomain.TEMPO_USD.value
+    assert failed.data["target_domain"] == BalanceDomain.BASE_USDC.value
+    assert failed.data["accepted_protocols"] == ["mpp"]
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["type"] == "world_event"
+    assert emitted["event_type"] == "treasury_rebalance_failed"
+    assert emitted["data"]["error"] == "no_feasible_rebalance_route"
+
+
+def test_market_evolution_adopts_protocol_that_can_rebalance_surplus_source():
+    config = SimulationConfig(
+        seed=28,
+        protocols=[Protocol.AP2, Protocol.ATXP, Protocol.MPP, Protocol.ACP],
+        social_memory_strength=0.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent("agent_001", trust={"ap2": 0.82, "atxp": 0.78, "mpp": 0.64, "acp": 0.64}),
+        _agent("agent_002", trust={"ap2": 0.82, "atxp": 0.78, "mpp": 0.64, "acp": 0.64}),
+    ]
+    for state in engine.protocol_state.values():
+        state.reliability = 0.96
+        state.network_effect = 0.55
+        state.operator_margin_cents = 0
+
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=config.protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+    summary = RoundSummary(
+        round_num=8,
+        treasury_posture=[
+            {
+                "merchant_id": merchant.merchant_id,
+                "merchant": merchant.name,
+                "preferred_domain": BalanceDomain.BASE_USDC.value,
+                "preferred_available_cents": 0,
+                "non_preferred_cents": 12_000,
+                "total_treasury_cents": 12_000,
+                "preferred_shortfall_cents": 20_000,
+                "preferred_ratio": 0.0,
+                "rebalance_ready": True,
+                "rebalance_threshold_cents": merchant.rebalance_threshold_cents,
+            }
+        ],
+    )
+
+    engine._evolve_market(8, summary)
+
+    assert Protocol.ATXP in merchant.accepted_protocols
+    adopted = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "adopted"
+    ][0]
+    assert adopted["protocol"] == "atxp"
+    assert adopted["evidence"]["rebalance_source_domain"] == BalanceDomain.TEMPO_USD.value
+    assert adopted["evidence"]["rebalance_source_feasible"] is True
+    assert adopted["evidence"]["treasury_pressure"] == 1.0
+
+
+def test_market_evolution_prunes_protocol_that_cannot_rebalance_surplus_source():
+    config = SimulationConfig(
+        seed=29,
+        protocols=[Protocol.AP2, Protocol.ATXP, Protocol.MPP],
+        social_memory_strength=0.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.AP2, Protocol.ATXP, Protocol.MPP]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.74, "mpp": 0.74}),
+        _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.74, "mpp": 0.74}),
+    ]
+    for state in engine.protocol_state.values():
+        state.reliability = 0.97
+        state.network_effect = 0.5
+        state.operator_margin_cents = 0
+
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=config.protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+    summary = RoundSummary(
+        round_num=9,
+        treasury_posture=[
+            {
+                "merchant_id": merchant.merchant_id,
+                "merchant": merchant.name,
+                "preferred_domain": BalanceDomain.BASE_USDC.value,
+                "preferred_available_cents": 0,
+                "non_preferred_cents": 12_000,
+                "total_treasury_cents": 12_000,
+                "preferred_shortfall_cents": 20_000,
+                "preferred_ratio": 0.0,
+                "rebalance_ready": True,
+                "rebalance_threshold_cents": merchant.rebalance_threshold_cents,
+            }
+        ],
+    )
+
+    engine._evolve_market(9, summary)
+
+    assert Protocol.MPP not in merchant.accepted_protocols
+    removed = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "removed"
+    ][0]
+    assert removed["protocol"] == "mpp"
+    assert removed["evidence"]["rebalance_source_domain"] == BalanceDomain.TEMPO_USD.value
+    assert removed["evidence"]["rebalance_source_feasible"] is False
+    assert removed["evidence"]["rebalance_target_feasible"] is False
+    assert removed["evidence"]["removal_risk"] >= 0.34
 
 
 def test_world_event_records_summary_and_ndjson_contract(capsys):

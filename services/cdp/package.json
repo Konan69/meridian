@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test:offline": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "^1.46.1",

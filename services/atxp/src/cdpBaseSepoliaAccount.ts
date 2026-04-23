@@ -12,7 +12,10 @@ import {
 } from "@atxp/common";
 import { UnsupportedCurrencyError } from "@atxp/client";
 import { encodeFunctionData } from "viem";
+import { planCdpBaseTreasuryTopUp } from "./cdpTreasuryTopUp.js";
 
+// planCdpBaseTreasuryTopUp owns ATXP_CDP_TREASURY_ADDRESS,
+// ATXP_CDP_TREASURY_NATIVE_TOPUP, and ATXP_CDP_TREASURY_USDC_TOPUP_UNITS.
 const USDC_DECIMALS = 6;
 const ERC20_ABI = [
   {
@@ -51,8 +54,6 @@ const USDC_CONTRACT_ADDRESS_BASE_SEPOLIA =
   "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const USDC_CONTRACT_ADDRESS_BASE_SEPOLIA_LOWER =
   USDC_CONTRACT_ADDRESS_BASE_SEPOLIA.toLowerCase();
-const DEFAULT_TREASURY_NATIVE_TOPUP_ETH = "0.00002";
-const DEFAULT_TREASURY_USDC_TOPUP_UNITS = 1_000_000n;
 
 function toBase64Url(data: string): string {
   return Buffer.from(data)
@@ -60,18 +61,6 @@ function toBase64Url(data: string): string {
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replaceAll("=", "");
-}
-
-function envBigInt(name: string, fallback: bigint): bigint {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    return fallback;
-  }
-  try {
-    return BigInt(value);
-  } catch {
-    return fallback;
-  }
 }
 
 class CdpBaseSepoliaPaymentMaker implements PaymentMaker {
@@ -139,29 +128,21 @@ class CdpBaseSepoliaPaymentMaker implements PaymentMaker {
     toAddress: `0x${string}`,
     minAmountUnits: bigint,
   ): Promise<boolean> {
-    const fromAddress = process.env.ATXP_CDP_TREASURY_ADDRESS?.trim();
-    if (!fromAddress) {
+    const plan = planCdpBaseTreasuryTopUp(minAmountUnits);
+    if (!plan) {
       return false;
     }
 
-    const amountUnits = [
-      minAmountUnits,
-      envBigInt("ATXP_CDP_TREASURY_USDC_TOPUP_UNITS", DEFAULT_TREASURY_USDC_TOPUP_UNITS),
-    ].reduce((max, value) => (value > max ? value : max), 0n);
-    const nativeAmount =
-      process.env.ATXP_CDP_TREASURY_NATIVE_TOPUP?.trim() ||
-      DEFAULT_TREASURY_NATIVE_TOPUP_ETH;
-
     try {
       await this.postCdp("/evm/transfer-native", {
-        fromAddress,
+        fromAddress: plan.fromAddress,
         toAddress,
-        amount: nativeAmount,
+        amount: plan.nativeAmount,
       });
       await this.postCdp("/evm/transfer-usdc", {
-        fromAddress,
+        fromAddress: plan.fromAddress,
         toAddress,
-        amountUnits: amountUnits.toString(),
+        amountUnits: plan.usdcAmountUnits.toString(),
       });
       return true;
     } catch (error) {
