@@ -454,6 +454,50 @@ class StablecoinEconomy:
             )
         return dict(summary)
 
+    def snapshot_route_pressure(self) -> list[dict[str, object]]:
+        pressure: list[dict[str, object]] = []
+        for route_id, usage_cents in self.round_route_usage.items():
+            route = self.routes.get(route_id)
+            if route is None or usage_cents <= 0:
+                continue
+
+            capacity_ratio = usage_cents / max(1, route.capacity_cents_per_round)
+            if capacity_ratio >= 1.0:
+                pressure_level = "critical"
+            elif capacity_ratio >= 0.65:
+                pressure_level = "elevated"
+            elif capacity_ratio >= 0.25:
+                pressure_level = "active"
+            else:
+                pressure_level = "low"
+
+            pressure.append(
+                {
+                    "route_id": route.route_id,
+                    "source_domain": route.source_domain.value,
+                    "target_domain": route.target_domain.value,
+                    "primitive": route.primitive.value,
+                    "protocols": [
+                        protocol.value
+                        for protocol in route.supported_protocols
+                        if protocol in self.protocols
+                    ],
+                    "usage_cents": int(usage_cents),
+                    "capacity_cents": route.capacity_cents_per_round,
+                    "capacity_ratio": round(capacity_ratio, 4),
+                    "pressure_level": pressure_level,
+                }
+            )
+
+        pressure.sort(
+            key=lambda item: (
+                float(item["capacity_ratio"]),
+                int(item["usage_cents"]),
+            ),
+            reverse=True,
+        )
+        return pressure
+
     def snapshot_treasury_distribution(self) -> dict[str, dict[str, int]]:
         distribution: dict[str, dict[str, int]] = {}
         for merchant in self.merchants:
@@ -464,6 +508,61 @@ class StablecoinEconomy:
                 if bucket.available_cents + bucket.pending_in_cents > 0
             }
         return distribution
+
+    def snapshot_treasury_posture(self) -> list[dict[str, object]]:
+        posture: list[dict[str, object]] = []
+        for merchant in self.merchants:
+            merchant_buckets = self.available_buckets(
+                AgentRole.MERCHANT,
+                merchant.merchant_id,
+            )
+            total_cents = sum(
+                bucket.available_cents + bucket.pending_in_cents
+                for bucket in merchant_buckets
+            )
+            if total_cents <= 0:
+                continue
+
+            preferred_cents = sum(
+                bucket.available_cents + bucket.pending_in_cents
+                for bucket in merchant_buckets
+                if bucket.domain == merchant.preferred_settlement_domain
+            )
+            non_preferred_cents = max(0, total_cents - preferred_cents)
+            preferred_ratio = preferred_cents / max(1, total_cents)
+            preferred_shortfall = max(0, merchant.working_capital_cents - preferred_cents)
+            rebalance_ready = any(
+                bucket.domain != merchant.preferred_settlement_domain
+                and bucket.available_cents > merchant.rebalance_threshold_cents
+                for bucket in merchant_buckets
+            )
+
+            if preferred_shortfall <= 0 and preferred_ratio >= 0.55 and not rebalance_ready:
+                continue
+
+            posture.append(
+                {
+                    "merchant_id": merchant.merchant_id,
+                    "merchant": merchant.name,
+                    "preferred_domain": merchant.preferred_settlement_domain.value,
+                    "preferred_available_cents": int(preferred_cents),
+                    "non_preferred_cents": int(non_preferred_cents),
+                    "total_treasury_cents": int(total_cents),
+                    "preferred_shortfall_cents": int(preferred_shortfall),
+                    "preferred_ratio": round(preferred_ratio, 4),
+                    "rebalance_ready": rebalance_ready,
+                    "rebalance_threshold_cents": merchant.rebalance_threshold_cents,
+                }
+            )
+
+        posture.sort(
+            key=lambda item: (
+                int(item["preferred_shortfall_cents"]),
+                int(item["non_preferred_cents"]),
+            ),
+            reverse=True,
+        )
+        return posture
 
     def snapshot_balances(self) -> list[dict]:
         return [

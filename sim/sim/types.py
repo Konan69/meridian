@@ -369,9 +369,13 @@ class AgentMemoryEvent:
     sentiment_delta: float
     trust_before: float
     trust_after: float
+    outcome: str = ""
+    trust_driver: str = ""
+    ecosystem_pressure: float = 0.0
     amount_cents: int = 0
     merchant_id: Optional[str] = None
     merchant_name: Optional[str] = None
+    merchant_reputation: Optional[float] = None
     product_name: Optional[str] = None
     route_id: Optional[str] = None
     reason: str = ""
@@ -428,8 +432,10 @@ class RoundSummary:
     merchant_sales: dict[str, int] = field(default_factory=dict)
     ecosystem: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
     route_usage: dict[str, int] = field(default_factory=dict)
+    route_pressure: list[dict[str, Any]] = field(default_factory=list)
     balance_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
+    treasury_posture: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -445,6 +451,8 @@ class SimulationResult:
     duration_seconds: float = 0.0
     ecosystem_summary: dict[str, ProtocolEcosystemState] = field(default_factory=dict)
     route_usage_summary: dict[str, int] = field(default_factory=dict)
+    route_pressure_summary: list[dict[str, Any]] = field(default_factory=list)
     float_summary: dict[str, int] = field(default_factory=dict)
     treasury_distribution: dict[str, dict[str, int]] = field(default_factory=dict)
+    treasury_posture_summary: list[dict[str, Any]] = field(default_factory=list)
     rail_pnl_history: dict[str, list[int]] = field(default_factory=dict)

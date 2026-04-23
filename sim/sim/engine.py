@@ -62,6 +62,8 @@ class SimulationEngine:
         self.world_id = f"world_{config.seed}_{world_hash % 1_000_000:06d}"
         self.agent_memory_log: list[AgentMemoryEvent] = []
         self.world_events: list[EconomyWorldEvent] = []
+        self.route_pressure_log: list[dict] = []
+        self.treasury_posture_log: list[dict] = []
         self.active_protocols: list[Protocol] = list(self.config.protocols)
         self.protocol_state: dict[str, ProtocolEcosystemState] = {
             proto.value: ProtocolEcosystemState(
@@ -183,6 +185,31 @@ class SimulationEngine:
         agent.protocol_trust[protocol.value] = after
         return before, after, after - before
 
+    def _classify_trust_driver(
+        self,
+        *,
+        protocol: Protocol,
+        success: bool,
+        ecosystem_pressure: float,
+        merchant: MerchantProfile | None,
+    ) -> str:
+        state = self.protocol_state.get(protocol.value)
+        reliability = state.reliability if state else 0.96
+        if not success:
+            if ecosystem_pressure >= 0.5:
+                return "failed_under_route_pressure"
+            if reliability < 0.85:
+                return "failed_low_protocol_reliability"
+            return "failed_payment_error"
+
+        if ecosystem_pressure >= 0.5:
+            return "settled_despite_route_pressure"
+        if merchant and merchant.reputation >= 0.8:
+            return "settled_with_reputable_merchant"
+        if reliability >= 0.98:
+            return "settled_on_reliable_protocol"
+        return "settled_payment"
+
     def _record_agent_memory(
         self,
         summary: RoundSummary,
@@ -199,7 +226,10 @@ class SimulationEngine:
         product_name: str | None,
         route_id: str | None,
         reason: str,
+        success: bool | None = None,
+        ecosystem_pressure: float = 0.0,
     ):
+        success = sentiment_delta >= 0 if success is None else success
         event = AgentMemoryEvent(
             round_num=round_num,
             agent_id=agent.agent_id,
@@ -210,9 +240,18 @@ class SimulationEngine:
             sentiment_delta=round(sentiment_delta, 4),
             trust_before=round(trust_before, 4),
             trust_after=round(trust_after, 4),
+            outcome="success" if success else "failure",
+            trust_driver=self._classify_trust_driver(
+                protocol=protocol,
+                success=success,
+                ecosystem_pressure=ecosystem_pressure,
+                merchant=merchant,
+            ),
+            ecosystem_pressure=round(ecosystem_pressure, 4),
             amount_cents=amount_cents,
             merchant_id=merchant.merchant_id if merchant else None,
             merchant_name=merchant.name if merchant else None,
+            merchant_reputation=round(merchant.reputation, 4) if merchant else None,
             product_name=product_name,
             route_id=route_id,
             reason=reason,
@@ -227,6 +266,142 @@ class SimulationEngine:
                 **asdict(event),
             },
         )
+
+    def _record_route_pressure_events(self, summary: RoundSummary, round_num: int):
+        assert self.economy is not None
+        pressure = self.economy.snapshot_route_pressure()
+        summary.route_pressure = pressure
+        self.route_pressure_log.extend(
+            {"round": round_num, **entry}
+            for entry in pressure
+        )
+        if not pressure:
+            return
+
+        visible_pressure = [
+            entry for entry in pressure if entry["pressure_level"] != "low"
+        ] or pressure[:1]
+        for entry in visible_pressure[:3]:
+            capacity_pct = float(entry["capacity_ratio"]) * 100
+            protocol = None
+            protocols = entry.get("protocols")
+            if isinstance(protocols, list) and protocols:
+                protocol = protocols[0]
+            self._record_world_event(
+                summary,
+                round_num,
+                "route_pressure",
+                (
+                    f"{entry['route_id']} ran at {capacity_pct:.1f}% of round "
+                    f"capacity moving {entry['source_domain']} to {entry['target_domain']}."
+                ),
+                protocol=protocol,
+                data=entry,
+            )
+
+    def _build_route_pressure_summary(self) -> list[dict]:
+        aggregate: dict[str, dict] = {}
+        for entry in self.route_pressure_log:
+            route_id = str(entry["route_id"])
+            row = aggregate.setdefault(
+                route_id,
+                {
+                    "route_id": route_id,
+                    "source_domain": entry["source_domain"],
+                    "target_domain": entry["target_domain"],
+                    "primitive": entry["primitive"],
+                    "protocols": entry["protocols"],
+                    "total_usage_cents": 0,
+                    "max_capacity_ratio": 0.0,
+                    "pressure_rounds": 0,
+                    "last_pressure_level": entry["pressure_level"],
+                },
+            )
+            row["total_usage_cents"] += int(entry["usage_cents"])
+            row["max_capacity_ratio"] = max(
+                float(row["max_capacity_ratio"]),
+                float(entry["capacity_ratio"]),
+            )
+            if entry["pressure_level"] != "low":
+                row["pressure_rounds"] += 1
+            row["last_pressure_level"] = entry["pressure_level"]
+
+        rows = list(aggregate.values())
+        rows.sort(
+            key=lambda item: (
+                float(item["max_capacity_ratio"]),
+                int(item["total_usage_cents"]),
+            ),
+            reverse=True,
+        )
+        return rows
+
+    def _record_treasury_posture_events(self, summary: RoundSummary, round_num: int):
+        assert self.economy is not None
+        posture = self.economy.snapshot_treasury_posture()
+        summary.treasury_posture = posture
+        self.treasury_posture_log.extend(
+            {"round": round_num, **entry}
+            for entry in posture
+        )
+
+        visible_posture = [
+            entry for entry in posture
+            if entry["rebalance_ready"] or float(entry["preferred_ratio"]) < 0.55
+        ]
+        for entry in visible_posture[:2]:
+            self._record_world_event(
+                summary,
+                round_num,
+                "treasury_posture",
+                (
+                    f"{entry['merchant']} holds {float(entry['preferred_ratio']) * 100:.1f}% "
+                    f"of treasury in preferred {entry['preferred_domain']} with "
+                    f"${int(entry['preferred_shortfall_cents']) / 100:,.2f} shortfall."
+                ),
+                actor_id=str(entry["merchant_id"]),
+                data=entry,
+            )
+
+    def _build_treasury_posture_summary(self) -> list[dict]:
+        aggregate: dict[str, dict] = {}
+        for entry in self.treasury_posture_log:
+            merchant_id = str(entry["merchant_id"])
+            row = aggregate.setdefault(
+                merchant_id,
+                {
+                    "merchant_id": merchant_id,
+                    "merchant": entry["merchant"],
+                    "preferred_domain": entry["preferred_domain"],
+                    "max_preferred_shortfall_cents": 0,
+                    "min_preferred_ratio": 1.0,
+                    "rebalance_ready_rounds": 0,
+                    "last_preferred_ratio": entry["preferred_ratio"],
+                    "last_total_treasury_cents": entry["total_treasury_cents"],
+                },
+            )
+            row["max_preferred_shortfall_cents"] = max(
+                int(row["max_preferred_shortfall_cents"]),
+                int(entry["preferred_shortfall_cents"]),
+            )
+            row["min_preferred_ratio"] = min(
+                float(row["min_preferred_ratio"]),
+                float(entry["preferred_ratio"]),
+            )
+            if entry["rebalance_ready"]:
+                row["rebalance_ready_rounds"] += 1
+            row["last_preferred_ratio"] = entry["preferred_ratio"]
+            row["last_total_treasury_cents"] = entry["total_treasury_cents"]
+
+        rows = list(aggregate.values())
+        rows.sort(
+            key=lambda item: (
+                int(item["max_preferred_shortfall_cents"]),
+                -float(item["min_preferred_ratio"]),
+            ),
+            reverse=True,
+        )
+        return rows
 
     async def setup(self):
         healthy = await self.client.health()
@@ -808,6 +983,8 @@ class SimulationEngine:
                 product_name=product["name"],
                 route_id=route.route_id,
                 reason="payment_settled",
+                success=True,
+                ecosystem_pressure=ecosystem_pressure,
             )
             summary.success_count += 1
             summary.total_volume += record.amount
@@ -884,6 +1061,8 @@ class SimulationEngine:
                 product_name=product["name"],
                 route_id=route.route_id,
                 reason=record.error or "payment_failed",
+                success=False,
+                ecosystem_pressure=ecosystem_pressure,
             )
             summary.fail_count += 1
             self._emit(
@@ -972,13 +1151,14 @@ class SimulationEngine:
                     actual_protocol_fee_cents=record.fee,
                     round_num=round_num,
                 )
+                ecosystem_pressure = max(0.0, option["capacity_ratio"] - 1.0)
                 margin_delta = self._record_protocol_economics(
                     protocol=option["protocol"],
                     amount=intent["amount_cents"],
                     protocol_fee=record.fee,
                     settlement_ms=record.settlement_ms,
                     success=True,
-                    ecosystem_pressure=max(0.0, option["capacity_ratio"] - 1.0),
+                    ecosystem_pressure=ecosystem_pressure,
                     route_id=route.route_id,
                     route_fee=route_record.route_fee_cents,
                 )
@@ -992,6 +1172,29 @@ class SimulationEngine:
                 summary.success_count += 1
                 summary.total_volume += record.amount
                 summary.total_fees += record.fee
+                self._record_world_event(
+                    summary,
+                    round_num,
+                    "treasury_rebalance",
+                    (
+                        f"{merchant.name} rebalanced ${record.amount / 100:,.2f} "
+                        f"from {option['source_domain'].value} to {intent['target_domain'].value}."
+                    ),
+                    actor_id=merchant.merchant_id,
+                    protocol=option["protocol"],
+                    data={
+                        "merchant_id": merchant.merchant_id,
+                        "merchant": merchant.name,
+                        "amount_cents": record.amount,
+                        "fee_cents": record.fee,
+                        "source_domain": option["source_domain"].value,
+                        "target_domain": intent["target_domain"].value,
+                        "primitive": route.primitive.value,
+                        "route_id": route.route_id,
+                        "margin_delta_cents": margin_delta,
+                        "ecosystem_pressure": round(ecosystem_pressure, 4),
+                    },
+                )
                 self._emit(
                     "treasury_rebalance",
                     {
@@ -1015,6 +1218,27 @@ class SimulationEngine:
                 summary.transactions.append(record)
                 summary.route_executions.append(route_record)
                 summary.fail_count += 1
+                self._record_world_event(
+                    summary,
+                    round_num,
+                    "treasury_rebalance_failed",
+                    (
+                        f"{merchant.name} could not rebalance "
+                        f"{option['source_domain'].value} to {intent['target_domain'].value}."
+                    ),
+                    actor_id=merchant.merchant_id,
+                    protocol=option["protocol"],
+                    data={
+                        "merchant_id": merchant.merchant_id,
+                        "merchant": merchant.name,
+                        "amount_cents": intent["amount_cents"],
+                        "source_domain": option["source_domain"].value,
+                        "target_domain": intent["target_domain"].value,
+                        "primitive": route.primitive.value,
+                        "route_id": route.route_id,
+                        "error": record.error or "rebalance_failed",
+                    },
+                )
 
     def _evolve_market(self, round_num: int, summary: RoundSummary):
         ranked = sorted(
@@ -1132,8 +1356,10 @@ class SimulationEngine:
             for protocol, state in self.protocol_state.items()
         }
         summary.route_usage = dict(self.economy.round_route_usage)
+        self._record_route_pressure_events(summary, round_num)
         summary.balance_summary = self.economy.snapshot_float_summary()
         summary.treasury_distribution = self.economy.snapshot_treasury_distribution()
+        self._record_treasury_posture_events(summary, round_num)
 
         for event in self.economy.route_events:
             self._emit(event["type"], {k: v.value if hasattr(v, "value") else v for k, v in event.items() if k != "type"})
@@ -1202,6 +1428,8 @@ class SimulationEngine:
                 "fees_cents": summary.total_fees,
                 "protocol_attempts": summary.protocol_attempts,
                 "route_usage": summary.route_usage,
+                "route_pressure": summary.route_pressure,
+                "treasury_posture": summary.treasury_posture,
                 "memory_events": len(summary.agent_memories),
                 "trust_summary": trust_summary,
             },
@@ -1273,8 +1501,10 @@ class SimulationEngine:
             for protocol, state in self.protocol_state.items()
         }
         self.result.route_usage_summary = dict(self.economy.total_route_usage)
+        self.result.route_pressure_summary = self._build_route_pressure_summary()
         self.result.float_summary = self.economy.snapshot_float_summary()
         self.result.treasury_distribution = self.economy.snapshot_treasury_distribution()
+        self.result.treasury_posture_summary = self._build_treasury_posture_summary()
         self.result.trust_summary = self._protocol_trust_summary()
         self.result.agent_memory_log = list(self.agent_memory_log)
         self.result.world_events = list(self.world_events)
@@ -1308,8 +1538,10 @@ class SimulationEngine:
                 for protocol, state in self.result.ecosystem_summary.items()
             },
             "route_usage_summary": self.result.route_usage_summary,
+            "route_pressure_summary": self.result.route_pressure_summary,
             "float_summary": self.result.float_summary,
             "treasury_distribution": self.result.treasury_distribution,
+            "treasury_posture_summary": self.result.treasury_posture_summary,
             "rail_pnl_history": self.result.rail_pnl_history,
             "balances": self.economy.snapshot_balances(),
             "trust_summary": self.result.trust_summary,

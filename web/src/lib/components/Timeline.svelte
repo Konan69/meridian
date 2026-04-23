@@ -2,30 +2,7 @@
   import ProtocolBadge from './ProtocolBadge.svelte';
   import { getAvatarColor } from '$lib/constants';
 
-  interface TimelineEvent {
-    type: string;
-    agent?: string;
-    product?: string;
-    protocol?: string;
-    amount_cents?: number;
-    fee_cents?: number;
-    round?: number;
-    timestamp?: string;
-    merchant?: string;
-    source_domain?: string;
-    target_domain?: string;
-    primitive?: string;
-    route_id?: string;
-    workload_type?: string;
-    agent_name?: string;
-    product_name?: string;
-    reason?: string;
-    summary?: string;
-    event_type?: string;
-    trust_before?: number;
-    trust_after?: number;
-    sentiment_delta?: number;
-  }
+  type TimelineEvent = Record<string, unknown> & { type?: unknown };
 
   let { events = [] }: { events: TimelineEvent[] } = $props();
 
@@ -42,35 +19,93 @@
     }
   });
 
-  function formatAmount(cents?: number) {
-    if (cents == null) return '--';
-    return (cents / 100).toLocaleString('en-US', {
+  function textValue(...values: unknown[]) {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) return trimmed;
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+      }
+    }
+    return null;
+  }
+
+  function numberValue(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+  }
+
+  function formatAmount(cents?: unknown) {
+    const amount = numberValue(cents);
+    if (amount == null) return '--';
+    return (amount / 100).toLocaleString('en-US', {
       style: 'currency',
       currency: 'USD',
     });
   }
 
-  function formatFee(cents?: number) {
-    if (cents == null || cents === 0) return '';
-    return `fee ${formatAmount(cents)}`;
+  function formatFee(cents?: unknown) {
+    const amount = numberValue(cents);
+    if (amount == null || amount === 0) return '';
+    return `fee ${formatAmount(amount)}`;
   }
 
-  function formatTime(ts?: string) {
-    if (!ts) return '';
+  function formatTime(ts?: unknown) {
+    const value = textValue(ts);
+    if (!value) return '';
     try {
-      const d = new Date(ts);
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return value;
       return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
-      return ts;
+      return value;
     }
   }
 
   function actorName(evt: TimelineEvent) {
-    return evt.agent ?? evt.agent_name ?? 'World';
+    return textValue(evt.agent, evt.agent_name) ?? 'World';
+  }
+
+  function actorInitial(evt: TimelineEvent) {
+    return actorName(evt).slice(0, 1).toUpperCase() || 'W';
+  }
+
+  function eventType(evt: TimelineEvent) {
+    return textValue(evt.type) ?? 'event';
   }
 
   function eventBody(evt: TimelineEvent) {
-    return evt.product ?? evt.product_name ?? evt.summary ?? evt.reason ?? evt.event_type ?? '--';
+    return textValue(evt.product, evt.product_name, evt.summary, evt.reason, evt.event_type) ?? '--';
+  }
+
+  function roundLabel(evt: TimelineEvent) {
+    const round = numberValue(evt.round) ?? numberValue(evt.round_num);
+    return round == null ? '-' : String(Math.trunc(round));
+  }
+
+  function metaItems(evt: TimelineEvent) {
+    const items = [
+      ['merchant', textValue(evt.merchant, evt.merchant_name)],
+      ['from', textValue(evt.source_domain)],
+      ['to', textValue(evt.target_domain)],
+      ['mode', textValue(evt.primitive)],
+      ['route', textValue(evt.route_id)],
+      ['flow', textValue(evt.workload_type)],
+    ].flatMap(([label, value]) => value ? [`${label}: ${value}`] : []);
+
+    const trustAfter = numberValue(evt.trust_after);
+    if (trustAfter != null) {
+      const trustBefore = numberValue(evt.trust_before);
+      items.push(`trust: ${trustBefore == null ? '--' : trustBefore.toFixed(2)} -> ${trustAfter.toFixed(2)}`);
+    }
+
+    return items;
   }
 
   const typeBadgeStyles = {
@@ -80,8 +115,8 @@
     FAILED:    { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444', border: 'rgba(239,68,68,0.3)' },
   };
 
-  function badgeStyle(type?: string) {
-    const key = type?.toUpperCase() as keyof typeof typeBadgeStyles | undefined;
+  function badgeStyle(type?: unknown) {
+    const key = textValue(type)?.toUpperCase() as keyof typeof typeBadgeStyles | undefined;
     const s = (key ? typeBadgeStyles[key] : undefined) ?? { bg: 'rgba(255,255,255,0.06)', color: 'var(--tx-2, #aaa)', border: 'var(--bd, #333)' };
     return `background:${s.bg}; color:${s.color}; border:1px solid ${s.border}`;
   }
@@ -94,20 +129,24 @@
   </div>
   <div class="timeline-feed" bind:this={feedEl} aria-label="Event timeline" role="log">
     {#each events as evt, idx (idx)}
+      {@const protocol = textValue(evt.protocol)}
+      {@const meta = metaItems(evt)}
+      {@const fee = formatFee(evt.fee_cents)}
+      {@const time = formatTime(evt.timestamp)}
           <div class="event-card" style="animation-delay: {Math.min(idx * 30, 300)}ms">
         <div class="card-header">
           <div class="agent-info">
             <div class="avatar" style:background={getAvatarColor(actorName(evt))}>
-              {actorName(evt)[0].toUpperCase()}
+              {actorInitial(evt)}
             </div>
             <span class="agent-name">{actorName(evt)}</span>
           </div>
           <div class="header-badges">
-            {#if evt.protocol}
-              <ProtocolBadge protocol={evt.protocol} />
+            {#if protocol}
+              <ProtocolBadge {protocol} />
             {/if}
             <span class="type-badge" style={badgeStyle(evt.type)}>
-              {evt.type?.toUpperCase() ?? 'EVENT'}
+              {eventType(evt).toUpperCase()}
             </span>
           </div>
         </div>
@@ -115,27 +154,23 @@
         <div class="card-body">
           <span class="product-name">{eventBody(evt)}</span>
           <span class="amount">{formatAmount(evt.amount_cents)}</span>
-          {#if evt.fee_cents}
-            <span class="fee">{formatFee(evt.fee_cents)}</span>
+          {#if fee}
+            <span class="fee">{fee}</span>
           {/if}
         </div>
 
-        {#if evt.merchant || evt.source_domain || evt.target_domain || evt.primitive || evt.route_id || evt.workload_type || evt.trust_after}
+        {#if meta.length > 0}
           <div class="card-meta">
-            {#if evt.merchant}<span>merchant: {evt.merchant}</span>{/if}
-            {#if evt.source_domain}<span>from: {evt.source_domain}</span>{/if}
-            {#if evt.target_domain}<span>to: {evt.target_domain}</span>{/if}
-            {#if evt.primitive}<span>mode: {evt.primitive}</span>{/if}
-            {#if evt.route_id}<span>route: {evt.route_id}</span>{/if}
-            {#if evt.workload_type}<span>flow: {evt.workload_type}</span>{/if}
-            {#if evt.trust_after}<span>trust: {evt.trust_before?.toFixed(2)} → {evt.trust_after.toFixed(2)}</span>{/if}
+            {#each meta as item}
+              <span>{item}</span>
+            {/each}
           </div>
         {/if}
 
         <div class="card-footer">
-          <span class="round-tag">R{evt.round ?? '-'}</span>
-          {#if evt.timestamp}
-            <span class="time-tag">{formatTime(evt.timestamp)}</span>
+          <span class="round-tag">R{roundLabel(evt)}</span>
+          {#if time}
+            <span class="time-tag">{time}</span>
           {/if}
         </div>
       </div>

@@ -218,6 +218,8 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
         product_name="API credits",
         route_id="base-direct",
         reason="payment_settled",
+        success=True,
+        ecosystem_pressure=0.0,
     )
 
     assert before == 0.6
@@ -231,7 +233,11 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
     assert memory.trust_before == round(before, 4)
     assert memory.trust_after == round(after, 4)
     assert memory.sentiment_delta == round(sentiment_delta, 4)
+    assert memory.outcome == "success"
+    assert memory.trust_driver == "settled_on_reliable_protocol"
+    assert memory.ecosystem_pressure == 0.0
     assert memory.merchant_id == "merchant_test"
+    assert memory.merchant_reputation == 0.7
     assert memory.product_name == "API credits"
     assert memory.route_id == "base-direct"
 
@@ -245,8 +251,34 @@ def test_agent_memory_records_trust_change_and_ndjson_contract(capsys):
     assert emitted["protocol"] == "x402"
     assert emitted["trust_before"] == round(before, 4)
     assert emitted["trust_after"] == round(after, 4)
+    assert emitted["outcome"] == "success"
+    assert emitted["trust_driver"] == "settled_on_reliable_protocol"
+    assert emitted["merchant_reputation"] == 0.7
     assert emitted["reason"] == "payment_settled"
     assert emitted["timestamp"].endswith("+00:00")
+
+    engine._record_agent_memory(
+        summary,
+        round_num=1,
+        agent=agent,
+        protocol=Protocol.X402,
+        workload_type=WorkloadType.API_MICRO,
+        sentiment_delta=-0.13,
+        trust_before=after,
+        trust_after=after - 0.13,
+        amount_cents=125,
+        merchant=merchant,
+        product_name="API credits",
+        route_id="base-direct",
+        reason="timeout",
+        success=False,
+        ecosystem_pressure=0.8,
+    )
+
+    failed = engine.agent_memory_log[1]
+    assert failed.outcome == "failure"
+    assert failed.trust_driver == "failed_under_route_pressure"
+    assert failed.ecosystem_pressure == 0.8
 
 
 def test_protocol_trust_summary_covers_active_protocols_with_defaults():
@@ -272,6 +304,12 @@ class _OfflineEconomy:
 
     def snapshot_treasury_distribution(self) -> dict[str, dict[str, int]]:
         return {"merchant_test": {"base_usdc": 10_000}}
+
+    def snapshot_route_pressure(self) -> list[dict[str, object]]:
+        return []
+
+    def snapshot_treasury_posture(self) -> list[dict[str, object]]:
+        return []
 
     def snapshot_balances(self) -> dict[str, dict[str, int]]:
         return {"agent_001": {"base_usdc": 8_500}}
@@ -362,3 +400,42 @@ def test_simulation_complete_payload_preserves_world_contract(capsys):
     assert complete["agent_memory_log"][0]["trust_after"] > complete["agent_memory_log"][0]["trust_before"]
     assert complete["world_events"][0]["event_type"] == "round_closed"
     assert complete["balances"] == {"agent_001": {"base_usdc": 8_500}}
+
+
+def test_economy_observability_snapshots_mark_route_and_treasury_pressure():
+    agents = generate_agents(1, seed=13)
+    merchant = _merchant()
+    economy = StablecoinEconomy(
+        agents=agents,
+        merchants=[merchant],
+        protocols=list(Protocol),
+        rng=__import__("random").Random(13),
+    )
+    economy.round_route_usage["base_direct_usdc"] = 2_000_000
+
+    pressure = economy.snapshot_route_pressure()
+
+    assert pressure[0]["route_id"] == "base_direct_usdc"
+    assert pressure[0]["pressure_level"] == "elevated"
+    assert pressure[0]["capacity_ratio"] == 0.8
+    assert "x402" in pressure[0]["protocols"]
+
+    preferred_bucket = economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        merchant.preferred_settlement_domain,
+    )
+    preferred_bucket.available_cents = 1_000
+    gateway_bucket = economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.GATEWAY_UNIFIED_USDC,
+    )
+    gateway_bucket.available_cents = 10_000
+
+    posture = economy.snapshot_treasury_posture()
+
+    assert posture[0]["merchant_id"] == merchant.merchant_id
+    assert posture[0]["preferred_domain"] == BalanceDomain.BASE_USDC.value
+    assert posture[0]["preferred_shortfall_cents"] == 19_000
+    assert posture[0]["rebalance_ready"] is True

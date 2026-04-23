@@ -496,6 +496,73 @@ def test_emergent_world_report_section():
     assert "X402" in emergent["content"]
 
 
+def test_self_sustainability_report_section():
+    """Report promotes treasury and route pressure as economy signals."""
+    config = SimulationConfig(
+        num_agents=2,
+        num_rounds=1,
+        protocols=[Protocol.X402, Protocol.ATXP],
+    )
+    result = SimulationResult(config=config)
+    result.route_pressure_summary = [
+        {
+            "route_id": "base_direct_usdc",
+            "source_domain": "base_usdc",
+            "target_domain": "base_usdc",
+            "primitive": "direct_same_domain",
+            "protocols": ["x402", "atxp"],
+            "total_usage_cents": 2_000_000,
+            "max_capacity_ratio": 0.8,
+            "pressure_rounds": 1,
+            "last_pressure_level": "elevated",
+        }
+    ]
+    result.treasury_posture_summary = [
+        {
+            "merchant_id": "merchant_test",
+            "merchant": "merchant_test",
+            "preferred_domain": "base_usdc",
+            "max_preferred_shortfall_cents": 19_000,
+            "min_preferred_ratio": 0.09,
+            "rebalance_ready_rounds": 1,
+            "last_preferred_ratio": 0.09,
+            "last_total_treasury_cents": 11_000,
+        }
+    ]
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=1,
+            event_type="treasury_rebalance",
+            summary="merchant_test rebalanced $25.00 from gateway_unified_usdc to base_usdc.",
+            actor_id="merchant_test",
+            protocol="atxp",
+        ),
+        EconomyWorldEvent(
+            round_num=1,
+            event_type="treasury_posture",
+            summary="merchant_test holds 9.0% of treasury in preferred base_usdc.",
+            actor_id="merchant_test",
+        ),
+        EconomyWorldEvent(
+            round_num=1,
+            event_type="route_pressure",
+            summary="base_direct_usdc ran at 80.0% of round capacity.",
+            protocol="x402",
+        ),
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    signals = next((s for s in sections if s["title"] == "Self-Sustainability Signals"), None)
+
+    assert signals is not None
+    assert signals["status"] == "ok"
+    assert "Treasury rebalances: 1 succeeded, 0 failed" in signals["content"]
+    assert "Treasury posture events: 1" in signals["content"]
+    assert "merchant_test" in signals["content"]
+    assert "base_direct_usdc" in signals["content"]
+    assert "$20,000.00" in signals["content"]
+
+
 # ------------------------------------------------------------------
 # l. Report generation
 # ------------------------------------------------------------------
