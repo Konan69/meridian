@@ -28,4 +28,4 @@ hmac = "0.12"
 tokio-stream = "0.1"
 hex = "0.4"
 # Real blockchain + HTTP
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }

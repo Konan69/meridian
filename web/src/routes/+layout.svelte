@@ -8,6 +8,7 @@
 		{ href: '/', label: 'Dashboard' },
 		{ href: '/sim/new', label: 'Simulation' },
 		{ href: '/protocols', label: 'Protocols' },
+		{ href: '/funding', label: 'Funding' },
 	];
 
 	type CapabilityStatus = {

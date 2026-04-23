@@ -5,6 +5,7 @@ engine/target/
 sim/.venv/
 sim/__pycache__/
 sim/sim/__pycache__/
+*.egg-info/
 *.pyc
 *.pyo
 
@@ -33,8 +34,11 @@ services/atxp/.withdraw-oneoff.mjs
 sim/test_kuzu_db
 services/**/.logs/
 services/**/.venv/
+services/**/.runtime/
 
 # Local agent notes
 findings.md
 progress.md
 task_plan.md
+.upstreams/
+.tmp/

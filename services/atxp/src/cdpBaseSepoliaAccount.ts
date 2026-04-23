@@ -240,6 +240,7 @@ class CdpBaseSepoliaPaymentMaker implements PaymentMaker {
 }
 
 export class CdpBaseSepoliaAccount implements Account {
+  readonly usesAccountsAuthorize = false;
   readonly paymentMakers: PaymentMaker[];
   private addressPromise: Promise<`0x${string}`> | null = null;
 

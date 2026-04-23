@@ -102,7 +102,7 @@ for Meridian's backend-owned x402 flow.
 ## Quick Start
 
 ```bash
-# Prerequisites: Rust, Node.js 20+, Python 3.11, uv
+# Prerequisites: Rust, Node.js 20+, Python 3.11+, uv
 
 # 0. Configure .env with real service credentials
 
@@ -123,6 +123,33 @@ Or use the run script:
 
 `run.sh` starts `cdp`, `stripe`, `atxp`, `ap2`, the engine, and the frontend in
 dependency order.
+
+## Funding & Diagnostics
+
+Meridian now exposes live funding state for the ATXP direct-settle path instead
+of advertising it as healthy and failing on the next transfer.
+
+Useful checks:
+
+```bash
+curl http://localhost:3010/funding
+curl 'http://localhost:3010/funding?mode=cdp-base'
+curl http://localhost:3010/health
+curl http://localhost:4080/capabilities
+cd services/atxp && pnpm run recover
+```
+
+Notes:
+
+- ATXP runtime readiness for onchain payer modes depends on real treasury state,
+  not just env presence.
+- For Polygon/Base payer modes, native gas matters separately from USDC. A payer
+  wallet can still be unusable if it holds USDC but cannot pay gas.
+- For `cdp-base`, Meridian now supports a shared funded payer account when
+  `ATXP_CDP_ACCOUNT_UNIQUE=false`, which is the recommended local-runtime mode.
+- The frontend exposes the same live view at `/funding`.
+- See [docs/funding.md](docs/funding.md) for the current funding playbook and
+  external funding sources.
 
 ## Simulation Output
 

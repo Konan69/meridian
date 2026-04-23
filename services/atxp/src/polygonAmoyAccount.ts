@@ -184,6 +184,7 @@ class PolygonCompatPaymentMaker implements PaymentMaker {
 }
 
 export class PolygonAmoyAccount implements Account {
+  readonly usesAccountsAuthorize = false;
   readonly paymentMakers: PaymentMaker[];
   private readonly account: PrivateKeyAccount;
   private readonly walletClient: ReturnType<typeof createWalletClient>;

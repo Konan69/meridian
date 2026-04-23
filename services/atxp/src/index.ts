@@ -39,7 +39,17 @@ import {
 import { createPublicClient, erc20Abi, formatEther, formatUnits, http } from "viem";
 import { polygonAmoy } from "viem/chains";
 import { z } from "zod";
-import { createPayerAccountFromEnvForActor, getPayerModeFromEnv } from "./payerAccount.js";
+import {
+  createPayerAccountFromEnvForActor,
+  getPayerModeFromEnv,
+  isCdpAccountSharedFromEnv,
+  parsePayerMode,
+} from "./payerAccount.js";
+import {
+  DirectTransferRejectedError,
+  settleDirectTransfer,
+} from "./directTransfer.js";
+import { runtimeStatusForPayerMode } from "./funding.js";
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3010;
 type AppBindings = {
@@ -415,6 +425,11 @@ type AuthorizeAtxpRequest = {
   memo?: string;
 };
 
+function payerModeFromRequest(request: Request) {
+  const requested = new URL(request.url).searchParams.get("mode");
+  return requested ? parsePayerMode(requested.trim().toLowerCase()) : getPayerModeFromEnv();
+}
+
 async function main() {
   const atxpConnectionString = ensureEnv("ATXP_CONNECTION_STRING");
   const payeeAccount = new ATXPAccount(atxpConnectionString);
@@ -479,23 +494,28 @@ async function main() {
     }),
   );
 
-  app.get("/health", async (c) =>
-    c.json(await (async () => {
-      const payerMode = getPayerModeFromEnv();
-      const runtime = await getRuntimeProbeStatus(payeeAddress);
-      return {
-        status: "ok",
-        service: "meridian-atxp",
-        authServer,
-        payerMode,
-        runtimeReady: runtime.runtimeReady,
-        runtimeMode: runtime.runtimeMode,
-        supportsDirectSettle: runtime.runtimeMode === "direct_settle" && runtime.runtimeReady,
-        runtimeReadyReason: runtime.reason,
-        timestamp: new Date().toISOString(),
-      };
-    })()),
-  );
+  app.get("/health", async (c) => {
+    const payerMode = payerModeFromRequest(c.req.raw);
+    const runtime = await runtimeStatusForPayerMode(payerMode);
+    const runtimeReady = runtime.supportsDirectSettle;
+    return c.json({
+      status: "ok",
+      service: "meridian-atxp",
+      authServer,
+      payerMode,
+      runtimeReady,
+      runtimeMode: runtimeReady ? "direct_settle" : "unsupported",
+      supportsDirectSettle: runtime.supportsDirectSettle,
+      runtimeReadyReason: runtime.reason,
+      funding: runtime,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.get("/funding", async (c) => {
+    const payerMode = payerModeFromRequest(c.req.raw);
+    return c.json(await runtimeStatusForPayerMode(payerMode));
+  });
 
   app.post("/atxp/authorize", async (c) => {
     try {
@@ -505,7 +525,7 @@ async function main() {
       }
 
       const payerMode = getPayerModeFromEnv();
-      const authorizeDestination = payeeAddress;
+      const authorizeDestination = payerMode === "atxp" ? accountId : payeeAddress;
       const payerAccount = createPayerAccountFromEnvForActor(body.actorId);
       const authorizeResult = await payerAccount.authorize({
         protocols: ["atxp"],
@@ -522,7 +542,7 @@ async function main() {
         merchant: body.merchant,
         amountUsd: body.amountUsd,
         destination: authorizeDestination,
-        sharedAccount: payerMode === "atxp",
+        sharedAccount: payerMode === "cdp-base" ? isCdpAccountSharedFromEnv() : true,
       });
     } catch (error) {
       return c.json(
@@ -548,26 +568,33 @@ async function main() {
         return c.json({ error: "merchant and amountUsd are required" }, 400);
       }
 
-      const settlement = new ProtocolSettlement(
+      const payerMode = getPayerModeFromEnv();
+      const settled = await settleDirectTransfer({
         authServer,
-        config.logger,
-        fetch.bind(globalThis),
-        `atxp:${accountId}`,
-      );
-      const valid = await settlement.verify("atxp", credential);
-      if (!valid.valid) {
-        return c.json({ error: "ATXP credential verification failed" }, 402);
-      }
-
-      const settled = await settlement.settle("atxp", credential);
+        logger: config.logger,
+        destinationAccountId: `atxp:${accountId}`,
+        payerMode,
+        payeeSources,
+        request: {
+          merchant: body.merchant,
+          amountUsd: body.amountUsd,
+          memo: body.memo,
+        },
+        credential,
+      });
       return c.json({
         ok: true,
         merchant: body.merchant,
         amountUsd: body.amountUsd,
         txHash: settled.txHash,
         settledAmount: settled.settledAmount,
+        verificationMode: settled.verificationMode,
+        alreadySettled: settled.alreadySettled ?? false,
       });
     } catch (error) {
+      if (error instanceof DirectTransferRejectedError) {
+        return c.json({ error: error.message }, error.status as 400 | 402 | 409 | 500);
+      }
       return c.json(
         {
           error: error instanceof Error ? error.message : String(error),

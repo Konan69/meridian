@@ -1,9 +1,13 @@
 import { ATXPAccount, type Account } from "@atxp/common";
 import { BaseSepoliaAccount } from "./baseSepoliaAccount.js";
 import { CdpBaseSepoliaAccount } from "./cdpBaseSepoliaAccount.js";
-import { PolygonAmoyAccount } from "./polygonAmoyAccount.js";
+import { MeridianPolygonServerAccount } from "./polygonServerAccount.js";
 
 export type PayerMode = "atxp" | "base" | "polygon" | "cdp-base";
+
+export function isCdpAccountSharedFromEnv(): boolean {
+  return process.env.ATXP_CDP_ACCOUNT_UNIQUE === "false";
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -13,8 +17,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-export function getPayerModeFromEnv(): PayerMode {
-  const mode = (process.env.ATXP_PAYER_MODE ?? "atxp").toLowerCase();
+export function parsePayerMode(mode: string): PayerMode {
   if (mode === "atxp" || mode === "base" || mode === "polygon" || mode === "cdp-base") {
     return mode;
   }
@@ -23,8 +26,15 @@ export function getPayerModeFromEnv(): PayerMode {
   );
 }
 
+export function getPayerModeFromEnv(): PayerMode {
+  return parsePayerMode((process.env.ATXP_PAYER_MODE ?? "atxp").toLowerCase());
+}
+
 function buildCdpAccountName(actorId?: string): string {
   const baseName = process.env.ATXP_CDP_ACCOUNT_NAME ?? "meridian-atxp-payer";
+  if (isCdpAccountSharedFromEnv()) {
+    return baseName.slice(0, 36);
+  }
   if (!actorId) {
     const suffix =
       process.env.ATXP_CDP_ACCOUNT_UNIQUE === "false"
@@ -53,7 +63,7 @@ export function createPayerAccountFromEnvForActor(actorId?: string): Account {
         requireEnv("ATXP_BASE_PRIVATE_KEY"),
       );
     case "polygon":
-      return new PolygonAmoyAccount(
+      return new MeridianPolygonServerAccount(
         requireEnv("ATXP_POLYGON_RPC_URL"),
         requireEnv("ATXP_POLYGON_PRIVATE_KEY"),
         process.env.ATXP_POLYGON_CHAIN_ID

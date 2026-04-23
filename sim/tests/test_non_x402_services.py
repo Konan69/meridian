@@ -50,10 +50,20 @@ async def test_atxp_service_health_and_tools():
             },
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         ) as resp:
+            # Unauthenticated MCP access should trigger an OAuth challenge.
+            assert resp.status == 401
+            assert (
+                resp.headers.get("WWW-Authenticate")
+                == 'Bearer resource_metadata="http://localhost:3010/.well-known/oauth-protected-resource/mcp"'
+            )
+
+        async with session.get(
+            f"{ATXP_SERVICE_URL}/mcp/.well-known/oauth-protected-resource",
+        ) as resp:
             assert resp.status == 200
-            body = await resp.json()
-            tools = body.get("result", {}).get("tools", [])
-            assert any(tool.get("name") == "stablecoin_transfer" for tool in tools), body
+            metadata = await resp.json()
+            assert metadata.get("resource") == "http://localhost:3010/mcp"
+            assert "https://auth.atxp.ai" in metadata.get("authorization_servers", [])
 
 
 @pytest.mark.asyncio

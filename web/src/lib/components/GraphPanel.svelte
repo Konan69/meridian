@@ -5,11 +5,13 @@
 		forceManyBody,
 		forceCenter,
 		forceCollide,
+		select,
+		zoom as d3Zoom,
+		zoomIdentity,
 		type SimulationNodeDatum,
-		type SimulationLinkDatum
-	} from 'd3-force';
-	import { zoom as d3Zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
-	import { select } from 'd3-selection';
+		type SimulationLinkDatum,
+		type ZoomBehavior
+	} from 'd3';
 	import type { GraphNode, GraphEdge } from './graphDemo';
 	import { TYPE_COLORS, getEntityColor } from '$lib/constants';
 

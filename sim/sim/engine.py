@@ -9,13 +9,11 @@ import random
 import sys
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .agents import generate_agents
 from .commerce import CommerceClient
 from .economy import StablecoinEconomy
-from .graph import CommerceGraphBuilder
-from .llm import LLMDecisionEngine
 from .memory import MemoryUpdater
 from .types import (
     BalanceDomain,
@@ -36,6 +34,10 @@ from .types import (
     WorkloadType,
 )
 
+if TYPE_CHECKING:
+    from .graph import CommerceGraphBuilder
+    from .llm import LLMDecisionEngine
+
 
 class SimulationEngine:
     """Runs a stablecoin economy simulation across live payment rails."""
@@ -48,8 +50,8 @@ class SimulationEngine:
         self.merchants: list[MerchantProfile] = []
         self.result = SimulationResult(config=config)
         self.rng = random.Random(config.seed)
-        self.llm_engine: Optional[LLMDecisionEngine] = None
-        self.graph: Optional[CommerceGraphBuilder] = None
+        self.llm_engine: Optional["LLMDecisionEngine"] = None
+        self.graph: Optional["CommerceGraphBuilder"] = None
         self.memory: Optional[MemoryUpdater] = None
         self.economy: Optional[StablecoinEconomy] = None
         self.active_protocols: list[Protocol] = list(self.config.protocols)
@@ -65,6 +67,8 @@ class SimulationEngine:
         if config.use_llm:
             api_key = os.environ.get("OPENCODE_API_KEY", "")
             if api_key:
+                from .llm import LLMDecisionEngine
+
                 self.llm_engine = LLMDecisionEngine(
                     api_key=api_key,
                     model=config.llm_model,
@@ -138,6 +142,8 @@ class SimulationEngine:
             if not api_key:
                 raise RuntimeError("MERIDIAN_ENABLE_GRAPH=1 requires OPENCODE_GO_API_KEY or OPENCODE_API_KEY")
             try:
+                from .graph import CommerceGraphBuilder
+
                 self.graph = CommerceGraphBuilder()
                 await self.graph.initialize()
                 self.memory = MemoryUpdater(self.graph)

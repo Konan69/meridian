@@ -92,6 +92,7 @@ class BaseSepoliaPaymentMaker implements PaymentMaker {
 }
 
 export class BaseSepoliaAccount implements Account {
+  readonly usesAccountsAuthorize = false;
   private readonly account: PrivateKeyAccount;
   private readonly walletClient: ReturnType<typeof createWalletClient>;
   readonly paymentMakers: PaymentMaker[];

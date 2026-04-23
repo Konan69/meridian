@@ -49,6 +49,15 @@ type KeyFile = {
 function loadApiKeyFile(): KeyFile {
   const file = process.env.CDP_API_KEY_FILE;
   if (!file) return {};
+  if (!fs.existsSync(file)) {
+    if (process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET) {
+      console.warn(
+        `Skipping missing CDP_API_KEY_FILE at ${file}; using CDP_API_KEY_ID/CDP_API_KEY_SECRET instead`,
+      );
+      return {};
+    }
+    throw new Error(`CDP_API_KEY_FILE does not exist: ${file}`);
+  }
   const raw = fs.readFileSync(file, "utf8");
   return JSON.parse(raw) as KeyFile;
 }

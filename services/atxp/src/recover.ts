@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { ATXPAccount, getErrorRecoveryHint } from "@atxp/common";
 import { BigNumber } from "bignumber.js";
 import { createPayerAccountFromEnvForActor, getPayerModeFromEnv } from "./payerAccount.js";
+import { runtimeStatusForPayerMode } from "./funding.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,11 +69,22 @@ function recoveryFromMessage(message: string): { title: string; actions: string[
     };
   }
 
+  if (message.includes("gas required exceeds allowance")) {
+    return {
+      title: "Native Gas Exhausted",
+      actions: [
+        "Top up the payer wallet's native gas token before retrying.",
+        "Use the funding endpoint or recover output to inspect remaining gas runway.",
+      ],
+    };
+  }
+
   return null;
 }
 
 async function main() {
   const payerMode = getPayerModeFromEnv();
+  const fundingStatus = await runtimeStatusForPayerMode(payerMode);
   const payeeConnectionString = requireEnv("ATXP_CONNECTION_STRING");
   const payee = new ATXPAccount(payeeConnectionString);
   const payeeProfile = await payee.getProfile().catch((error) => ({ error: String(error) }));
@@ -167,6 +179,7 @@ async function main() {
     JSON.stringify(
       {
         payerMode,
+        fundingStatus,
         payerAccountId,
         payerSources,
         payeeProfile,
