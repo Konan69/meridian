@@ -268,6 +268,27 @@ def require_contains(path: Path, needles: list[str], failures: list[str]) -> Non
             failures.append(f"{path}: missing {needle!r}")
 
 
+def static_contract_trace_metadata(
+    required_files: list[str],
+    contains_contracts: list[tuple[str, list[str]]],
+) -> dict[str, Any]:
+    return {
+        "validation": {
+            "kind": "static_contracts",
+            "required_file_count": len(required_files),
+            "required_files": required_files,
+            "contains_contracts": [
+                {
+                    "path": path,
+                    "needle_count": len(needles),
+                    "needles": needles,
+                }
+                for path, needles in contains_contracts
+            ],
+        }
+    }
+
+
 def task_static_contracts(root: Path) -> float:
     failures: list[str] = []
     required_files = [
@@ -291,116 +312,109 @@ def task_static_contracts(root: Path) -> float:
         if not (root / rel).exists():
             failures.append(f"missing {rel}")
 
-    require_contains(
-        root / "run.sh",
-        [
-            "Starting CDP service",
-            "Starting Stripe service",
-            "Starting ATXP service",
-            "Starting AP2 service",
-            "Building and starting commerce engine",
-            "Starting frontend",
-            "ATXP funding: curl http://localhost:3010/funding",
-            "cd sim && .venv/bin/python3 -m sim.engine",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "docs/funding.md",
-        [
-            "treasury recycling",
-            "/evm/transfer-usdc",
-            "/evm/transfer-native",
-            "CDP treasury recycling",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "services/cdp/src/index.ts",
-        [
-            'app.post("/evm/transfer-usdc"',
-            'app.post("/evm/transfer-native"',
-            "BASE_SEPOLIA_USDC",
-            "encodeErc20Transfer",
-            "treasury USDC transfers only support base-sepolia",
-            "treasury native transfers only support base-sepolia",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "services/atxp/src/cdpBaseSepoliaAccount.ts",
-        [
-            "ATXP_CDP_TREASURY_ADDRESS",
-            "ATXP_CDP_TREASURY_NATIVE_TOPUP",
-            "ATXP_CDP_TREASURY_USDC_TOPUP_UNITS",
-            "tryTreasuryTopUp",
-            '"/evm/transfer-native"',
-            '"/evm/transfer-usdc"',
-            "falling back to faucet",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "services/atxp/src/funding.ts",
-        [
-            "ATXP_CDP_TREASURY_ADDRESS",
-            "/evm/transfer-native",
-            "/evm/transfer-usdc",
-            "Automatic cdp-base payments also try this treasury path before faucet fallback.",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "services/atxp/src/index.ts",
-        [
-            'app.get("/health"',
-            'app.get("/funding"',
-            'app.post("/atxp/authorize"',
-            'app.post("/atxp/direct-transfer"',
-            'app.post("/atxp/execute"',
-            "runtimeStatusForPayerMode",
-            "settleDirectTransfer",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "engine/src/protocols/atxp.rs",
-        [
-            "supports_direct_settle",
-            "runtime_ready",
-            "runtime_mode",
-            "/atxp/authorize",
-            "/atxp/direct-transfer",
-            "/atxp/execute",
-        ],
-        failures,
-    )
-    require_contains(
-        root / "web/src/routes/+layout.svelte",
-        ["/funding"],
-        failures,
-    )
-    require_contains(
-        root / "web/src/routes/funding/+page.svelte",
-        ["/evm/transfer-usdc", "/evm/transfer-native"],
-        failures,
-    )
-    require_contains(
-        root / "web/src/routes/api/funding/+server.ts",
-        ["http://localhost:3010", "http://localhost:3030", "http://localhost:3040"],
-        failures,
-    )
-    require_contains(
-        root / "engine/src/routes/capabilities.rs",
-        [
-            "tokio::join!",
-            "AtxpAdapter::health_status",
-            "MppAdapter::health_status",
-            "Ap2Adapter::health_status",
-            "status.runtime_ready && status.integration == \"in_engine\"",
-        ],
-        failures,
-    )
+    contains_contracts = [
+        (
+            "run.sh",
+            [
+                "Starting CDP service",
+                "Starting Stripe service",
+                "Starting ATXP service",
+                "Starting AP2 service",
+                "Building and starting commerce engine",
+                "Starting frontend",
+                "ATXP funding: curl http://localhost:3010/funding",
+                "cd sim && .venv/bin/python3 -m sim.engine",
+            ],
+        ),
+        (
+            "docs/funding.md",
+            [
+                "treasury recycling",
+                "/evm/transfer-usdc",
+                "/evm/transfer-native",
+                "CDP treasury recycling",
+            ],
+        ),
+        (
+            "services/cdp/src/index.ts",
+            [
+                'app.post("/evm/transfer-usdc"',
+                'app.post("/evm/transfer-native"',
+                "BASE_SEPOLIA_USDC",
+                "encodeErc20Transfer",
+                "treasury USDC transfers only support base-sepolia",
+                "treasury native transfers only support base-sepolia",
+            ],
+        ),
+        (
+            "services/atxp/src/cdpBaseSepoliaAccount.ts",
+            [
+                "ATXP_CDP_TREASURY_ADDRESS",
+                "ATXP_CDP_TREASURY_NATIVE_TOPUP",
+                "ATXP_CDP_TREASURY_USDC_TOPUP_UNITS",
+                "tryTreasuryTopUp",
+                '"/evm/transfer-native"',
+                '"/evm/transfer-usdc"',
+                "falling back to faucet",
+            ],
+        ),
+        (
+            "services/atxp/src/funding.ts",
+            [
+                "ATXP_CDP_TREASURY_ADDRESS",
+                "/evm/transfer-native",
+                "/evm/transfer-usdc",
+                "Automatic cdp-base payments also try this treasury path before faucet fallback.",
+            ],
+        ),
+        (
+            "services/atxp/src/index.ts",
+            [
+                'app.get("/health"',
+                'app.get("/funding"',
+                'app.post("/atxp/authorize"',
+                'app.post("/atxp/direct-transfer"',
+                'app.post("/atxp/execute"',
+                "runtimeStatusForPayerMode",
+                "settleDirectTransfer",
+            ],
+        ),
+        (
+            "engine/src/protocols/atxp.rs",
+            [
+                "supports_direct_settle",
+                "runtime_ready",
+                "runtime_mode",
+                "/atxp/authorize",
+                "/atxp/direct-transfer",
+                "/atxp/execute",
+            ],
+        ),
+        (
+            "web/src/routes/+layout.svelte",
+            ["/funding"],
+        ),
+        (
+            "web/src/routes/funding/+page.svelte",
+            ["/evm/transfer-usdc", "/evm/transfer-native"],
+        ),
+        (
+            "web/src/routes/api/funding/+server.ts",
+            ["http://localhost:3010", "http://localhost:3030", "http://localhost:3040"],
+        ),
+        (
+            "engine/src/routes/capabilities.rs",
+            [
+                "tokio::join!",
+                "AtxpAdapter::health_status",
+                "MppAdapter::health_status",
+                "Ap2Adapter::health_status",
+                "status.runtime_ready && status.integration == \"in_engine\"",
+            ],
+        ),
+    ]
+    for path, needles in contains_contracts:
+        require_contains(root / path, needles, failures)
 
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
     log_task(
@@ -409,6 +423,7 @@ def task_static_contracts(root: Path) -> float:
         summary="all contracts present" if not failures else f"{len(failures)} contract issues",
         failure_reason="; ".join(failures[:8]) if failures else None,
         failures=failures,
+        trace_metadata=static_contract_trace_metadata(required_files, contains_contracts),
     )
     return score
 

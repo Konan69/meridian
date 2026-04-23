@@ -88,6 +88,18 @@ The simulation API streams NDJSON. Important event types:
 For field-level payload details, frontend normalization helpers, and the
 MiroFish adaptation boundary, see `docs/simulation-payload-contract.md`.
 
+## Autonomous Checkpoints
+
+When an Evo checkpoint is already at benchmark score `1.0`, treat it as the
+contract baseline to preserve. Useful autonomous changes should make the
+economy more believable, the workbench explanation clearer, or future
+regression diagnosis easier; they should not relax static contracts, compile
+checks, or build/test commands.
+
+Benchmark traces are part of the handoff between workers. Keep command context,
+cache key inputs, and static contract coverage visible so the next worker can
+separate a real validation failure from cache setup or timing variance.
+
 ## Optimization Target
 
 Future Evo work should optimize for believable ecosystem behavior:
