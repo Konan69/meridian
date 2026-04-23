@@ -306,6 +306,7 @@ def task_python_tests(root: Path) -> float:
         root,
         "python_sim_tests",
         'CACHE_ROOT="${XDG_CACHE_HOME:-/tmp}/meridian-evo-bench" && '
+        'PIP_CACHE_DIR="$CACHE_ROOT/pip-cache" && export PIP_CACHE_DIR && '
         'PY_TAG="$(python3 -c \'import sys; print(sys.implementation.cache_tag)\')" && '
         'DEPS_KEY="$(sha256sum pyproject.toml uv.lock | sha256sum | cut -d " " -f 1)" && '
         'SHORT_KEY="$(printf "%s" "$DEPS_KEY" | cut -c 1-16)" && '
@@ -315,7 +316,7 @@ def task_python_tests(root: Path) -> float:
         'rm -rf "$VENVDIR" && '
         'python3 -m venv "$VENVDIR" && '
         '"$VENVDIR/bin/python3" -m pip install -q --disable-pip-version-check '
-        '"aiohttp>=3.9.0" "pytest>=8.0" "pytest-asyncio>=0.23" && '
+        '--prefer-binary "aiohttp>=3.9.0" "pytest>=8.0" "pytest-asyncio>=0.23" && '
         'touch "$READY"; '
         'fi && '
         'PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" "$VENVDIR/bin/python3" -m pytest tests/test_economy.py tests/test_engine.py::test_agent_generation tests/test_engine.py::test_scenarios -q',
