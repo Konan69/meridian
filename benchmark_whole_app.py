@@ -377,12 +377,75 @@ def pnpm_trace_metadata(
     }
 
 
+SERVICE_OFFLINE_COVERAGE: dict[str, dict[str, list[str]]] = {
+    "cdp": {
+        "test_files": [
+            "services/cdp/src/sendTransaction.test.ts",
+            "services/cdp/src/treasury.test.ts",
+        ],
+        "helper_files": [
+            "services/cdp/src/sendTransaction.ts",
+            "services/cdp/src/treasury.ts",
+        ],
+        "coverage_points": [
+            "send-transaction request normalization and rejection",
+            "deterministic decimal/native/USDC amount parsing",
+            "ERC-20 transfer calldata encoding",
+        ],
+    },
+    "stripe": {
+        "test_files": [
+            "services/stripe/src/mppKeys.test.ts",
+            "services/stripe/src/mppRequest.test.ts",
+        ],
+        "helper_files": [
+            "services/stripe/src/mppKeys.ts",
+            "services/stripe/src/mppRequest.ts",
+        ],
+        "coverage_points": [
+            "deterministic MPP private key derivation",
+            "merchant and amount request normalization",
+            "MPP execute request validation",
+        ],
+    },
+    "atxp": {
+        "test_files": [
+            "services/atxp/src/cdpTreasuryTopUp.test.ts",
+            "services/atxp/src/directTransfer.test.ts",
+        ],
+        "helper_files": [
+            "services/atxp/src/cdpTreasuryTopUp.ts",
+            "services/atxp/src/directTransfer.ts",
+        ],
+        "coverage_points": [
+            "cdp-base treasury top-up planning",
+            "direct-transfer raw transaction credential parsing",
+            "ATXP credential object parsing and USDC amount rounding",
+        ],
+    },
+    "ap2": {
+        "test_files": [
+            "services/ap2/tests/test_contracts.py",
+        ],
+        "helper_files": [
+            "services/ap2/src/meridian_ap2_direct/contracts.py",
+        ],
+        "coverage_points": [
+            "canonical credential hashing",
+            "rounded USD amount comparison",
+            "settlement merchant and amount mismatch diagnostics",
+        ],
+    },
+}
+
+
 def service_offline_node_trace_metadata(
     root: Path,
     package_root: Path,
     service: str,
     node_modules_seed: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    coverage = SERVICE_OFFLINE_COVERAGE[service]
     metadata = pnpm_trace_metadata(
         root,
         package_root,
@@ -395,6 +458,9 @@ def service_offline_node_trace_metadata(
             "service": service,
             "offline": True,
             "credential_free": True,
+            "covered_test_files": coverage["test_files"],
+            "covered_helper_files": coverage["helper_files"],
+            "coverage_points": coverage["coverage_points"],
             "protects": "Pure protocol helper contracts run without live provider credentials.",
         }
     )
@@ -402,6 +468,7 @@ def service_offline_node_trace_metadata(
 
 
 def service_offline_python_trace_metadata(root: Path) -> dict[str, Any]:
+    coverage = SERVICE_OFFLINE_COVERAGE["ap2"]
     return {
         "validation": {
             "kind": "service_offline_protocol_tests",
@@ -412,6 +479,9 @@ def service_offline_python_trace_metadata(root: Path) -> dict[str, Any]:
             "validation_commands": [
                 "PYTHONPATH=src python3 -m unittest discover -s tests -q"
             ],
+            "covered_test_files": coverage["test_files"],
+            "covered_helper_files": coverage["helper_files"],
+            "coverage_points": coverage["coverage_points"],
             "protects": "AP2 canonical credential and settlement helper contracts run without live credentials.",
         }
     }
@@ -914,6 +984,7 @@ def task_service_offline_protocol_tests(root: Path) -> float:
         task_id = f"service_offline_{service}"
         package_root = root / "services" / service
         node_modules_seed = seed_node_modules(root, package_root)
+        coverage = SERVICE_OFFLINE_COVERAGE[service]
         component_tasks.append(
             {
                 "task_id": task_id,
@@ -922,6 +993,8 @@ def task_service_offline_protocol_tests(root: Path) -> float:
                 "target_seconds": target_seconds,
                 "node_modules_seed": node_modules_seed,
                 "validation_command": "pnpm run test:offline",
+                "covered_test_files": coverage["test_files"],
+                "covered_helper_files": coverage["helper_files"],
             }
         )
         scores.append(
@@ -947,6 +1020,8 @@ def task_service_offline_protocol_tests(root: Path) -> float:
         "package_root": "services/ap2",
         "target_seconds": 4,
         "validation_command": "PYTHONPATH=src python3 -m unittest discover -s tests -q",
+        "covered_test_files": SERVICE_OFFLINE_COVERAGE["ap2"]["test_files"],
+        "covered_helper_files": SERVICE_OFFLINE_COVERAGE["ap2"]["helper_files"],
     }
     component_tasks.append(ap2_task)
     scores.append(

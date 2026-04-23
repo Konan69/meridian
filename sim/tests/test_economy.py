@@ -487,6 +487,163 @@ def test_repeated_rebalance_infeasibility_becomes_market_evidence():
     assert removed["reason"] == "ecosystem_evidence"
 
 
+def test_run_round_carries_rebalance_infeasibility_pressure_into_market_evolution():
+    config = SimulationConfig(
+        seed=31,
+        protocols=[Protocol.AP2, Protocol.ATXP, Protocol.MPP, Protocol.ACP],
+        social_memory_strength=0.0,
+        max_active_ratio=1.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP, Protocol.AP2]
+    merchant.accepted_settlement_domains = [
+        BalanceDomain.BASE_USDC,
+        BalanceDomain.TEMPO_USD,
+    ]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [
+        _agent("agent_001", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+        _agent("agent_002", trust={"ap2": 0.74, "atxp": 0.78, "mpp": 0.74, "acp": 0.74}),
+    ]
+    for agent in engine.agents:
+        agent.budget = 0
+    for state in engine.protocol_state.values():
+        state.reliability = 0.96
+        state.network_effect = 0.55
+        state.operator_margin_cents = 0
+
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=config.protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+
+    summary = asyncio.run(engine.run_round(5))
+
+    pressure = [
+        entry
+        for entry in summary.route_pressure
+        if entry.get("reason") == "no_feasible_rebalance_route"
+    ]
+    assert len(pressure) == 1
+    assert pressure[0]["protocols"] == ["mpp", "acp", "ap2"]
+    assert pressure[0]["pressure_level"] == "elevated"
+    assert pressure[0]["merchant_id"] == merchant.merchant_id
+    assert [
+        entry
+        for entry in engine.route_pressure_log
+        if entry.get("reason") == "no_feasible_rebalance_route"
+    ][0]["route_id"] == pressure[0]["route_id"]
+
+    failed = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "treasury_rebalance_failed"
+    ][0]
+    assert failed["source_domain"] == BalanceDomain.TEMPO_USD.value
+    assert failed["target_domain"] == BalanceDomain.BASE_USDC.value
+    assert failed["accepted_protocols"] == ["mpp", "acp", "ap2"]
+
+    adopted = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "adopted"
+    ][0]
+    assert adopted["protocol"] == "atxp"
+    assert adopted["evidence"]["rebalance_source_feasible"] is True
+
+    removed = [
+        event.data
+        for event in summary.world_events
+        if event.event_type == "merchant_protocol_mix_changed"
+        and event.data["action"] == "removed"
+    ][0]
+    assert removed["protocol"] == "mpp"
+    assert removed["reason"] == "ecosystem_evidence"
+    assert removed["evidence"]["route_pressure"] == pressure[0]["capacity_ratio"]
+
+
+def test_consecutive_run_rounds_escalate_rebalance_infeasibility_pressure():
+    config = SimulationConfig(
+        seed=32,
+        protocols=[Protocol.MPP, Protocol.ACP],
+        social_memory_strength=0.0,
+        max_active_ratio=1.0,
+    )
+    engine = SimulationEngine(config)
+    merchant = _merchant()
+    merchant.accepted_protocols = [Protocol.MPP, Protocol.ACP]
+    merchant.accepted_settlement_domains = [
+        BalanceDomain.BASE_USDC,
+        BalanceDomain.TEMPO_USD,
+    ]
+    merchant.working_capital_cents = 20_000
+    engine.merchants = [merchant]
+    engine.agents = [_agent("agent_001", trust={"mpp": 0.74, "acp": 0.74})]
+    engine.agents[0].budget = 0
+    for state in engine.protocol_state.values():
+        state.reliability = 0.96
+        state.network_effect = 0.55
+        state.operator_margin_cents = 0
+
+    engine.economy = StablecoinEconomy(
+        agents=engine.agents,
+        merchants=[merchant],
+        protocols=config.protocols,
+        rng=engine.rng,
+    )
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.BASE_USDC,
+    ).available_cents = 0
+    engine.economy._get_or_create_bucket(
+        AgentRole.MERCHANT,
+        merchant.merchant_id,
+        BalanceDomain.TEMPO_USD,
+    ).available_cents = 12_000
+
+    first = asyncio.run(engine.run_round(4))
+    second = asyncio.run(engine.run_round(5))
+
+    first_pressure = [
+        entry
+        for entry in first.route_pressure
+        if entry.get("reason") == "no_feasible_rebalance_route"
+    ][0]
+    second_pressure = [
+        entry
+        for entry in second.route_pressure
+        if entry.get("reason") == "no_feasible_rebalance_route"
+    ][0]
+
+    assert first_pressure["failure_count"] == 1
+    assert first_pressure["pressure_level"] == "elevated"
+    assert second_pressure["failure_count"] == 2
+    assert second_pressure["pressure_level"] == "critical"
+    assert second_pressure["usage_cents"] == first_pressure["usage_cents"] * 2
+    assert second_pressure["capacity_ratio"] > 1.0
+    assert [
+        entry["round"]
+        for entry in engine.route_pressure_log
+        if entry.get("reason") == "no_feasible_rebalance_route"
+    ] == [4, 5]
+
+
 def test_market_evolution_adopts_protocol_that_can_rebalance_surplus_source():
     config = SimulationConfig(
         seed=28,

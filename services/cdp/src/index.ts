@@ -8,6 +8,10 @@ import {
   type SendTransactionOptions,
 } from "./sendTransaction.js";
 import {
+  SignTypedDataRequestError,
+  normalizeSignTypedDataRequest,
+} from "./signTypedData.js";
+import {
   BASE_SEPOLIA_USDC,
   amountUnitsFromRequest,
   encodeErc20Transfer,
@@ -18,14 +22,6 @@ import {
 } from "./treasury.js";
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3030;
-
-type SignTypedDataRequest = {
-  address: `0x${string}`;
-  domain: Record<string, unknown>;
-  types: Record<string, unknown>;
-  primaryType: string;
-  message: Record<string, unknown>;
-};
 
 type KeyFile = {
   id?: string;
@@ -261,23 +257,14 @@ app.post("/evm/sign-message", async (req: Request, res: Response) => {
 
 app.post("/evm/sign-typed-data", async (req: Request, res: Response) => {
   try {
-    const { address, domain, types, primaryType, message } = req.body ?? {};
-    if (!address || !domain || !types || !primaryType || !message) {
-      res.status(400).json({
-        error: "address, domain, types, primaryType, and message are required",
-      });
-      return;
-    }
-    const typedDataRequest: SignTypedDataRequest = {
-      address,
-      domain,
-      types,
-      primaryType,
-      message,
-    };
+    const typedDataRequest = normalizeSignTypedDataRequest(req.body);
     const result = await cdp.evm.signTypedData(typedDataRequest);
     res.json(result);
   } catch (error) {
+    if (error instanceof SignTypedDataRequestError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String((error as Error)?.message || error) });
   }
 });

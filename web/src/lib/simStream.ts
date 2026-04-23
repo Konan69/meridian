@@ -302,22 +302,27 @@ export function normalizeRoutePressureSummaries(value: unknown): RoutePressureSu
   return entries.flatMap(([fallbackRouteId, item]) => {
     const routeId = textFrom(item.route_id) ?? textFrom(item.route) ?? fallbackRouteId;
     if (!routeId) return [];
+    const protocols = Array.isArray(item.protocols) ? item.protocols : item.accepted_protocols;
 
     return [{
       route_id: routeId,
       source_domain: textFrom(item.source_domain) ?? 'unknown',
       target_domain: textFrom(item.target_domain) ?? 'unknown',
       primitive: textFrom(item.primitive) ?? 'unknown',
-      protocols: Array.isArray(item.protocols)
-        ? item.protocols.flatMap((rawProtocol) => {
+      protocols: Array.isArray(protocols)
+        ? protocols.flatMap((rawProtocol) => {
           const protocol = textFrom(rawProtocol);
           return protocol ? [protocol] : [];
         })
         : [],
-      total_usage_cents: wholeNumberFrom(item.total_usage_cents) ?? 0,
-      max_capacity_ratio: numberFrom(item.max_capacity_ratio) ?? 0,
-      pressure_rounds: wholeNumberFrom(item.pressure_rounds) ?? 0,
-      last_pressure_level: textFrom(item.last_pressure_level) ?? 'unknown',
+      total_usage_cents: wholeNumberFrom(item.total_usage_cents, item.usage_cents) ?? 0,
+      max_capacity_ratio: numberFrom(item.max_capacity_ratio, item.capacity_ratio) ?? 0,
+      pressure_rounds: wholeNumberFrom(item.pressure_rounds, item.failure_count) ?? 0,
+      last_pressure_level: textFrom(item.last_pressure_level) ?? textFrom(item.pressure_level) ?? 'unknown',
+      reason: nullableText(item.reason),
+      merchant_id: nullableText(item.merchant_id),
+      merchant: nullableText(item.merchant),
+      failure_count: wholeNumberFrom(item.failure_count) ?? undefined,
     }];
   });
 }

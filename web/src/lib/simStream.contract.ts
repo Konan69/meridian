@@ -193,6 +193,39 @@ const keyedSummaryEvent = {
   },
 } satisfies SimEvent;
 
+const treasuryFailureEvidenceEvent = {
+  type: 'simulation_complete',
+  route_pressure_summary: [{
+    route_id: 'treasury_rebalance_unroutable:tempo_usd->base_usdc',
+    source_domain: 'tempo_usd',
+    target_domain: 'base_usdc',
+    primitive: 'treasury_rebalance',
+    accepted_protocols: ['mpp'],
+    usage_cents: '36000',
+    capacity_ratio: '1.06',
+    pressure_level: 'critical',
+    reason: 'no_feasible_rebalance_route',
+    merchant_id: 'merchant_test',
+    merchant: 'Merchant Test',
+    failure_count: '2',
+  }],
+  world_events: [{
+    round_num: 4,
+    event_type: 'treasury_rebalance_failed',
+    summary: 'Merchant Test could not find a feasible treasury route.',
+    actor_id: 'merchant_test',
+    data: {
+      merchant_id: 'merchant_test',
+      merchant: 'Merchant Test',
+      amount_cents: '12000',
+      source_domain: 'tempo_usd',
+      target_domain: 'base_usdc',
+      accepted_protocols: ['mpp'],
+      error: 'no_feasible_rebalance_route',
+    },
+  }],
+} satisfies SimEvent;
+
 const merchantSwitchEvent = {
   type: 'merchant_switch',
   merchant_id: 'merchant_1',
@@ -246,6 +279,8 @@ const mixedRouteUsage = normalizeNumberRecord(mixedShapeObservabilityEvent.route
 const mixedRailPnlHistory = normalizeNumberArrayRecord(mixedShapeObservabilityEvent.rail_pnl_history);
 const keyedRoutePressure = normalizeRoutePressureSummaries(keyedSummaryEvent.route_pressure_summary);
 const keyedTreasuryPosture = normalizeTreasuryPostureSummaries(keyedSummaryEvent.treasury_posture_summary);
+const treasuryUnroutablePressure = normalizeRoutePressureSummaries(treasuryFailureEvidenceEvent.route_pressure_summary);
+const treasuryFailureWorldEvents: EconomyWorldEvent[] = normalizeWorldEvents(treasuryFailureEvidenceEvent.world_events) ?? [];
 const economyObservabilityState: EconomyObservabilityStoreFields = {
   metrics: simState.metrics,
   ecosystem: simState.ecosystem,
@@ -323,6 +358,18 @@ export const streamNormalizationContract = {
     mixedRailLossSnapshot: mixedRailPnlHistory.x402?.slice(-1)[0],
     keyedRoutePressureId: keyedRoutePressure[0]?.route_id,
     keyedTreasuryMerchantId: keyedTreasuryPosture[0]?.merchant_id,
+    treasuryFailureType: treasuryFailureWorldEvents[0]?.event_type,
+    treasuryFailureError: treasuryFailureWorldEvents[0]?.data?.error,
+    treasuryFailureAcceptedProtocol: Array.isArray(treasuryFailureWorldEvents[0]?.data?.accepted_protocols)
+      ? treasuryFailureWorldEvents[0]?.data?.accepted_protocols[0]
+      : undefined,
+    unroutableRouteId: treasuryUnroutablePressure[0]?.route_id,
+    unroutableUsageCents: treasuryUnroutablePressure[0]?.total_usage_cents,
+    unroutableCapacityRatio: treasuryUnroutablePressure[0]?.max_capacity_ratio,
+    unroutablePressureLevel: treasuryUnroutablePressure[0]?.last_pressure_level,
+    unroutableReason: treasuryUnroutablePressure[0]?.reason,
+    unroutableFailureCount: treasuryUnroutablePressure[0]?.failure_count,
+    unroutableAcceptedProtocol: treasuryUnroutablePressure[0]?.protocols[0],
   }),
 };
 
@@ -343,6 +390,16 @@ type EconomyObservabilityContract = {
   mixedRailLossSnapshot?: unknown;
   keyedRoutePressureId?: unknown;
   keyedTreasuryMerchantId?: unknown;
+  treasuryFailureType?: unknown;
+  treasuryFailureError?: unknown;
+  treasuryFailureAcceptedProtocol?: unknown;
+  unroutableRouteId?: unknown;
+  unroutableUsageCents?: unknown;
+  unroutableCapacityRatio?: unknown;
+  unroutablePressureLevel?: unknown;
+  unroutableReason?: unknown;
+  unroutableFailureCount?: unknown;
+  unroutableAcceptedProtocol?: unknown;
 };
 
 function requireMemory(memory: AgentMemoryEvent | null): AgentMemoryEvent {
@@ -411,6 +468,36 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.keyedTreasuryMerchantId !== 'merchant_2') {
     throw new Error('economy observability contract failed keyed treasury posture summary');
+  }
+  if (contract.treasuryFailureType !== 'treasury_rebalance_failed') {
+    throw new Error('economy observability contract failed treasury rebalance failure event');
+  }
+  if (contract.treasuryFailureError !== 'no_feasible_rebalance_route') {
+    throw new Error('economy observability contract failed treasury rebalance failure evidence');
+  }
+  if (contract.treasuryFailureAcceptedProtocol !== 'mpp') {
+    throw new Error('economy observability contract failed treasury failure accepted protocols');
+  }
+  if (contract.unroutableRouteId !== 'treasury_rebalance_unroutable:tempo_usd->base_usdc') {
+    throw new Error('economy observability contract failed unroutable route id');
+  }
+  if (contract.unroutableUsageCents !== 36000) {
+    throw new Error('economy observability contract failed unroutable usage alias');
+  }
+  if (contract.unroutableCapacityRatio !== 1.06) {
+    throw new Error('economy observability contract failed unroutable capacity alias');
+  }
+  if (contract.unroutablePressureLevel !== 'critical') {
+    throw new Error('economy observability contract failed unroutable pressure alias');
+  }
+  if (contract.unroutableReason !== 'no_feasible_rebalance_route') {
+    throw new Error('economy observability contract failed unroutable reason evidence');
+  }
+  if (contract.unroutableFailureCount !== 2) {
+    throw new Error('economy observability contract failed unroutable failure count');
+  }
+  if (contract.unroutableAcceptedProtocol !== 'mpp') {
+    throw new Error('economy observability contract failed unroutable accepted protocol alias');
   }
   return contract;
 }

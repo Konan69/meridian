@@ -116,9 +116,12 @@ worktree before running the frozen install.
 Offline service protocol tests are benchmark tasks too. Read
 `service_offline_protocol_tests` for the aggregate result, then inspect
 `service_offline_cdp`, `service_offline_stripe`, `service_offline_atxp`, and
-`service_offline_ap2` for the exact credential-free helper tests that ran. The
-Node service tasks use the same frozen pnpm install and node_modules seeding
-metadata as build tasks; AP2 runs its pure Python unittest contract directly.
+`service_offline_ap2` for the exact credential-free helper tests that ran.
+Those traces list `trace_metadata.validation.covered_test_files`,
+`covered_helper_files`, and `coverage_points` so coverage gaps are visible
+without scraping command output. The Node service tasks use the same frozen pnpm
+install and node_modules seeding metadata as build tasks; AP2 runs its pure
+Python unittest contract directly.
 
 ## Optimization Target
 
