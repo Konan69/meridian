@@ -1,13 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { simState, type SimStep } from '$lib/stores/simulation.svelte';
-	import type {
-		AgentMemoryEvent,
-		BalanceSnapshot,
-		EconomyWorldEvent,
-		ProtoMetrics,
-		ProtocolEcosystem,
-	} from '$lib/stores/simulation.svelte';
+	import {
+		describeStreamEvent,
+		finalNdjsonLine,
+		normalizeAgentMemoryEvent,
+		normalizeAgentMemoryEvents,
+		normalizeBalanceSnapshots,
+		normalizeEcosystemSummary,
+		normalizeNestedNumberRecord,
+		normalizeNumberArrayRecord,
+		normalizeNumberRecord,
+		normalizeProtocolSummaries,
+		normalizeTimelineEvent,
+		normalizeTrustSummary,
+		normalizeWorldEvent,
+		normalizeWorldEvents,
+		numberFrom,
+		parseSimulationEvent,
+		splitNdjsonChunk,
+	} from '$lib/simStream';
 	import StepIndicator from '$lib/components/StepIndicator.svelte';
 	import GraphPanel from '$lib/components/GraphPanel.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
@@ -339,95 +351,119 @@
 			});
 
 			const reader = res.body?.getReader();
+			if (!res.ok || !reader) {
+				throw new Error(`Simulation stream failed: ${res.status}`);
+			}
 			const dec = new TextDecoder();
 			let buf = '';
+			let skippedStreamLines = 0;
+
+			const processStreamLine = (line: string) => {
+				const parsed = parseSimulationEvent(line);
+				if (!parsed.ok) {
+					skippedStreamLines += 1;
+					return;
+				}
+
+				const ev = normalizeTimelineEvent(parsed.event);
+				simState.events = [...simState.events.slice(-499), ev];
+				const description = describeStreamEvent(ev);
+				simState.addLog(description ? `[${ev.type}] ${description}` : `[${ev.type}]`);
+
+				const memory = normalizeAgentMemoryEvent(ev);
+				if (memory) {
+					simState.agentMemories = [
+						...simState.agentMemories.slice(-199),
+						memory,
+					];
+				}
+
+				const worldEvent = normalizeWorldEvent(ev);
+				if (worldEvent) {
+					simState.worldEvents = [
+						...simState.worldEvents.slice(-199),
+						worldEvent,
+					];
+				}
+
+				if (ev.type === 'trust_snapshot') {
+					simState.trustSummary = normalizeTrustSummary(ev.trust_summary);
+				}
+
+				if (ev.type === 'simulation_complete') {
+					const completeMemories = normalizeAgentMemoryEvents(ev.agent_memory_log);
+					const completeWorldEvents = normalizeWorldEvents(ev.world_events);
+
+					simState.complete = true;
+					simState.elapsed = `${numberFrom(ev.duration_seconds) ?? 0}s`;
+					simState.totalTxns = numberFrom(ev.total_transactions) ?? 0;
+					simState.totalVolume = numberFrom(ev.total_volume_cents) ?? 0;
+					simState.metrics = normalizeProtocolSummaries(ev.protocol_summaries);
+					simState.ecosystem = normalizeEcosystemSummary(ev.ecosystem_summary);
+					simState.balances = normalizeBalanceSnapshots(ev.balances);
+					simState.routeUsage = normalizeNumberRecord(ev.route_usage_summary);
+					simState.floatSummary = normalizeNumberRecord(ev.float_summary);
+					simState.treasuryDistribution = normalizeNestedNumberRecord(ev.treasury_distribution);
+					simState.railPnlHistory = normalizeNumberArrayRecord(ev.rail_pnl_history);
+					simState.trustSummary = normalizeTrustSummary(ev.trust_summary);
+					simState.agentMemories = completeMemories ?? simState.agentMemories;
+					simState.worldEvents = completeWorldEvents ?? simState.worldEvents;
+
+					// Add transaction edges to graph
+					const txEdges = simState.purchases
+						.slice(0, 20)
+						.flatMap((purchase) => {
+							const p = purchase as PurchaseLike;
+							if (
+								typeof p.agent !== 'string' ||
+								typeof p.protocol !== 'string' ||
+								typeof p.amount_cents !== 'number'
+							) {
+								return [];
+							}
+							const target =
+								typeof p.merchant === 'string'
+									? p.merchant
+									: `merchant_${p.protocol}`;
+							return [{
+								source: p.agent,
+								target,
+								label: `${p.protocol} ${fmt(p.amount_cents)}`,
+							}];
+						});
+					const merchantNodes = Array.from(
+						new Set(
+							simState.purchases
+								.map((p) => p.merchant)
+								.filter((merchant): merchant is string => Boolean(merchant))
+						)
+					).map((merchant) => ({
+						id: merchant,
+						name: merchant,
+						type: 'Merchant',
+					}));
+					simState.graphNodes = [...simState.graphNodes, ...merchantNodes];
+					simState.graphEdges = [...simState.graphEdges, ...txEdges];
+				}
+			};
 
 			while (reader) {
 				const { done, value } = await reader.read();
 				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				const lines = buf.split('\n');
-				buf = lines.pop() || '';
+				const chunk = splitNdjsonChunk(buf, dec.decode(value, { stream: true }));
+				buf = chunk.buffer;
+				chunk.lines.forEach(processStreamLine);
+			}
 
-				for (const l of lines) {
-					if (!l.trim()) continue;
-					try {
-						const ev = JSON.parse(l);
-						simState.events = [...simState.events.slice(-499), ev];
-						simState.addLog(`[${ev.type}] ${ev.agent || ''} ${ev.product || ''} ${ev.protocol || ''}`);
-
-						if (ev.type === 'agent_memory') {
-							simState.agentMemories = [
-								...simState.agentMemories.slice(-199),
-								ev as AgentMemoryEvent,
-							];
-						}
-						if (ev.type === 'world_event') {
-							simState.worldEvents = [
-								...simState.worldEvents.slice(-199),
-								{ ...ev, round_num: Number(ev.round_num ?? ev.round ?? 0) } as EconomyWorldEvent,
-							];
-						}
-						if (ev.type === 'trust_snapshot') {
-							simState.trustSummary = (ev.trust_summary as Record<string, { avg: number; min: number; max: number }>) ?? {};
-						}
-
-						if (ev.type === 'simulation_complete') {
-							simState.complete = true;
-							simState.elapsed = `${ev.duration_seconds}s`;
-							simState.totalTxns = ev.total_transactions;
-							simState.totalVolume = ev.total_volume_cents;
-							simState.metrics = Object.values(
-								(ev.protocol_summaries as Record<string, ProtoMetrics>) ?? {}
-							).sort((a, b) => a.avg_settlement_ms - b.avg_settlement_ms);
-							simState.ecosystem = (ev.ecosystem_summary as Record<string, ProtocolEcosystem>) ?? {};
-							simState.balances = (ev.balances as BalanceSnapshot[]) ?? [];
-							simState.routeUsage = (ev.route_usage_summary as Record<string, number>) ?? {};
-							simState.floatSummary = (ev.float_summary as Record<string, number>) ?? {};
-							simState.treasuryDistribution = (ev.treasury_distribution as Record<string, Record<string, number>>) ?? {};
-							simState.railPnlHistory = (ev.rail_pnl_history as Record<string, number[]>) ?? {};
-							simState.trustSummary = (ev.trust_summary as Record<string, { avg: number; min: number; max: number }>) ?? {};
-							simState.agentMemories = (ev.agent_memory_log as AgentMemoryEvent[]) ?? simState.agentMemories;
-							simState.worldEvents = (ev.world_events as EconomyWorldEvent[]) ?? simState.worldEvents;
-
-							// Add transaction edges to graph
-							const txEdges = simState.purchases
-								.slice(0, 20)
-								.flatMap((purchase) => {
-									const p = purchase as PurchaseLike;
-									if (
-										typeof p.agent !== 'string' ||
-										typeof p.protocol !== 'string' ||
-										typeof p.amount_cents !== 'number'
-									) {
-										return [];
-									}
-									const target =
-										typeof p.merchant === 'string'
-											? p.merchant
-											: `merchant_${p.protocol}`;
-									return [{
-										source: p.agent,
-										target,
-										label: `${p.protocol} ${fmt(p.amount_cents)}`,
-									}];
-								});
-							const merchantNodes = Array.from(
-								new Set(
-									simState.purchases
-										.map((p) => p.merchant)
-										.filter((merchant): merchant is string => Boolean(merchant))
-								)
-							).map((merchant) => ({
-								id: merchant,
-								name: merchant,
-								type: 'Merchant',
-							}));
-							simState.graphNodes = [...simState.graphNodes, ...merchantNodes];
-							simState.graphEdges = [...simState.graphEdges, ...txEdges];
-						}
-					} catch { /* skip */ }
-				}
+			const trailing = splitNdjsonChunk(buf, dec.decode());
+			buf = trailing.buffer;
+			trailing.lines.forEach(processStreamLine);
+			const finalLine = finalNdjsonLine(buf);
+			if (finalLine) {
+				processStreamLine(finalLine);
+			}
+			if (skippedStreamLines > 0) {
+				simState.addLog(`Skipped ${skippedStreamLines} malformed stream event${skippedStreamLines === 1 ? '' : 's'}.`, 'warn');
 			}
 		} catch (e) {
 			simState.addLog(`Error: ${e}`, 'error');
