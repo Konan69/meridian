@@ -206,10 +206,10 @@ const treasuryFailureEvidenceEvent = {
     target_domain: 'base_usdc',
     primitive: 'treasury_rebalance',
     accepted_protocols: ['mpp'],
-    usage_cents: '36000',
+    amount_cents: '36000',
     capacity_ratio: '1.06',
     pressure_level: 'critical',
-    reason: 'no_feasible_rebalance_route',
+    error: 'no_feasible_rebalance_route',
     merchant_id: 'merchant_test',
     merchant: 'Merchant Test',
     failure_count: '2',
@@ -435,6 +435,8 @@ export const streamNormalizationContract = {
     firstLabel: formatRoutePressureLabel(routePressureDisplayRows[0]?.reason ?? ''),
     firstDomains: routePressureDisplayRows[0]?.domains,
     firstProtocol: routePressureDisplayRows[0]?.protocols[0],
+    firstFundingContext: routePressureDisplayRows[0]?.fundingContext,
+    firstTreasuryNoRoute: routePressureDisplayRows[0]?.isTreasuryNoRoute,
     noRouteRoutes: noRoutePressureRows.map((row) => row.route),
     noRouteReasons: noRoutePressureRows.map((row) => row.reason),
   }),
@@ -475,6 +477,8 @@ type RoutePressureDisplayContract = {
   firstLabel: string;
   firstDomains?: unknown;
   firstProtocol?: unknown;
+  firstFundingContext?: unknown;
+  firstTreasuryNoRoute?: unknown;
   noRouteRoutes: string[];
   noRouteReasons: (string | null)[];
 };
@@ -594,6 +598,12 @@ function requireRoutePressureDisplayContract(contract: RoutePressureDisplayContr
   }
   if (contract.firstProtocol !== 'mpp') {
     throw new Error('route pressure display contract failed protocol label');
+  }
+  if (contract.firstTreasuryNoRoute !== true) {
+    throw new Error('route pressure display contract failed treasury no-route flag');
+  }
+  if (contract.firstFundingContext !== 'treasury rebalance · 12000 cents · tempo_usd to base_usdc · via mpp · 2 failed · Merchant Test') {
+    throw new Error('route pressure display contract failed funding context');
   }
   if (!contract.noRouteRoutes.includes('treasury_rebalance_unroutable:tempo_usd->base_usdc')) {
     throw new Error('route pressure display contract dropped no-route treasury evidence');

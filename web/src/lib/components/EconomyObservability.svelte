@@ -372,6 +372,9 @@
 								<span>{row.merchant}</span>
 							{/if}
 						</div>
+						{#if row.fundingContext}
+							<div class="funding-context">{row.fundingContext}</div>
+						{/if}
 						<div class="pressure-chips">
 							<span class={`pressure-chip ${pressureClass(row.level, row.reason)}`}>{formatLabel(row.level)}</span>
 							{#if row.reason}
@@ -637,6 +640,15 @@
 		color: var(--tx-3);
 		font-family: var(--mono);
 		font-size: 10px;
+	}
+
+	.funding-context {
+		margin: -2px 0 7px;
+		color: var(--tx-2);
+		font-family: var(--mono);
+		font-size: 10px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
 	}
 
 	.pressure-critical {

@@ -118,6 +118,10 @@ def pnpm_cached_install_command(after_install: str) -> str:
     )
 
 
+def pnpm_install_phase_command() -> str:
+    return pnpm_cached_install_command(":")
+
+
 PNPM_DEPENDENCY_FIELDS = (
     "dependencies",
     "devDependencies",
@@ -354,15 +358,25 @@ def pnpm_trace_metadata(
     package_root: Path,
     validation_commands: list[str],
     node_modules_seed: dict[str, Any] | None = None,
+    phase_tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    validation: dict[str, Any] = {
+        "kind": "pnpm_frozen_build_pipeline",
+        "package_root": rel(root, package_root),
+        "required_phases": ["install", *validation_commands],
+        "install_command": "pnpm install --store-dir $PNPM_STORE_DIR --frozen-lockfile --prefer-offline --ignore-scripts",
+        "validation_commands": validation_commands,
+        "cache_note": "The shared pnpm store may change elapsed time, but the install and validation commands still run.",
+    }
+    if phase_tasks is not None:
+        validation["manual_phase_tasks"] = phase_tasks
+        validation["phase_debug_note"] = (
+            "Default profiles keep the combined command. Use these task ids manually "
+            "to isolate install, Svelte check, or Vite build diagnostics."
+        )
     return {
         "validation": {
-            "kind": "pnpm_frozen_build_pipeline",
-            "package_root": rel(root, package_root),
-            "required_phases": ["install", *validation_commands],
-            "install_command": "pnpm install --store-dir $PNPM_STORE_DIR --frozen-lockfile --prefer-offline --ignore-scripts",
-            "validation_commands": validation_commands,
-            "cache_note": "The shared pnpm store may change elapsed time, but the install and validation commands still run.",
+            **validation,
         },
         "cache": {
             "kind": "pnpm_store",
@@ -1086,6 +1100,40 @@ SERVICE_OFFLINE_TARGETS = {
     "atxp": 35,
 }
 
+WEB_PHASE_TASKS = {
+    "web_install": {
+        "phase": "install",
+        "command": "pnpm install --store-dir $PNPM_STORE_DIR --frozen-lockfile --prefer-offline --ignore-scripts",
+        "target_seconds": 12,
+        "log_anchors": ["Lockfile is up to date", "Already up to date", "Done in"],
+    },
+    "web_check": {
+        "phase": "svelte_check",
+        "command": "pnpm run check",
+        "target_seconds": 35,
+        "log_anchors": ["svelte-check", "found 0 errors"],
+    },
+    "web_build": {
+        "phase": "vite_build",
+        "command": "pnpm run build",
+        "target_seconds": 45,
+        "log_anchors": ["vite build", "built in", "Using @sveltejs/adapter-auto"],
+    },
+}
+
+
+def web_phase_task_list() -> list[dict[str, Any]]:
+    return [
+        {
+            "task_id": task_id,
+            "phase": metadata["phase"],
+            "command": metadata["command"],
+            "target_seconds": metadata["target_seconds"],
+            "log_anchors": metadata["log_anchors"],
+        }
+        for task_id, metadata in WEB_PHASE_TASKS.items()
+    ]
+
 
 def run_service_build_task(root: Path, service: str) -> tuple[float, dict[str, Any]]:
     target_seconds = SERVICE_BUILD_TARGETS[service]
@@ -1240,7 +1288,45 @@ def task_web_check(root: Path) -> float:
             package_root,
             ["pnpm run check", "pnpm run build"],
             node_modules_seed,
+            web_phase_task_list(),
         ),
+    )
+
+
+def task_web_phase(root: Path, task_id: str) -> float:
+    package_root = root / "web"
+    phase = WEB_PHASE_TASKS[task_id]
+    node_modules_seed = seed_node_modules(root, package_root)
+    validation_commands = [] if task_id == "web_install" else [phase["command"]]
+    command = (
+        pnpm_install_phase_command()
+        if task_id == "web_install"
+        else pnpm_cached_install_command(phase["command"])
+    )
+    return run_command(
+        root,
+        task_id,
+        command,
+        cwd=package_root,
+        timeout=120,
+        target_seconds=phase["target_seconds"],
+        trace_metadata=pnpm_trace_metadata(
+            root,
+            package_root,
+            validation_commands,
+            node_modules_seed,
+            web_phase_task_list(),
+        )
+        | {
+            "phase": {
+                "kind": "web_validation_phase",
+                "parent_task_id": "web_check_build",
+                "phase": phase["phase"],
+                "log_anchors": phase["log_anchors"],
+                "default_profile": False,
+                "gate_profile": False,
+            }
+        },
     )
 
 
@@ -1275,6 +1361,9 @@ def task_runners() -> dict[str, Any]:
         "service_offline_atxp": lambda root: task_service_offline_component(root, "atxp"),
         "service_offline_ap2": lambda root: task_service_offline_component(root, "ap2"),
         "service_offline_protocol_tests": task_service_offline_protocol_tests,
+        "web_install": lambda root: task_web_phase(root, "web_install"),
+        "web_check": lambda root: task_web_phase(root, "web_check"),
+        "web_build": lambda root: task_web_phase(root, "web_build"),
         "web_check_build": task_web_check,
     }
 

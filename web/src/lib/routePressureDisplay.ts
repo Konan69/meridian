@@ -7,10 +7,13 @@ export interface RoutePressureDisplayRow {
 	pressureRounds: number;
 	level: string;
 	reason: string | null;
+	primitive: string;
 	failureCount: number | null;
 	merchant: string | null;
 	domains: string;
 	protocols: string[];
+	isTreasuryNoRoute: boolean;
+	fundingContext: string | null;
 }
 
 const NO_FEASIBLE_REBALANCE_ROUTE = 'no_feasible_rebalance_route';
@@ -23,25 +26,36 @@ export function buildRoutePressureRows(summaries: RoutePressureSummary[]): Route
 
 			const source = textFrom(summary.source_domain) ?? 'unknown';
 			const target = textFrom(summary.target_domain) ?? 'unknown';
+			const primitive = textFrom(summary.primitive) ?? 'unknown';
+			const reason = textFrom(summary.reason, summary.error);
 			const failureCount = numberFrom(summary.failure_count);
+			const usageCents = nonNegativeNumber(summary.total_usage_cents);
+			const protocols = Array.isArray(summary.protocols)
+				? summary.protocols.flatMap((protocol) => {
+					const label = textFrom(protocol);
+					return label ? [label] : [];
+				})
+				: [];
+			const isTreasuryNoRoute = primitive === 'treasury_rebalance'
+				&& reason === NO_FEASIBLE_REBALANCE_ROUTE;
 
-			return {
+			const row = {
 				route,
-				usageCents: nonNegativeNumber(summary.total_usage_cents),
+				usageCents,
 				capacityRatio: nonNegativeNumber(summary.max_capacity_ratio),
 				pressureRounds: wholeNonNegative(summary.pressure_rounds),
 				level: textFrom(summary.last_pressure_level) ?? 'unknown',
-				reason: textFrom(summary.reason),
+				reason,
+				primitive,
 				failureCount: failureCount == null ? null : wholeNonNegative(failureCount),
 				merchant: textFrom(summary.merchant, summary.merchant_id),
 				domains: `${source} to ${target}`,
-				protocols: Array.isArray(summary.protocols)
-					? summary.protocols.flatMap((protocol) => {
-						const label = textFrom(protocol);
-						return label ? [label] : [];
-					})
-					: [],
+				protocols,
+				isTreasuryNoRoute,
+				fundingContext: null as string | null,
 			};
+			row.fundingContext = fundingContext(row);
+			return row;
 		})
 		.filter((row): row is RoutePressureDisplayRow => row != null)
 		.sort((a, b) => {
@@ -68,6 +82,19 @@ export function buildNoRoutePressureRows(
 
 export function formatRoutePressureLabel(value: string) {
 	return value.replaceAll('_', ' ');
+}
+
+function fundingContext(row: Omit<RoutePressureDisplayRow, 'fundingContext'>): string | null {
+	if (!row.isTreasuryNoRoute && (row.failureCount ?? 0) <= 0) return null;
+	const parts = [
+		row.primitive === 'treasury_rebalance' ? 'treasury rebalance' : formatRoutePressureLabel(row.primitive),
+		row.usageCents > 0 ? `${row.usageCents} cents` : null,
+		row.domains,
+		row.protocols.length > 0 ? `via ${row.protocols.join(', ')}` : null,
+		row.failureCount != null ? `${row.failureCount} failed` : null,
+		row.merchant,
+	];
+	return parts.filter((part): part is string => typeof part === 'string' && part.length > 0).join(' · ');
 }
 
 function textFrom(...values: unknown[]) {

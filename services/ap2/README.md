@@ -31,3 +31,11 @@ uv run meridian-ap2-service
 
 The service returns AP2 `IntentMandate`, `CartMandate`, `PaymentMandate`, and
 `PaymentReceipt` objects using the official AP2 types package.
+
+## Offline Contract Tests
+
+`tests/test_contracts.py` keeps a credential-free settlement contract around the
+fields the service depends on before it creates a receipt. It checks that the
+actor, merchant, top-level amount, cart total, payment total, and nested payment
+merchant fields agree without starting the FastAPI app or calling a payment
+provider.

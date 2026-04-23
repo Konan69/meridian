@@ -32,6 +32,17 @@ export function makeRequestValidator(makeError: RequestErrorFactory) {
       return value as JsonRecord;
     },
 
+    ownValue(record: JsonRecord, key: string, name: string): unknown {
+      if (!Object.hasOwn(record, key)) {
+        throw makeError(`${name} is required`);
+      }
+      return record[key];
+    },
+
+    optionalOwnValue(record: JsonRecord, key: string): unknown {
+      return Object.hasOwn(record, key) ? record[key] : undefined;
+    },
+
     requiredAddress(value: unknown, name: string): `0x${string}` {
       const address = typeof value === "string" ? value.trim() : "";
       if (!isHexAddress(address)) {

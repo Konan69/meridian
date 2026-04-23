@@ -315,11 +315,12 @@ export function normalizeRoutePressureSummaries(value: unknown): RoutePressureSu
           return protocol ? [protocol] : [];
         })
         : [],
-      total_usage_cents: wholeNumberFrom(item.total_usage_cents, item.usage_cents) ?? 0,
+      total_usage_cents: wholeNumberFrom(item.total_usage_cents, item.usage_cents, item.amount_cents) ?? 0,
       max_capacity_ratio: numberFrom(item.max_capacity_ratio, item.capacity_ratio) ?? 0,
       pressure_rounds: wholeNumberFrom(item.pressure_rounds, item.failure_count) ?? 0,
       last_pressure_level: textFrom(item.last_pressure_level) ?? textFrom(item.pressure_level) ?? 'unknown',
-      reason: nullableText(item.reason),
+      reason: nullableText(item.reason) ?? nullableText(item.error),
+      error: nullableText(item.error),
       merchant_id: nullableText(item.merchant_id),
       merchant: nullableText(item.merchant),
       failure_count: wholeNumberFrom(item.failure_count) ?? undefined,

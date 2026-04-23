@@ -12,7 +12,7 @@ export class SignMessageRequestError extends Error {
   }
 }
 
-const { asRecord, requiredAddress, requiredNonEmptyString } = makeRequestValidator(
+const { asRecord, ownValue, requiredAddress, requiredNonEmptyString } = makeRequestValidator(
   (message) => new SignMessageRequestError(message),
 );
 
@@ -20,8 +20,8 @@ export function normalizeSignMessageRequest(body: unknown): SignMessageOptions {
   const record = asRecord(body, "request body");
 
   return {
-    address: requiredAddress(record.address, "address"),
-    message: requiredNonEmptyString(record.message, "message", {
+    address: requiredAddress(ownValue(record, "address", "address"), "address"),
+    message: requiredNonEmptyString(ownValue(record, "message", "message"), "message", {
       preserveWhitespace: true,
     }),
   };

@@ -23,7 +23,7 @@ export class SendTransactionRequestError extends Error {
   }
 }
 
-const { asRecord, requiredAddress } = makeRequestValidator(
+const { asRecord, ownValue, optionalOwnValue, requiredAddress } = makeRequestValidator(
   (message) => new SendTransactionRequestError(message),
 );
 
@@ -90,25 +90,25 @@ function optionalNonce(value: unknown): number | undefined {
 
 export function normalizeSendTransactionRequest(body: unknown): SendTransactionOptions {
   const record = asRecord(body, "request body");
-  const transaction = asRecord(record.transaction, "transaction");
+  const transaction = asRecord(ownValue(record, "transaction", "transaction"), "transaction");
 
   return {
-    address: requiredAddress(record.address, "address"),
-    network: normalizeNetwork(record.network),
+    address: requiredAddress(ownValue(record, "address", "address"), "address"),
+    network: normalizeNetwork(ownValue(record, "network", "network")),
     transaction: {
-      to: requiredAddress(transaction.to, "transaction.to"),
-      data: optionalHexData(transaction.data),
-      value: unsignedBigInt(transaction.value ?? "0", "transaction.value"),
-      gas: optionalUnsignedBigInt(transaction.gas, "transaction.gas"),
+      to: requiredAddress(ownValue(transaction, "to", "transaction.to"), "transaction.to"),
+      data: optionalHexData(optionalOwnValue(transaction, "data")),
+      value: unsignedBigInt(optionalOwnValue(transaction, "value") ?? "0", "transaction.value"),
+      gas: optionalUnsignedBigInt(optionalOwnValue(transaction, "gas"), "transaction.gas"),
       maxFeePerGas: optionalUnsignedBigInt(
-        transaction.maxFeePerGas,
+        optionalOwnValue(transaction, "maxFeePerGas"),
         "transaction.maxFeePerGas",
       ),
       maxPriorityFeePerGas: optionalUnsignedBigInt(
-        transaction.maxPriorityFeePerGas,
+        optionalOwnValue(transaction, "maxPriorityFeePerGas"),
         "transaction.maxPriorityFeePerGas",
       ),
-      nonce: optionalNonce(transaction.nonce),
+      nonce: optionalNonce(optionalOwnValue(transaction, "nonce")),
     },
   };
 }

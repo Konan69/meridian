@@ -427,6 +427,7 @@
 						</div>
 						<div class="pressure-meta">
 							<span>{compactLabel(row.domains, 28)}</span>
+							<span>{fmtDollars(row.usageCents)}</span>
 							<span>{row.pressureRounds}r</span>
 							{#if row.failureCount != null}
 								<span>{row.failureCount} fail</span>
@@ -435,8 +436,13 @@
 								<span>{compactLabel(row.merchant, 20)}</span>
 							{/if}
 						</div>
+						{#if row.fundingContext}
+							<div class="pressure-funding-context">{row.fundingContext}</div>
+						{/if}
 						<div class="pressure-tags">
-							<span class="pressure-tag pressure-critical">{formatLabel('no_feasible_rebalance_route')}</span>
+							{#if row.reason}
+								<span class="pressure-tag pressure-critical">{formatLabel(row.reason)}</span>
+							{/if}
 							{#each row.protocols.slice(0, 3) as protocol}
 								<span class="pressure-tag" style={`border-color:${color(protocol)}; color:${color(protocol)}`}>
 									{protocol.toUpperCase()}
@@ -536,6 +542,15 @@
 	.pressure-tags {
 		flex-wrap: wrap;
 		margin-top: 7px;
+	}
+
+	.pressure-funding-context {
+		margin-top: 5px;
+		color: var(--tx-2);
+		font-family: var(--mono);
+		font-size: 10px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
 	}
 
 	.pressure-tag {

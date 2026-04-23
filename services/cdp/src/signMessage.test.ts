@@ -61,3 +61,25 @@ test("CDP sign-message normalizer rejects ambiguous message fields", () => {
     /address must be an EVM address/,
   );
 });
+
+test("CDP sign-message normalizer requires own request fields", () => {
+  const inheritedMessage = Object.create({ address, message: "hello" });
+  assert.throws(
+    () => normalizeSignMessageRequest(inheritedMessage),
+    /address is required/,
+  );
+
+  const inheritedAddress = Object.create({ address });
+  inheritedAddress.message = "hello";
+  assert.throws(
+    () => normalizeSignMessageRequest(inheritedAddress),
+    /address is required/,
+  );
+
+  const ownAddressInheritedMessage = Object.create({ message: "hello" });
+  ownAddressInheritedMessage.address = address;
+  assert.throws(
+    () => normalizeSignMessageRequest(ownAddressInheritedMessage),
+    /message is required/,
+  );
+});

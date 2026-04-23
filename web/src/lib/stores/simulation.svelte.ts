@@ -111,6 +111,7 @@ export interface RoutePressureSummary {
   pressure_rounds: number;
   last_pressure_level: string;
   reason?: string | null;
+  error?: string | null;
   merchant_id?: string | null;
   merchant?: string | null;
   failure_count?: number;

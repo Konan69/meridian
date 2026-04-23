@@ -31,21 +31,17 @@ export class SignTypedDataRequestError extends Error {
   }
 }
 
-const { asRecord, requiredAddress, requiredNonEmptyString, optionalNonEmptyString } =
+const {
+  asRecord,
+  ownValue,
+  optionalOwnValue,
+  requiredAddress,
+  requiredNonEmptyString,
+  optionalNonEmptyString,
+} =
   makeRequestValidator(
     (message) => new SignTypedDataRequestError(message),
   );
-
-function ownValue(record: Record<string, unknown>, key: string, name: string): unknown {
-  if (!Object.hasOwn(record, key)) {
-    throw new SignTypedDataRequestError(`${name} is required`);
-  }
-  return record[key];
-}
-
-function optionalOwnValue(record: Record<string, unknown>, key: string): unknown {
-  return Object.hasOwn(record, key) ? record[key] : undefined;
-}
 
 function requiredExactNonEmptyString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {

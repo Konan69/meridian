@@ -89,3 +89,57 @@ test("CDP send-transaction normalizer rejects ambiguous transaction fields", () 
     /transaction.nonce must be a non-negative integer/,
   );
 });
+
+test("CDP send-transaction normalizer requires own request fields", () => {
+  const inheritedBody = Object.create({
+    address: from,
+    network: "base",
+    transaction: { to },
+  });
+  assert.throws(
+    () => normalizeSendTransactionRequest(inheritedBody),
+    /transaction is required/,
+  );
+
+  const inheritedAddress = Object.create({ address: from });
+  inheritedAddress.network = "base";
+  inheritedAddress.transaction = { to };
+  assert.throws(
+    () => normalizeSendTransactionRequest(inheritedAddress),
+    /address is required/,
+  );
+
+  const inheritedNetwork = Object.create({ network: "base" });
+  inheritedNetwork.address = from;
+  inheritedNetwork.transaction = { to };
+  assert.throws(
+    () => normalizeSendTransactionRequest(inheritedNetwork),
+    /network is required/,
+  );
+
+  const inheritedTransactionBody = Object.create({ transaction: { to } });
+  inheritedTransactionBody.address = from;
+  inheritedTransactionBody.network = "base";
+  assert.throws(
+    () => normalizeSendTransactionRequest(inheritedTransactionBody),
+    /transaction is required/,
+  );
+
+  const inheritedValueTransaction = Object.create({ value: "999" });
+  inheritedValueTransaction.to = to;
+  const options = normalizeSendTransactionRequest({
+    address: from,
+    network: "base",
+    transaction: inheritedValueTransaction,
+  });
+  assert.equal(options.transaction.value, 0n);
+  assert.throws(
+    () =>
+      normalizeSendTransactionRequest({
+        address: from,
+        network: "base",
+        transaction: Object.create({ to }),
+      }),
+    /transaction.to is required/,
+  );
+});
