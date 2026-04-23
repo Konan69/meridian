@@ -930,6 +930,7 @@ class SimulationEngine:
             + state.reliability * 0.35
             + state.network_effect * 0.30
             + workload_bonus
+            + self._protocol_self_sustainability_bias(merchant, amount, option)
             - fee_penalty * (0.85 + agent.price_sensitivity)
             - latency_penalty * (1.0 - agent.checkout_patience)
             - congestion_penalty
@@ -971,6 +972,47 @@ class SimulationEngine:
     def _margin_delta(self, protocol: Protocol, route_fee: int, protocol_fee: int) -> int:
         infra_cost = int(route_fee * 0.55 + protocol_fee * 0.25 + PROTOCOL_FIXED_COST_CENTS[protocol] * 0.01)
         return protocol_fee - infra_cost
+
+    def _protocol_self_sustainability_bias(
+        self,
+        merchant: MerchantProfile,
+        amount: int,
+        option: dict,
+    ) -> float:
+        protocol = option["protocol"]
+        state = self.protocol_state[protocol.value]
+        projected_margin = self._margin_delta(
+            protocol,
+            option["route_fee_cents"],
+            option["estimated_protocol_fee_cents"],
+        )
+        projected_margin_ratio = projected_margin / max(
+            amount,
+            PROTOCOL_FIXED_COST_CENTS[protocol],
+            1,
+        )
+        historical_margin_ratio = state.operator_margin_cents / max(
+            state.gross_volume_cents,
+            amount,
+            abs(state.operator_margin_cents),
+            1,
+        )
+        target_domain = option.get("target_domain", option["route"].target_domain)
+        treasury_fit = (
+            0.05
+            if target_domain == merchant.preferred_settlement_domain
+            else -0.035
+        )
+        route_pressure_penalty = max(0.0, option["capacity_ratio"] - 0.75) * 0.10
+        reliability_floor_penalty = max(0.0, 0.94 - state.reliability) * 0.08
+        bias = (
+            projected_margin_ratio * 0.30
+            + historical_margin_ratio * 0.16
+            + treasury_fit
+            - route_pressure_penalty
+            - reliability_floor_penalty
+        )
+        return max(-0.18, min(0.18, bias))
 
     def _record_protocol_economics(
         self,
@@ -1285,6 +1327,11 @@ class SimulationEngine:
             option = max(
                 options,
                 key=lambda candidate: (
+                    self._protocol_self_sustainability_bias(
+                        merchant,
+                        intent["amount_cents"],
+                        candidate,
+                    ),
                     self.protocol_state[candidate["protocol"].value].reliability,
                     -candidate["route_fee_cents"],
                     -candidate["estimated_protocol_fee_cents"],
