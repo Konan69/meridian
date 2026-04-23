@@ -377,6 +377,46 @@ def pnpm_trace_metadata(
     }
 
 
+def service_offline_node_trace_metadata(
+    root: Path,
+    package_root: Path,
+    service: str,
+    node_modules_seed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = pnpm_trace_metadata(
+        root,
+        package_root,
+        ["pnpm run test:offline"],
+        node_modules_seed,
+    )
+    metadata["validation"].update(
+        {
+            "kind": "service_offline_protocol_tests",
+            "service": service,
+            "offline": True,
+            "credential_free": True,
+            "protects": "Pure protocol helper contracts run without live provider credentials.",
+        }
+    )
+    return metadata
+
+
+def service_offline_python_trace_metadata(root: Path) -> dict[str, Any]:
+    return {
+        "validation": {
+            "kind": "service_offline_protocol_tests",
+            "service": "ap2",
+            "package_root": "services/ap2",
+            "offline": True,
+            "credential_free": True,
+            "validation_commands": [
+                "PYTHONPATH=src python3 -m unittest discover -s tests -q"
+            ],
+            "protects": "AP2 canonical credential and settlement helper contracts run without live credentials.",
+        }
+    }
+
+
 def cargo_trace_metadata(root: Path) -> dict[str, Any]:
     cache_root = shared_cache_root()
     return {
@@ -434,6 +474,20 @@ def service_builds_summary_trace_metadata(component_tasks: list[dict[str, Any]])
             "component_tasks": component_tasks,
             "score_formula": "sum(component_scores) / len(component_scores)",
             "note": "This synthetic summary runs no shell command; inspect component traces for cache, validation, and logs.",
+        }
+    }
+
+
+def service_offline_tests_summary_trace_metadata(
+    component_tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "aggregation": {
+            "kind": "mean_component_score",
+            "component_count": len(component_tasks),
+            "component_tasks": component_tasks,
+            "score_formula": "sum(component_scores) / len(component_scores)",
+            "note": "This synthetic summary runs no shell command; inspect component traces for offline protocol test logs and dependency cache details.",
         }
     }
 
@@ -852,6 +906,72 @@ def task_service_builds(root: Path) -> float:
     return score
 
 
+def task_service_offline_protocol_tests(root: Path) -> float:
+    scores = []
+    component_tasks = []
+    node_targets = [("cdp", 22), ("stripe", 22), ("atxp", 35)]
+    for service, target_seconds in node_targets:
+        task_id = f"service_offline_{service}"
+        package_root = root / "services" / service
+        node_modules_seed = seed_node_modules(root, package_root)
+        component_tasks.append(
+            {
+                "task_id": task_id,
+                "service": service,
+                "package_root": f"services/{service}",
+                "target_seconds": target_seconds,
+                "node_modules_seed": node_modules_seed,
+                "validation_command": "pnpm run test:offline",
+            }
+        )
+        scores.append(
+            run_command(
+                root,
+                task_id,
+                pnpm_cached_install_command("pnpm run test:offline"),
+                cwd=package_root,
+                timeout=180,
+                target_seconds=target_seconds,
+                trace_metadata=service_offline_node_trace_metadata(
+                    root,
+                    package_root,
+                    service,
+                    node_modules_seed,
+                ),
+            )
+        )
+
+    ap2_task = {
+        "task_id": "service_offline_ap2",
+        "service": "ap2",
+        "package_root": "services/ap2",
+        "target_seconds": 4,
+        "validation_command": "PYTHONPATH=src python3 -m unittest discover -s tests -q",
+    }
+    component_tasks.append(ap2_task)
+    scores.append(
+        run_command(
+            root,
+            "service_offline_ap2",
+            "PYTHONPATH=src python3 -m unittest discover -s tests -q",
+            cwd=root / "services" / "ap2",
+            timeout=60,
+            target_seconds=4,
+            trace_metadata=service_offline_python_trace_metadata(root),
+        )
+    )
+
+    score = sum(scores) / len(scores)
+    log_task(
+        "service_offline_protocol_tests",
+        score,
+        summary=f"mean service offline protocol test score {score:.4f}",
+        component_scores=scores,
+        trace_metadata=service_offline_tests_summary_trace_metadata(component_tasks),
+    )
+    return score
+
+
 def task_web_check(root: Path) -> float:
     package_root = root / "web"
     node_modules_seed = seed_node_modules(root, package_root)
@@ -878,6 +998,7 @@ def run_benchmark(root: Path) -> float:
         task_python_tests(root),
         task_rust_tests(root),
         task_service_builds(root),
+        task_service_offline_protocol_tests(root),
         task_web_check(root),
     ]
     return write_result(sum(scores) / len(scores))

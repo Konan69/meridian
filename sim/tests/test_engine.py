@@ -621,6 +621,67 @@ def test_self_sustainability_report_section():
     assert "margin=$4.50" in signals["content"]
 
 
+def test_self_sustainability_report_explains_rebalance_failure_event():
+    """Report names the no-route cause from treasury failure world events."""
+    config = SimulationConfig(
+        num_agents=1,
+        num_rounds=1,
+        protocols=[Protocol.MPP],
+    )
+    result = SimulationResult(config=config)
+    result.route_pressure_summary = [
+        {
+            "route_id": "treasury_rebalance_unroutable:tempo_usd->base_usdc",
+            "source_domain": "tempo_usd",
+            "target_domain": "base_usdc",
+            "primitive": "treasury_rebalance",
+            "protocols": ["mpp"],
+            "total_usage_cents": 36_000,
+            "max_capacity_ratio": 1.06,
+            "pressure_rounds": 2,
+            "last_pressure_level": "critical",
+        }
+    ]
+    result.world_events = [
+        EconomyWorldEvent(
+            round_num=4,
+            event_type="treasury_rebalance_failed",
+            summary=(
+                "merchant_test could not find a feasible treasury route from "
+                "tempo_usd to base_usdc."
+            ),
+            actor_id="merchant_test",
+            data={
+                "merchant_id": "merchant_test",
+                "merchant": "merchant_test",
+                "amount_cents": 12_000,
+                "source_domain": "tempo_usd",
+                "target_domain": "base_usdc",
+                "accepted_protocols": ["mpp"],
+                "error": "no_feasible_rebalance_route",
+            },
+        )
+    ]
+
+    sections = ReportGenerator(result=result, agents=[]).generate()
+    signals = next((s for s in sections if s["title"] == "Self-Sustainability Signals"), None)
+
+    assert signals is not None
+    assert signals["status"] == "warn"
+    assert "Treasury rebalances: 0 succeeded, 1 failed" in signals["content"]
+    assert (
+        "No-route pressure: R4 failure: merchant_test could not rebalance "
+        "$120.00 from tempo_usd to base_usdc; accepted protocols MPP had "
+        "no feasible route (no_feasible_rebalance_route)."
+    ) in signals["content"]
+    assert (
+        "Unroutable treasury pressure: "
+        "treasury_rebalance_unroutable:tempo_usd->base_usdc reached "
+        "106.0% capacity across 2 pressure rounds with $360.00 blocked "
+        "demand; protocols MPP had no feasible tempo_usd -> base_usdc route."
+    ) in signals["content"]
+
+
 # ------------------------------------------------------------------
 # l. Report generation
 # ------------------------------------------------------------------

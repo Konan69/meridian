@@ -3,6 +3,11 @@ import { CdpClient } from "@coinbase/cdp-sdk";
 import express, { Request, Response } from "express";
 import fs from "node:fs";
 import {
+  SendTransactionRequestError,
+  normalizeSendTransactionRequest,
+  type SendTransactionOptions,
+} from "./sendTransaction.js";
+import {
   BASE_SEPOLIA_USDC,
   amountUnitsFromRequest,
   encodeErc20Transfer,
@@ -20,34 +25,6 @@ type SignTypedDataRequest = {
   types: Record<string, unknown>;
   primaryType: string;
   message: Record<string, unknown>;
-};
-
-type SendTransactionRequest = {
-  address: `0x${string}`;
-  network: "base-sepolia" | "base";
-  transaction: {
-    to: `0x${string}`;
-    data?: `0x${string}`;
-    value?: string;
-    gas?: string;
-    maxFeePerGas?: string;
-    maxPriorityFeePerGas?: string;
-    nonce?: number;
-  };
-};
-
-type SendTransactionOptions = {
-  address: `0x${string}`;
-  network: "base-sepolia" | "base";
-  transaction: {
-    to: `0x${string}`;
-    data?: `0x${string}`;
-    value: bigint;
-    gas?: bigint;
-    maxFeePerGas?: bigint;
-    maxPriorityFeePerGas?: bigint;
-    nonce?: number;
-  };
 };
 
 type KeyFile = {
@@ -307,35 +284,15 @@ app.post("/evm/sign-typed-data", async (req: Request, res: Response) => {
 
 app.post("/evm/send-transaction", async (req: Request, res: Response) => {
   try {
-    const { address, network, transaction } = (req.body ?? {}) as Partial<SendTransactionRequest>;
-    if (!address || !network || !transaction?.to) {
-      res.status(400).json({
-        error: "address, network, and transaction.to are required",
-      });
-      return;
-    }
-
-    const txOptions: SendTransactionOptions = {
-      address,
-      network,
-      transaction: {
-        to: transaction.to,
-        data: transaction.data,
-        value: BigInt(transaction.value ?? "0"),
-        gas: transaction.gas ? BigInt(transaction.gas) : undefined,
-        maxFeePerGas: transaction.maxFeePerGas
-          ? BigInt(transaction.maxFeePerGas)
-          : undefined,
-        maxPriorityFeePerGas: transaction.maxPriorityFeePerGas
-          ? BigInt(transaction.maxPriorityFeePerGas)
-          : undefined,
-        nonce: transaction.nonce,
-      },
-    };
+    const txOptions = normalizeSendTransactionRequest(req.body);
 
     const result = await cdp.evm.sendTransaction(txOptions);
     res.json(result);
   } catch (error) {
+    if (error instanceof SendTransactionRequestError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     res.status(500).json({ error: String((error as Error)?.message || error) });
   }
 });

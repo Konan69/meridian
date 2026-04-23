@@ -27,6 +27,15 @@ def _as_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _list_label(value: object, default: str = "unknown") -> str:
+    if isinstance(value, (list, tuple, set)):
+        labels = [str(item).upper() for item in value if str(item)]
+        return ", ".join(labels) if labels else default
+    if value:
+        return str(value).upper()
+    return default
+
+
 # Canonical protocol display order
 _PROTO_ORDER = ["acp", "ap2", "x402", "mpp", "atxp"]
 
@@ -217,6 +226,63 @@ class ReportGenerator:
                 f"Readout: {route_id} peaked at {pressure * 100:.1f}% capacity "
                 f"({pressure_level}) across {pressure_rounds} {round_label} with "
                 f"{_cents_to_dollars(usage_cents)} reserved principal; {route_action}."
+            )
+            unroutable = [
+                route for route in self.result.route_pressure_summary
+                if (
+                    str(route.get("route_id", "")).startswith("treasury_rebalance_unroutable:")
+                    or route.get("reason") == "no_feasible_rebalance_route"
+                )
+            ]
+            if unroutable:
+                blocked = sorted(
+                    unroutable,
+                    key=lambda route: (
+                        -_as_float(route.get("max_capacity_ratio", 0)),
+                        -_as_int(route.get("total_usage_cents", route.get("usage_cents", 0))),
+                        str(route.get("route_id", "")),
+                    ),
+                )[0]
+                blocked_route = str(blocked.get("route_id") or "treasury_rebalance_unroutable")
+                source = str(blocked.get("source_domain") or "unknown_source")
+                target = str(blocked.get("target_domain") or "unknown_target")
+                protocols = _list_label(blocked.get("protocols"))
+                pressure_rounds = _as_int(blocked.get("pressure_rounds", blocked.get("failure_count", 0)))
+                round_label = "pressure round" if pressure_rounds == 1 else "pressure rounds"
+                blocked_cents = _as_int(blocked.get("total_usage_cents", blocked.get("usage_cents", 0)))
+                lines.append(
+                    f"Unroutable treasury pressure: {blocked_route} reached "
+                    f"{_as_float(blocked.get('max_capacity_ratio', 0)) * 100:.1f}% capacity "
+                    f"across {pressure_rounds} {round_label} with "
+                    f"{_cents_to_dollars(blocked_cents)} blocked demand; protocols "
+                    f"{protocols} had no feasible {source} -> {target} route."
+                )
+
+        if treasury_failed:
+            latest_failure = sorted(
+                treasury_failed,
+                key=lambda event: (event.round_num, event.summary),
+            )[-1]
+            data = latest_failure.data or {}
+            merchant = str(
+                data.get("merchant")
+                or data.get("merchant_id")
+                or latest_failure.actor_id
+                or "unknown merchant"
+            )
+            source = str(data.get("source_domain") or "unknown_source")
+            target = str(data.get("target_domain") or "unknown_target")
+            amount_cents = _as_int(data.get("amount_cents", 0))
+            error = str(data.get("error") or "unknown_failure")
+            protocols = _list_label(data.get("accepted_protocols"))
+            fail_label = (
+                "failure" if len(treasury_failed) == 1 else f"latest of {len(treasury_failed)} failures"
+            )
+            lines.append(
+                f"No-route pressure: R{latest_failure.round_num} {fail_label}: "
+                f"{merchant} could not rebalance {_cents_to_dollars(amount_cents)} "
+                f"from {source} to {target}; accepted protocols {protocols} had "
+                f"no feasible route ({error})."
             )
 
         if self.result.treasury_posture_summary:

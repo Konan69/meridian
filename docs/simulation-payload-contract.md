@@ -50,6 +50,12 @@ Report grounding:
   `route_pressure_summary`, `treasury_posture_summary`,
   `ecosystem_summary.<protocol>.operator_margin_cents`, `trust_summary`, and
   `agent_memory_log`.
+- Treasury failure explanations should stay grounded in `world_events`,
+  especially `treasury_rebalance_failed.data` fields such as `source_domain`,
+  `target_domain`, `accepted_protocols`, `amount_cents`, and `error`.
+- If unroutable rebalance attempts are also present in `route_pressure_summary`,
+  reports may use `treasury_rebalance_unroutable:<source>-><target>` rows to
+  explain blocked demand and repeated no-route pressure.
 - Do not add a compact `self_sustainability_summary`. Keeping the report tied
   to source fields makes route capacity, treasury fit, margin, and memory
   drivers auditable in the stream and final payload.

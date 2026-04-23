@@ -387,13 +387,71 @@ class SimulationEngine:
             },
         )
 
+    def _pressure_level(self, capacity_ratio: float) -> str:
+        if capacity_ratio >= 1.0:
+            return "critical"
+        if capacity_ratio >= 0.65:
+            return "elevated"
+        if capacity_ratio >= 0.25:
+            return "active"
+        return "low"
+
+    def _record_treasury_infeasibility_pressure(
+        self,
+        summary: RoundSummary,
+        round_num: int,
+        merchant: MerchantProfile,
+        intent: dict,
+        accepted_protocols: list[Protocol],
+    ):
+        source_domain = intent["source_domain"].value
+        target_domain = intent["target_domain"].value
+        protocol_values = [protocol.value for protocol in accepted_protocols]
+        recent_failures = 0
+        for entry in self.route_pressure_log[-36:]:
+            try:
+                age = round_num - int(entry.get("round", round_num))
+            except (TypeError, ValueError):
+                continue
+            if age < 1 or age > 3:
+                continue
+            if (
+                entry.get("reason") == "no_feasible_rebalance_route"
+                and entry.get("merchant_id") == merchant.merchant_id
+                and entry.get("source_domain") == source_domain
+                and entry.get("target_domain") == target_domain
+            ):
+                recent_failures += int(entry.get("failure_count", 1))
+
+        failure_count = recent_failures + 1
+        capacity_ratio = round(min(1.6, 0.62 + failure_count * 0.22), 4)
+        entry = {
+            "route_id": f"treasury_rebalance_unroutable:{source_domain}->{target_domain}",
+            "source_domain": source_domain,
+            "target_domain": target_domain,
+            "primitive": WorkloadType.TREASURY_REBALANCE.value,
+            "protocols": protocol_values,
+            "usage_cents": int(intent["amount_cents"]) * failure_count,
+            "capacity_cents": max(1, int(intent["amount_cents"])),
+            "capacity_ratio": capacity_ratio,
+            "pressure_level": self._pressure_level(capacity_ratio),
+            "reason": "no_feasible_rebalance_route",
+            "merchant_id": merchant.merchant_id,
+            "merchant": merchant.name,
+            "failure_count": failure_count,
+        }
+        summary.route_pressure.append(entry)
+        self.route_pressure_log.append({"round": round_num, **entry})
+
     def _record_route_pressure_events(self, summary: RoundSummary, round_num: int):
         assert self.economy is not None
-        pressure = self.economy.snapshot_route_pressure()
+        pressure = list(summary.route_pressure)
+        economy_pressure = self.economy.snapshot_route_pressure()
+        pressure.extend(economy_pressure)
         summary.route_pressure = pressure
         self.route_pressure_log.extend(
             {"round": round_num, **entry}
-            for entry in pressure
+            for entry in economy_pressure
         )
         if not pressure:
             return
@@ -1435,6 +1493,18 @@ class SimulationEngine:
                 available_protocols=[p for p in merchant.accepted_protocols if p in self.active_protocols],
             )
             if not options:
+                accepted_protocols = [
+                    protocol
+                    for protocol in merchant.accepted_protocols
+                    if protocol in self.active_protocols
+                ]
+                self._record_treasury_infeasibility_pressure(
+                    summary,
+                    round_num,
+                    merchant,
+                    intent,
+                    accepted_protocols,
+                )
                 self._record_world_event(
                     summary,
                     round_num,
@@ -1452,8 +1522,7 @@ class SimulationEngine:
                         "target_domain": intent["target_domain"].value,
                         "accepted_protocols": [
                             protocol.value
-                            for protocol in merchant.accepted_protocols
-                            if protocol in self.active_protocols
+                            for protocol in accepted_protocols
                         ],
                         "error": "no_feasible_rebalance_route",
                     },

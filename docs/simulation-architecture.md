@@ -113,6 +113,12 @@ and the component task traces show the real commands and caches.
 For pnpm build tasks, `trace_metadata.cache.node_modules_seed` reports whether
 the benchmark hardlinked a compatible `node_modules` tree from another Evo
 worktree before running the frozen install.
+Offline service protocol tests are benchmark tasks too. Read
+`service_offline_protocol_tests` for the aggregate result, then inspect
+`service_offline_cdp`, `service_offline_stripe`, `service_offline_atxp`, and
+`service_offline_ap2` for the exact credential-free helper tests that ran. The
+Node service tasks use the same frozen pnpm install and node_modules seeding
+metadata as build tasks; AP2 runs its pure Python unittest contract directly.
 
 ## Optimization Target
 
