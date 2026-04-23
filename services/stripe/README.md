@@ -51,6 +51,6 @@ The offline service tests document the MPP helper contracts Meridian relies on
 without live Stripe credentials. Keep this list aligned with `pnpm run
 test:offline` and the helper files named here:
 
-- `src/mppKeys.test.ts` covers Stripe MPP deterministic actor and merchant key derivation in `src/mppKeys.ts`.
-- `src/mppRequest.test.ts` covers Stripe MPP authorize payment session URL semantics in `src/mppRequest.ts`.
-- `src/mppRequest.test.ts` covers Stripe MPP execute paid-resource URL and settlement response semantics in `src/mppRequest.ts`.
+- `services/stripe/src/mppKeys.test.ts` covers Stripe MPP deterministic actor and merchant key derivation in `services/stripe/src/mppKeys.ts`.
+- `services/stripe/src/mppRequest.test.ts` covers Stripe MPP authorize payment session URL semantics in `services/stripe/src/mppRequest.ts`.
+- `services/stripe/src/mppRequest.test.ts` covers Stripe MPP execute paid-resource URL and settlement response semantics in `services/stripe/src/mppRequest.ts`.

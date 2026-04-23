@@ -90,6 +90,6 @@ The offline service tests document the ATXP helper contracts Meridian relies on
 without live ATXP or CDP credentials. Keep this list aligned with `pnpm run
 test:offline` and the helper files named here:
 
-- `src/cdpTreasuryTopUp.test.ts` covers ATXP cdp-base treasury top-up amount boundary and default planning in `src/cdpTreasuryTopUp.ts`.
-- `src/directTransfer.test.ts` covers ATXP direct-transfer raw transaction credential parsing in `src/directTransfer.ts`.
-- `src/directTransfer.test.ts` covers ATXP direct-transfer own-field request shape and USDC amount boundary contracts in `src/directTransfer.ts`.
+- `services/atxp/src/cdpTreasuryTopUp.test.ts` covers ATXP cdp-base treasury top-up amount boundary and default planning in `services/atxp/src/cdpTreasuryTopUp.ts`.
+- `services/atxp/src/directTransfer.test.ts` covers ATXP direct-transfer raw transaction credential parsing in `services/atxp/src/directTransfer.ts`.
+- `services/atxp/src/directTransfer.test.ts` covers ATXP direct-transfer own-field request shape and USDC amount boundary contracts in `services/atxp/src/directTransfer.ts`.

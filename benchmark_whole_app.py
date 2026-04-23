@@ -98,8 +98,10 @@ FOCUSED_GATE_DUPLICATE_VALIDATION = [
         "reason": "The full benchmark already runs CDP offline protocol tests; this focused gate reruns them after the benchmark to protect inherited treasury transfer semantics.",
     },
 ]
+LIST_TASKS_METADATA_SCHEMA_VERSION = 1
 LIST_TASKS_METADATA_SCHEMA = {
     "kind": "list_tasks_metadata_schema",
+    "schema_version": LIST_TASKS_METADATA_SCHEMA_VERSION,
     "top_level_keys": [
         "tasks",
         "profiles",
@@ -1009,6 +1011,13 @@ def check_list_tasks_metadata_schema_contract(
 ) -> dict[str, Any]:
     payload = list_tasks_payload()
     schema = LIST_TASKS_METADATA_SCHEMA
+    actual_schema_version = payload["metadata_schema"].get("schema_version")
+    if actual_schema_version != LIST_TASKS_METADATA_SCHEMA_VERSION:
+        failures.append(
+            "list_tasks_metadata_schema: schema_version "
+            f"{actual_schema_version!r} does not match expected "
+            f"{LIST_TASKS_METADATA_SCHEMA_VERSION!r}"
+        )
     expected_top_keys = set(schema["top_level_keys"])
     actual_top_keys = set(payload)
     missing_top_keys = sorted(actual_top_keys - expected_top_keys)
@@ -1039,6 +1048,7 @@ def check_list_tasks_metadata_schema_contract(
     docs_needles = [
         schema["docs_anchor"],
         "metadata_schema",
+        f"schema_version: {LIST_TASKS_METADATA_SCHEMA_VERSION}",
         "task_entry_required_keys",
         "task_entry_optional_keys",
         "manual_validation_task_ids",
@@ -1062,6 +1072,7 @@ def check_list_tasks_metadata_schema_contract(
         "kind": "list_tasks_metadata_schema_contract",
         "source": "LIST_TASKS_METADATA_SCHEMA",
         "checked_paths": ["docs/simulation-architecture.md"],
+        "schema_version": actual_schema_version,
         "top_level_keys": schema["top_level_keys"],
         "task_entry_required_keys": schema["task_entry_required_keys"],
         "task_entry_optional_keys": schema["task_entry_optional_keys"],
@@ -1140,6 +1151,21 @@ def static_contract_trace_metadata(
                         for item in service_offline_coverage_files
                     ),
                     "protects": "Service READMEs must mention each offline semantic surface named by service protocol trace metadata.",
+                },
+                {
+                    "kind": "service_readme_enforcing_file_contracts",
+                    "source": "SERVICE_OFFLINE_COVERAGE",
+                    "checked_paths": [
+                        item["readme_path"] for item in service_offline_coverage_files
+                    ],
+                    "required_file_count": sum(
+                        item["file_count"] for item in service_offline_coverage_files
+                    ),
+                    "missing_file_reference_count": sum(
+                        len(item["missing_readme_file_references"])
+                        for item in service_offline_coverage_files
+                    ),
+                    "protects": "Service READMEs must point to each offline test and helper file named by service protocol trace metadata.",
                 },
                 raw_route_pressure_report_contract,
                 inherited_gate_guidance_contract,
@@ -1351,11 +1377,20 @@ def task_static_contracts(root: Path) -> float:
             for surface in coverage["semantic_surfaces"]
             if surface not in readme_text
         ]
+        missing_readme_file_references = [
+            path
+            for path in checked_paths
+            if path not in readme_text
+        ]
         if not readme.exists():
             failures.append(f"SERVICE_OFFLINE_COVERAGE[{service}]: missing README {readme_path}")
         for surface in missing_readme_semantic_surfaces:
             failures.append(
                 f"SERVICE_OFFLINE_COVERAGE[{service}]: {readme_path} missing semantic surface {surface!r}"
+            )
+        for path in missing_readme_file_references:
+            failures.append(
+                f"SERVICE_OFFLINE_COVERAGE[{service}]: {readme_path} missing offline helper/test file reference {path}"
             )
         service_offline_coverage_files.append(
             {
@@ -1374,6 +1409,7 @@ def task_static_contracts(root: Path) -> float:
                 "file_count": len(checked_paths),
                 "missing_files": missing_paths,
                 "missing_readme_semantic_surfaces": missing_readme_semantic_surfaces,
+                "missing_readme_file_references": missing_readme_file_references,
             }
         )
 

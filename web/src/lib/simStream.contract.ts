@@ -430,6 +430,9 @@ export const streamNormalizationContract = {
     partialRouteScoreDriverText: routeScoreDriverDisplay('1.4', undefined, undefined)?.text,
     nonFiniteRouteScoreDriverText: routeScoreDriverDisplay('NaN', Infinity, '')?.text,
     nonFiniteRouteScoreDriverHasFiniteValue: routeScoreDriverDisplay('NaN', Infinity, '')?.hasFiniteValue,
+    zeroRouteScoreDriverText: routeScoreDriverDisplay(0, 0, 0)?.text,
+    noEvidenceRouteScoreDriverText: routeScoreDriverDisplay(undefined, undefined, undefined)?.text,
+    noEvidenceRouteScoreDriverHasFiniteValue: routeScoreDriverDisplay(undefined, undefined, undefined)?.hasFiniteValue,
     normalizedPartialRouteScore: partialMetrics.find((metric) => metric.protocol === 'ap2')?.avg_route_score,
     normalizedNonFiniteRouteScore: partialMetrics.find((metric) => metric.protocol === 'cdp')?.avg_route_score,
     nonNegativeRouteLedgerValue: Math.max(0, partialRouteUsage['cdp-base->ap2'] ?? 0),
@@ -481,6 +484,9 @@ type EconomyObservabilityContract = {
   partialRouteScoreDriverText?: unknown;
   nonFiniteRouteScoreDriverText?: unknown;
   nonFiniteRouteScoreDriverHasFiniteValue?: unknown;
+  zeroRouteScoreDriverText?: unknown;
+  noEvidenceRouteScoreDriverText?: unknown;
+  noEvidenceRouteScoreDriverHasFiniteValue?: unknown;
   normalizedPartialRouteScore?: unknown;
   normalizedNonFiniteRouteScore?: unknown;
   nonNegativeRouteLedgerValue: number;
@@ -573,6 +579,15 @@ function requireEconomyObservabilityContract(contract: EconomyObservabilityContr
   }
   if (contract.nonFiniteRouteScoreDriverHasFiniteValue !== false) {
     throw new Error('economy observability contract should mark non-finite route score drivers as unavailable');
+  }
+  if (contract.zeroRouteScoreDriverText !== 'score 0.00 · pressure 0.00 · sustain +0.00') {
+    throw new Error('economy observability contract should distinguish zero route score evidence');
+  }
+  if (contract.noEvidenceRouteScoreDriverText !== 'score no evidence · pressure no evidence · sustain no evidence') {
+    throw new Error('economy observability contract should label missing route score evidence');
+  }
+  if (contract.noEvidenceRouteScoreDriverHasFiniteValue !== false) {
+    throw new Error('economy observability contract should mark missing route score evidence as unavailable');
   }
   if (contract.normalizedPartialRouteScore !== 1.4) {
     throw new Error('economy observability contract failed partial route score normalization');

@@ -24,26 +24,24 @@ export function routeScoreDriverDisplay(
 	const hasAnyInput = inputs.some((value) => value != null && value !== '');
 	const hasInvalidInput = inputs.some((value) => value != null && value !== '' && finiteNumber(value) == null);
 	const hasFiniteValue = fields.some((field) => field.value != null);
-	const hasNonZeroValue = fields.some((field) => field.value != null && field.value !== 0);
 
-	if (!hasAnyInput) return null;
-	if (hasFiniteValue && !hasNonZeroValue && !hasInvalidInput) return null;
+	const missingValue = hasAnyInput ? 'n/a' : 'no evidence';
 
 	return {
 		hasFiniteValue,
 		fields: fields.map((field) => ({
 			label: field.label,
-			value: formatDriverValue(field.value, field.prefix),
+			value: formatDriverValue(field.value, field.prefix, missingValue),
 			available: field.value != null,
 		})),
 		text: fields
-			.map((field) => `${field.label} ${formatDriverValue(field.value, field.prefix)}`)
+			.map((field) => `${field.label} ${formatDriverValue(field.value, field.prefix, missingValue)}`)
 			.join(' · '),
 	};
 }
 
-function formatDriverValue(value: number | null, prefix: string): string {
-	if (value == null) return 'n/a';
+function formatDriverValue(value: number | null, prefix: string, missingValue: string): string {
+	if (value == null) return missingValue;
 	if (prefix && value >= 0) return `${prefix}${value.toFixed(2)}`;
 	return value.toFixed(2);
 }

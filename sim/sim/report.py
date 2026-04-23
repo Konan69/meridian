@@ -121,8 +121,10 @@ def _route_pressure_rows_from_events(route_events: list[object]) -> list[dict]:
 
 
 def _merchant_switch_route_score_lines(events: list[object], limit: int = 5) -> list[str]:
-    lines: list[str] = []
+    entries: list[tuple[str, int, str, str, float, float, float, str]] = []
     for event in events:
+        if len(entries) >= limit:
+            break
         if getattr(event, "event_type", None) != "merchant_protocol_mix_changed":
             continue
         data = getattr(event, "data", None)
@@ -138,18 +140,37 @@ def _merchant_switch_route_score_lines(events: list[object], limit: int = 5) -> 
         if pressure_drag == 0 and sustainability_lift == 0:
             continue
 
+        round_num = _as_int(getattr(event, "round_num", data.get("round", 0)))
         merchant = str(data.get("merchant") or data.get("merchant_id") or "unknown merchant")
-        action = str(data.get("action") or "changed")
-        protocol = protocol_display_label(data.get("protocol"))
-        reason = str(data.get("reason") or "unknown")
-        lines.append(
-            f"  R{getattr(event, 'round_num', data.get('round', 'n/a'))}: {merchant} {action} "
-            f"{protocol} after route-score evidence "
-            f"(score {route_score:.2f}, pressure drag {pressure_drag:.2f}, "
-            f"sustainability lift {sustainability_lift:+.2f}, reason {reason})."
+        entries.append(
+            (
+                merchant,
+                round_num,
+                str(data.get("action") or "changed"),
+                protocol_display_label(data.get("protocol")),
+                route_score,
+                pressure_drag,
+                sustainability_lift,
+                str(data.get("reason") or "unknown"),
+            )
         )
-        if len(lines) >= limit:
-            break
+
+    lines: list[str] = []
+    current_merchant: str | None = None
+    for merchant, round_num, action, protocol, route_score, pressure_drag, sustainability_lift, reason in sorted(
+        entries,
+        key=lambda entry: (entry[0].lower(), entry[1], entry[2], entry[3]),
+    ):
+        if merchant != current_merchant:
+            lines.append(f"  {merchant}:")
+            current_merchant = merchant
+        lines.extend(
+            [
+                f"    R{round_num}: {action} {protocol} after route-score evidence",
+                f"      score {route_score:.2f}; pressure drag {pressure_drag:.2f}; "
+                f"sustainability lift {sustainability_lift:+.2f}; reason {reason}",
+            ]
+        )
     return lines
 
 

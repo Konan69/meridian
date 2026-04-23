@@ -528,6 +528,48 @@ def test_report_explains_route_score_driven_merchant_protocol_change():
                     "route_pressure": 0.0,
                 },
             },
+        ),
+        EconomyWorldEvent(
+            round_num=7,
+            event_type="merchant_protocol_mix_changed",
+            summary="merchant_alpha added AP2 after observing ecosystem evidence.",
+            actor_id="merchant_alpha",
+            protocol="ap2",
+            data={
+                "merchant_id": "merchant_alpha",
+                "merchant": "merchant_alpha",
+                "action": "added",
+                "protocol": "ap2",
+                "round": 7,
+                "reason": "ecosystem_evidence",
+                "evidence": {
+                    "route_score": 0.9,
+                    "route_score_pressure_drag": -0.2,
+                    "route_score_sustainability_lift": 0.6,
+                    "route_pressure": 0.0,
+                },
+            },
+        ),
+        EconomyWorldEvent(
+            round_num=9,
+            event_type="merchant_protocol_mix_changed",
+            summary="merchant_test added AP2 after observing ecosystem evidence.",
+            actor_id="merchant_test",
+            protocol="ap2",
+            data={
+                "merchant_id": "merchant_test",
+                "merchant": "merchant_test",
+                "action": "added",
+                "protocol": "ap2",
+                "round": 9,
+                "reason": "ecosystem_evidence",
+                "evidence": {
+                    "route_score": 0.8,
+                    "route_score_pressure_drag": -0.1,
+                    "route_score_sustainability_lift": 0.5,
+                    "route_pressure": 0.0,
+                },
+            },
         )
     ]
 
@@ -541,10 +583,13 @@ def test_report_explains_route_score_driven_merchant_protocol_change():
         "sustainability lift -0.40."
     ) in emergent["content"]
     assert "Route-score merchant changes:" in emergent["content"]
+    assert emergent["content"].index("  merchant_alpha:") < emergent["content"].index("  merchant_test:")
+    assert emergent["content"].count("  merchant_test:") == 1
+    assert "  merchant_test:" in emergent["content"]
     assert (
-        "R8: merchant_test removed Stripe MPP after route-score evidence "
-        "(score 0.10, pressure drag 1.80, sustainability lift -0.40, "
-        "reason ecosystem_evidence)."
+        "    R8: removed Stripe MPP after route-score evidence\n"
+        "      score 0.10; pressure drag 1.80; sustainability lift -0.40; "
+        "reason ecosystem_evidence"
     ) in emergent["content"]
 
 
