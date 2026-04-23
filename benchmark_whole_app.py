@@ -345,12 +345,21 @@ def require_contains(path: Path, needles: list[str], failures: list[str]) -> Non
 def static_contract_trace_metadata(
     required_files: list[str],
     contains_contracts: list[tuple[str, list[str]]],
+    contract_surfaces: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    needles_by_path = {path: len(needles) for path, needles in contains_contracts}
     return {
         "validation": {
             "kind": "static_contracts",
             "required_file_count": len(required_files),
             "required_files": required_files,
+            "coverage_areas": [
+                {
+                    **surface,
+                    "needle_count": sum(needles_by_path.get(path, 0) for path in surface["paths"]),
+                }
+                for surface in contract_surfaces
+            ],
             "contains_contracts": [
                 {
                     "path": path,
@@ -490,6 +499,43 @@ def task_static_contracts(root: Path) -> float:
     for path, needles in contains_contracts:
         require_contains(root / path, needles, failures)
 
+    contract_surfaces = [
+        {
+            "surface": "local_runtime_bootstrap",
+            "paths": ["run.sh"],
+            "protects": "run.sh still starts every local service and the simulation worker.",
+        },
+        {
+            "surface": "funding_and_treasury_guidance",
+            "paths": [
+                "docs/funding.md",
+                "services/cdp/src/index.ts",
+                "services/atxp/src/cdpBaseSepoliaAccount.ts",
+                "services/atxp/src/funding.ts",
+                "web/src/routes/funding/+page.svelte",
+                "web/src/routes/api/funding/+server.ts",
+            ],
+            "protects": "Funding docs, CDP treasury routes, ATXP fallback wording, and frontend funding probes stay aligned.",
+        },
+        {
+            "surface": "atxp_runtime_settlement",
+            "paths": [
+                "services/atxp/src/index.ts",
+                "engine/src/protocols/atxp.rs",
+            ],
+            "protects": "ATXP health, authorize, execute, direct transfer, and engine runtime readiness contracts stay visible.",
+        },
+        {
+            "surface": "frontend_navigation",
+            "paths": ["web/src/routes/+layout.svelte"],
+            "protects": "Funding diagnostics remain reachable from the Svelte app shell.",
+        },
+        {
+            "surface": "engine_capability_readiness",
+            "paths": ["engine/src/routes/capabilities.rs"],
+            "protects": "Engine capability checks still join live protocol readiness signals.",
+        },
+    ]
     score = 1.0 if not failures else max(0.0, 1.0 - len(failures) / 20.0)
     log_task(
         "static_contracts",
@@ -497,7 +543,11 @@ def task_static_contracts(root: Path) -> float:
         summary="all contracts present" if not failures else f"{len(failures)} contract issues",
         failure_reason="; ".join(failures[:8]) if failures else None,
         failures=failures,
-        trace_metadata=static_contract_trace_metadata(required_files, contains_contracts),
+        trace_metadata=static_contract_trace_metadata(
+            required_files,
+            contains_contracts,
+            contract_surfaces,
+        ),
     )
     return score
 

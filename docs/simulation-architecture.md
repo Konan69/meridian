@@ -103,6 +103,10 @@ For build and test tasks, read `trace_metadata.execution.score_policy` first:
 return code decides correctness, while elapsed time only contributes the small
 speed bonus. Cache metadata explains dependency reuse; validation metadata lists
 the install, check, build, compile, or test phases that still ran.
+For `static_contracts`, use `trace_metadata.validation.coverage_areas` before
+editing a needle. The areas explain whether a string protects local startup,
+funding guidance, ATXP settlement, frontend navigation, or engine capability
+readiness.
 
 ## Optimization Target
 
